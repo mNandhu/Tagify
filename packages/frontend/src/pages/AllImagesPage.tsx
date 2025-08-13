@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { GalleryGrid } from "../components/GalleryGrid";
 import { useToast } from "../components/Toasts";
+import {
+  Filter,
+  CheckSquare,
+  Square,
+  Tag as TagIcon,
+  Slash,
+} from "lucide-react";
 
 type ImageDoc = { _id: string; thumb_rel?: string; path: string };
 type Library = { _id: string; name?: string; path: string };
@@ -184,10 +191,17 @@ export default function AllImagesPage() {
     <div className="p-4 space-y-3">
       <div className="sticky top-0 z-10 -mt-4 -mx-4 px-4 pt-4 pb-3 bg-neutral-900/85 backdrop-blur border-b border-neutral-800 flex items-center gap-2">
         <button
-          className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
+          className={
+            "p-2 rounded border inline-flex items-center justify-center " +
+            (filtersOpen
+              ? "bg-purple-700 border-purple-600 text-white"
+              : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200")
+          }
           onClick={() => setFiltersOpen((v) => !v)}
+          aria-label={filtersOpen ? "Hide filters" : "Show filters"}
+          title={filtersOpen ? "Hide filters" : "Show filters"}
         >
-          {filtersOpen ? "Hide Filters" : "Show Filters"}
+          <Filter size={18} />
         </button>
         <form onSubmit={onSubmitSearch} className="flex-1">
           <input
@@ -200,14 +214,18 @@ export default function AllImagesPage() {
         </form>
         <button
           className={
-            "px-3 py-2 rounded border " +
+            "p-2 rounded border inline-flex items-center justify-center " +
             (selectionMode
-              ? "bg-purple-700 border-purple-600"
-              : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700")
+              ? "bg-purple-700 border-purple-600 text-white"
+              : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200")
           }
           onClick={() => setSelectionMode((v) => !v)}
+          aria-label={
+            selectionMode ? "Exit selection mode" : "Enter selection mode"
+          }
+          title={selectionMode ? "Done selecting" : "Select"}
         >
-          {selectionMode ? "Done Selecting" : "Select"}
+          {selectionMode ? <CheckSquare size={18} /> : <Square size={18} />}
         </button>
         {selectionMode && selectionActive && (
           <button
@@ -265,7 +283,7 @@ export default function AllImagesPage() {
             <button
               type="button"
               className={
-                "px-3 py-2 rounded border text-sm transition-colors " +
+                "p-2 rounded border inline-flex items-center justify-center transition-colors " +
                 (filters.noTags
                   ? "bg-purple-700/30 border-purple-600 text-purple-200"
                   : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
@@ -275,8 +293,18 @@ export default function AllImagesPage() {
                 setItems([]);
                 setOffset(0);
               }}
+              aria-label={filters.noTags ? "No tags on" : "No tags off"}
+              title="No tags"
             >
-              {filters.noTags ? "No tags: ON" : "No tags"}
+              <span className="relative inline-flex items-center justify-center w-5 h-5">
+                <TagIcon size={16} />
+                {filters.noTags && (
+                  <Slash
+                    size={16}
+                    className="absolute inset-0 text-purple-300 opacity-90"
+                  />
+                )}
+              </span>
             </button>
           </div>
           <div className="flex items-end gap-2">
@@ -288,6 +316,7 @@ export default function AllImagesPage() {
                   tags: [],
                   logic: "and",
                   libraryId: undefined,
+                  noTags: false,
                 })
               }
             >
