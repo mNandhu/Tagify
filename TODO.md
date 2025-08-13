@@ -103,3 +103,18 @@ Testing note
   - Persist filters and selection in URL and localStorage; restore on load.
 - Batch actions
   - Implement backend batch tag add/remove endpoint; UI multi-select flow with confirmation and toasts.
+
+## Performance improvements
+
+- Frontend
+  - Switch GalleryGrid to react-window virtualized masonry; window up to ~2 screens above/below viewport.
+  - Debounce filter changes and coalesce requests; cancel in-flight fetches when filters update.
+  - Use Suspense-friendly data layer with SWR/React Query for caching and background refresh.
+  - Lazy-load non-critical routes (Tags, Settings) via code-splitting; prefetch on hover.
+  - Use content-visibility: auto on offscreen sections; apply will-change cautiously.
+  - Prefer CSS contain and transform-only animations to keep paint costs low.
+- Backend
+  - Add indexes on images: tags (multikey), library_id, and compound (library_id, tags) if needed.
+  - Paginate with stable sort (e.g., _id) and consider cursor-based pagination for large collections.
+  - Stream original files efficiently; apply conditional GET with ETag/Last-Modified.
+  - Cache tag aggregations; maintain precomputed counts per library for faster Tags page.

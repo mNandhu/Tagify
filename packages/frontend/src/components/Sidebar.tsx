@@ -20,7 +20,7 @@ export function Sidebar({
     { key: "settings", label: "Settings", path: "/settings", icon: Settings },
   ];
   return (
-    <aside className="h-dvh w-16 border-r border-neutral-800 bg-neutral-950 text-neutral-300 flex flex-col">
+    <aside className="h-dvh w-16 border-r border-neutral-800 bg-neutral-950/80 backdrop-blur text-neutral-300 flex flex-col">
       <div className="flex-1 py-3 flex flex-col items-center gap-3">
         {items.map((it) => {
           const Icon = it.icon;
@@ -29,8 +29,8 @@ export function Sidebar({
             <button
               key={it.key}
               onClick={() => onNavigate(it.path)}
-              className={`relative w-10 h-10 rounded flex items-center justify-center ${
-                active ? "bg-neutral-800 text-white" : "hover:bg-neutral-800"
+              className={`relative w-10 h-10 rounded flex items-center justify-center card-hover ${
+                active ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/80"
               }`}
               title={it.label}
               aria-current={active ? "page" : undefined}

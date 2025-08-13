@@ -1,7 +1,34 @@
+/* stylelint-disable at-rule-no-unknown */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
   color-scheme: dark;
+}
+
+/* App-wide background and subtle texture */
+html, body, #root {
+  height: 100%;
+}
+body {
+  background: radial-gradient(1200px 800px at 10% -10%, rgba(139, 92, 246, 0.05), transparent 60%),
+              radial-gradient(1000px 700px at 110% 10%, rgba(59, 130, 246, 0.04), transparent 60%),
+              linear-gradient(180deg, #0b0b0f 0%, #0a0a0d 100%);
+}
+
+/* Focus rings aligned to brand accent */
+*:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.6);
+  border-radius: 6px;
+}
+
+/* Card hover glow helper */
+.card-hover {
+  transition: box-shadow 200ms ease, transform 200ms ease, border-color 200ms ease;
+}
+.card-hover:hover {
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.25), 0 8px 30px -10px rgba(139,92,246,0.25);
+  transform: translateY(-1px);
 }

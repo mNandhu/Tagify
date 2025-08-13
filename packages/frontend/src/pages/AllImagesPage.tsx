@@ -143,7 +143,7 @@ export default function AllImagesPage() {
 
   return (
     <div className="p-4 space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="sticky top-0 z-10 -mt-4 -mx-4 px-4 pt-4 pb-3 bg-neutral-900/85 backdrop-blur border-b border-neutral-800 flex items-center gap-2">
         <button
           className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
           onClick={() => setFiltersOpen((v) => !v)}
@@ -152,7 +152,7 @@ export default function AllImagesPage() {
         </button>
         <form onSubmit={onSubmitSearch} className="flex-1">
           <input
-            className="px-3 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
+            className="px-3 py-2 rounded bg-neutral-950/70 border border-neutral-800 w-full"
             placeholder="Search tags… (comma separated)"
             value={filters.q}
             onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
