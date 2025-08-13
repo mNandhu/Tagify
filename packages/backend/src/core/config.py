@@ -22,3 +22,6 @@ MINIO_SECRET_KEY: str = env_str("MINIO_SECRET_KEY", "")
 MINIO_SECURE: bool = env_str("MINIO_SECURE", "false").lower() == "true"
 MINIO_BUCKET_THUMBS: str = env_str("MINIO_BUCKET_THUMBS", "tagify-thumbs")
 MINIO_BUCKET_ORIGINALS: str = env_str("MINIO_BUCKET_ORIGINALS", "tagify-originals")
+
+# Scanner concurrency cap
+SCANNER_MAX_WORKERS: int = int(env_str("SCANNER_MAX_WORKERS", "0") or "0")

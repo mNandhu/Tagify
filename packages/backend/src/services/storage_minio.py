@@ -69,9 +69,24 @@ def get_thumb(key: str):
     return client.get_object(config.MINIO_BUCKET_THUMBS, key)
 
 
-def get_original(key: str):
+def get_original(key: str, offset: int | None = None, length: int | None = None):
+    """Get original object; supports ranged reads via offset/length (bytes)."""
     client = get_minio()
-    return client.get_object(config.MINIO_BUCKET_ORIGINALS, key)
+    off = 0 if offset is None else int(offset)
+    # MinIO treats length=0 as 'to end'
+    ln = 0 if length is None else int(length)
+    return client.get_object(
+        config.MINIO_BUCKET_ORIGINALS,
+        key,
+        offset=off,
+        length=ln,
+    )
+
+
+def stat_original(key: str):
+    """Return metadata for original object (size, etag, content-type)."""
+    client = get_minio()
+    return client.stat_object(config.MINIO_BUCKET_ORIGINALS, key)
 
 
 def delete_by_prefix(prefix: str):

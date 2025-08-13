@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from multiprocessing import cpu_count
 from threading import Lock
+from ..core import config
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
@@ -202,8 +203,12 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 {"$set": {"scan_total": total, "scan_done": 0}},
             )
 
-            # Multithreaded processing
-            workers = max(2, min(32, (cpu_count() or 4) * 2))
+            # Multithreaded processing (cap via config if provided)
+            default_workers = max(2, min(32, (cpu_count() or 4) * 2))
+            cap = config.SCANNER_MAX_WORKERS
+            workers = (
+                default_workers if not cap or cap <= 0 else min(default_workers, cap)
+            )
             batch = 0
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 futures = [

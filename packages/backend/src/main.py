@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .api import libraries, images, tags
+from .database.mongo import ensure_indexes
 
 app = FastAPI(title="Tagify API", version="0.1.0")
 
@@ -14,6 +15,12 @@ app.add_middleware(
 )
 
 # Static thumbnails mount removed; images served via API backed by MinIO
+
+
+@app.on_event("startup")
+def _on_startup():
+    # Ensure required MongoDB indexes exist
+    ensure_indexes()
 
 
 @app.get("/health")

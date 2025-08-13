@@ -2,18 +2,28 @@ from fastapi import APIRouter, HTTPException
 from ..database.mongo import col
 from ..core.config import AI_TAGGING_URL
 import httpx
+import time
+
+_TAGS_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_TAGS_TTL_SECONDS = 30.0
 
 router = APIRouter()
 
 
 @router.get("")
 async def list_tags():
+    now = time.time()
+    cached = _TAGS_CACHE.get("all")
+    if cached and (now - cached[0]) < _TAGS_TTL_SECONDS:
+        return cached[1]
     pipeline = [
         {"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": False}},
         {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
     ]
-    return list(col("images").aggregate(pipeline))
+    result = list(col("images").aggregate(pipeline))
+    _TAGS_CACHE["all"] = (now, result)
+    return result
 
 
 @router.post("/apply/{image_id}")
@@ -21,12 +31,15 @@ async def apply_tags(image_id: str, tags: list[str]):
     col("images").update_one(
         {"_id": image_id}, {"$addToSet": {"tags": {"$each": tags}}}
     )
+    # Invalidate cache
+    _TAGS_CACHE.clear()
     return {"image_id": image_id, "added": tags}
 
 
 @router.post("/remove/{image_id}")
 async def remove_tags(image_id: str, tags: list[str]):
     col("images").update_one({"_id": image_id}, {"$pull": {"tags": {"$in": tags}}})
+    _TAGS_CACHE.clear()
     return {"image_id": image_id, "removed": tags}
 
 
@@ -51,4 +64,5 @@ async def ai_tag(image_id: str):
         col("images").update_one(
             {"_id": image_id}, {"$addToSet": {"tags": {"$each": tags}}}
         )
+    _TAGS_CACHE.clear()
     return {"image_id": image_id, "suggested": tags}
