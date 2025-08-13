@@ -13,7 +13,7 @@ A living checklist of work items for Tagify. Priorities: P0 (now), P1 (next), P2
 
 - Libraries UI
   - Add library form (path, name) and list existing libraries [Done]
-  - Trigger rescan, show indexed count/progress [Rescan: Done; Counts: Backend wired, UI pending]
+  - Trigger rescan, show indexed count and live progress bar [Done]
   - Edit and delete libraries (delete removes thumbnails) [Done]
 - Gallery views
   - All Images grid (virtualized), show thumbnails from `/thumbs` [Grid + lazy-load: Done; Full virtualization: Pending]
@@ -30,14 +30,16 @@ A living checklist of work items for Tagify. Priorities: P0 (now), P1 (next), P2
 - Scanner robustness
   - Handle inaccessible paths and corrupt images gracefully [Pending]
   - Option to skip very large images or unsupported formats [Pending]
+  - Background async scanning with progress (non-blocking) [Done]
 - Basic auth/config
   - Configuration page for AI_TAGGING_URL and MONGO settings (read-only if env-based) [Pending]
 
 ## P1 — Next improvements
 
 - Async/background scanning
-  - Move scanning to background jobs; add progress endpoints [Backend]
-  - UI progress bar and cancel/resume [Frontend]
+  - Move scanning to background jobs; add progress endpoints [Done]
+  - UI progress bar [Done]
+  - Cancel/resume control [Pending]
 - AI tagging workflow
   - Preview suggested tags > accept/reject before apply [Frontend]
   - Batch AI tagging (selected images) [Frontend/Backend]
@@ -86,13 +88,13 @@ Testing note
 ## Open questions / decisions pending
 
 - Where to store user preferences (localStorage vs DB)?
-- Will AI tagging endpoint return confidence scores? If so, UI should surface confidence.
 - Pagination strategy for images (offset vs cursor) and server response shape.
 
 ## Suggestions / next steps
 
 - Libraries
-  - Inline modal for editing name/path with validation; suggest rescan on path change; show indexed_count and last_scanned on cards.
+  - Inline modal for editing name/path with validation; suggest rescan on path change; show indexed_count and last_scanned on cards. [Done]
+  - Add cancel/resume scan controls; show error state if scan fails. [Pending]
 - Gallery
   - Move to react-window for virtualized masonry; preload next page while scrolling; skeleton placeholders.
   - Add keyboard shortcuts for selection mode (S to toggle) and batch actions.
@@ -108,7 +110,7 @@ Testing note
 
 - Frontend
   - Switch GalleryGrid to react-window virtualized masonry; window up to ~2 screens above/below viewport.
-  - Debounce filter changes and coalesce requests; cancel in-flight fetches when filters update.
+  - Debounce filter changes and coalesce requests; cancel in-flight fetches when filters update. [Partially applied; revisit after virtualization]
   - Use Suspense-friendly data layer with SWR/React Query for caching and background refresh.
   - Lazy-load non-critical routes (Tags, Settings) via code-splitting; prefetch on hover.
   - Use content-visibility: auto on offscreen sections; apply will-change cautiously.
@@ -118,3 +120,9 @@ Testing note
   - Paginate with stable sort (e.g., \_id) and consider cursor-based pagination for large collections.
   - Stream original files efficiently; apply conditional GET with ETag/Last-Modified.
   - Cache tag aggregations; maintain precomputed counts per library for faster Tags page.
+
+## Recent changes snapshot
+
+- ImageView polished (overlay controls, slide-in info panel, distinct surface, image fade-in; back returns to gallery; hides indexed count while scanning).
+- Libraries page shows indexed_count and last_scanned; progress bar with polling; edit modal with optional rescan.
+- Backend scanning moved to background threads with per-library progress fields and progress endpoint.
