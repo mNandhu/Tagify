@@ -15,3 +15,8 @@ class Library(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class LibraryUpdate(BaseModel):
+    path: Optional[str] = None
+    name: Optional[str] = None

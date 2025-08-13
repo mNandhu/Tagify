@@ -18,6 +18,26 @@ export default function LibrariesPage() {
     refresh();
   }, []);
 
+  const updateLibrary = async (id: string, data: Partial<Library>) => {
+    await api(`/api/libraries/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    refresh();
+  };
+
+  const deleteLibrary = async (id: string) => {
+    if (
+      !confirm(
+        "Delete this library? This will remove its indexed images and thumbnails."
+      )
+    )
+      return;
+    await api(`/api/libraries/${id}`, { method: "DELETE" });
+    refresh();
+  };
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-end gap-2">
@@ -63,6 +83,35 @@ export default function LibrariesPage() {
           >
             <div className="font-semibold">{l.name || l.path}</div>
             <div className="text-xs text-neutral-400">{l.path}</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700"
+                onClick={async () => {
+                  await api(`/api/libraries/${l._id}/rescan`, {
+                    method: "POST",
+                  });
+                  refresh();
+                }}
+              >
+                Rescan
+              </button>
+              <button
+                className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700"
+                onClick={async () => {
+                  const newName = prompt("Edit name", l.name || "");
+                  if (newName !== null)
+                    await updateLibrary(l._id, { name: newName });
+                }}
+              >
+                Edit
+              </button>
+              <button
+                className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-500"
+                onClick={() => deleteLibrary(l._id)}
+              >
+                Delete
+              </button>
+            </div>
           </div>
         ))}
       </div>

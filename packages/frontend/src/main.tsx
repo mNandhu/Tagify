@@ -7,6 +7,7 @@ import AllImagesPage from "./pages/AllImagesPage";
 import LibrariesPage from "./pages/LibrariesPage";
 import TagsPage from "./pages/TagsPage";
 import SettingsPage from "./pages/SettingsPage";
+import ImageView from "./pages/ImageView";
 
 const router = createBrowserRouter([
   {
@@ -19,6 +20,7 @@ const router = createBrowserRouter([
       { path: "settings", element: <SettingsPage /> },
     ],
   },
+  { path: "/image/:id", element: <ImageView /> },
 ]);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

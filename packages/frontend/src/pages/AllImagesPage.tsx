@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ImageThumbnail } from "../components/ImageThumbnail";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { GalleryGrid } from "../components/GalleryGrid";
 
 type ImageDoc = { _id: string; thumb_rel?: string; path: string };
 type Library = { _id: string; name?: string; path: string };
@@ -26,6 +27,11 @@ export default function AllImagesPage() {
     tags: [],
     logic: "and",
   });
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   // load libraries for filter
   useEffect(() => {
@@ -49,6 +55,23 @@ export default function AllImagesPage() {
       .catch((e) => console.error(e));
   }, [queryString]);
 
+  // sync filters from URL (?tag=... can appear multiple times)
+  useEffect(() => {
+    const urlTags = searchParams.getAll("tag");
+    const lib = searchParams.get("library_id") || undefined;
+    if (urlTags.length || lib) {
+      setFilters((f) => ({
+        ...f,
+        tags: urlTags.length ? urlTags : f.tags,
+        libraryId: lib,
+      }));
+      // Clean one-time tag param from URL to keep things tidy
+      const sp = new URLSearchParams(searchParams);
+      sp.delete("tag");
+      setSearchParams(sp, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   const onSubmitSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const tags = filters.q
@@ -58,9 +81,19 @@ export default function AllImagesPage() {
     setFilters((f) => ({ ...f, tags }));
   };
 
+  const toggleSelection = (id: string) =>
+    setSelection((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+
+  const clearSelection = () => setSelection(new Set());
+  const selectionActive = selection.size > 0;
+
   return (
-    <div className="p-4">
-      <div className="mb-3 flex items-center gap-2">
+    <div className="p-4 space-y-3">
+      <div className="flex items-center gap-2">
         <button
           className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
           onClick={() => setFiltersOpen((v) => !v)}
@@ -75,10 +108,31 @@ export default function AllImagesPage() {
             onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
           />
         </form>
+        <button
+          className={
+            "px-3 py-2 rounded border " +
+            (selectionMode
+              ? "bg-purple-700 border-purple-600"
+              : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700")
+          }
+          onClick={() => setSelectionMode((v) => !v)}
+        >
+          {selectionMode ? "Done Selecting" : "Select"}
+        </button>
+        {selectionActive && (
+          <button
+            className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500"
+            onClick={() =>
+              alert(`Batch actions coming soon: ${selection.size} selected`)
+            }
+          >
+            Batch actions
+          </button>
+        )}
       </div>
 
       {filtersOpen && (
-        <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
             <label className="block text-sm mb-1">Tag logic</label>
             <select
@@ -117,9 +171,9 @@ export default function AllImagesPage() {
               ))}
             </select>
           </div>
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
             <button
-              className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 w-full"
+              className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
               onClick={() =>
                 setFilters({
                   q: "",
@@ -131,19 +185,23 @@ export default function AllImagesPage() {
             >
               Clear filters
             </button>
+            <button
+              className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
+              onClick={clearSelection}
+            >
+              Clear selection
+            </button>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
-        {items.map((it) => (
-          <ImageThumbnail
-            key={it._id}
-            src={it.thumb_rel ? `/api/thumbs/${it.thumb_rel}` : ""}
-            alt={it.path}
-          />
-        ))}
-      </div>
+      <GalleryGrid
+        items={items}
+        selection={selection}
+        onToggle={toggleSelection}
+        onOpen={(id) => navigate(`/image/${encodeURIComponent(id)}`)}
+        selectionMode={selectionMode}
+      />
     </div>
   );
 }
