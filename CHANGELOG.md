@@ -7,6 +7,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ## [0.1.0] - 2025-08-13
 
 ### Added
+
 - Monorepo structure using pnpm workspaces: `packages/frontend`, `packages/backend`, and shared `.thumbs/` directory.
 - Root configuration: `.gitignore`, `pnpm-workspace.yaml`, root `package.json` scripts for backend dev.
 - Backend (FastAPI + uv):
@@ -20,6 +21,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   - `.env.local.example`.
 
 ### Notes
+
 - Backend verified locally: `/health` returns `{ "status": "ok" }`.
 - Frontend requires pnpm to install and run dev server.
 
