@@ -18,6 +18,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   - HTTP Range support for originals with correct `206 Partial Content`, `Content-Range`, and `Accept-Ranges: bytes`.
   - Scanner concurrency cap via `SCANNER_MAX_WORKERS`.
   - Phase 1 (start): Configurable pre-signed media delivery via `MEDIA_PRESIGNED_MODE` = off|redirect|url and `MEDIA_PRESIGNED_EXPIRES` for expiry. Frontend updated to handle `url` mode seamlessly; backend default set to `redirect` to offload media.
+  - Phase 2 (start): Cursor-based pagination for images using `_id` cursor. Backend supports `cursor` param; frontend infinite scroll switched from `offset` to `cursor` and preserves it in deep-links.
 
 ### Notes
 

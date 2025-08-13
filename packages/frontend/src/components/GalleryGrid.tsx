@@ -3,6 +3,8 @@ import { ImageThumbnail } from "./ImageThumbnail";
 import { resolveMediaUrl } from "../lib/media";
 
 type ImageDoc = { _id: string; thumb_rel?: string; path: string };
+// Upstream items from API contain width/height; extend locally to use for layout stabilization if present
+type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
 
 export function GalleryGrid({
   items,
@@ -11,7 +13,7 @@ export function GalleryGrid({
   onOpen,
   selectionMode,
 }: {
-  items: ImageDoc[];
+  items: ImageDocWithDims[];
   selection: Set<string>;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
@@ -40,7 +42,7 @@ function ThumbnailItem({
   onToggle,
   onOpen,
 }: {
-  it: ImageDoc;
+  it: ImageDocWithDims;
   selection: Set<string>;
   selectionMode: boolean;
   onToggle: (id: string) => void;
@@ -68,6 +70,8 @@ function ThumbnailItem({
         <ImageThumbnail
           src={thumbUrl}
           alt={it.path}
+          width={it.width}
+          height={it.height}
           selected={selectionMode && selection.has(it._id)}
           onClick={() => (selectionMode ? onToggle(it._id) : onOpen(it._id))}
         />

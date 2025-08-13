@@ -43,6 +43,7 @@ def list_images(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=200, ge=1, le=1000),
     no_tags: int | None = Query(default=None, alias="no_tags"),
+    cursor: str | None = Query(default=None),
 ):
     q: dict = {}
     if no_tags == 1:
@@ -55,8 +56,13 @@ def list_images(
         q["library_id"] = library_id
     # Projection keeps payload small for the grid
     projection = {"_id": 1, "path": 1, "width": 1, "height": 1}
-    cursor = col("images").find(q, projection).sort("_id", -1).skip(offset).limit(limit)
-    items = list(cursor)
+    # Cursor-based pagination: when cursor is provided, fetch items with _id < cursor (descending order)
+    if cursor:
+        q["_id"] = {"$lt": cursor}
+    cur = col("images").find(q, projection).sort("_id", -1).limit(limit)
+    if not cursor and offset:
+        cur = cur.skip(offset)
+    items = list(cur)
     for it in items:
         it["_id"] = str(it["_id"])  # string id
     return items

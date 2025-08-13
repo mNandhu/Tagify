@@ -42,7 +42,7 @@ export default function AllImagesPage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const [offset, setOffset] = useState(0);
+  const [cursor, setCursor] = useState<string | null>(null);
   const limit = 100;
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -61,10 +61,10 @@ export default function AllImagesPage() {
     if (filters.logic) p.set("logic", filters.logic);
     if (filters.libraryId) p.set("library_id", filters.libraryId);
     if (filters.noTags) p.set("no_tags", "1");
-    p.set("offset", String(offset));
     p.set("limit", String(limit));
+    if (cursor) p.set("cursor", cursor);
     return p.toString();
-  }, [filters, offset]);
+  }, [filters, cursor]);
 
   // initial load and when filters or pagination change
   useEffect(() => {
@@ -72,8 +72,12 @@ export default function AllImagesPage() {
     setLoading(true);
     api<ImageDoc[]>(url)
       .then((data) => {
-        setItems((prev) => (offset === 0 ? data : [...prev, ...data]));
+        setItems((prev) => (cursor ? [...prev, ...data] : data));
         setHasMore(data.length === limit);
+        if (data.length) {
+          const last = data[data.length - 1];
+          setCursor(last._id);
+        }
       })
       .catch((e) => console.error(e))
       .finally(() => setLoading(false));
@@ -106,7 +110,7 @@ export default function AllImagesPage() {
 
   // push filters to URL when they change (excluding offset)
   useEffect(() => {
-    const sp = new URLSearchParams();
+  const sp = new URLSearchParams();
     filters.tags.forEach((t) => sp.append("tags", t));
     if (filters.logic) sp.set("logic", filters.logic);
     if (filters.libraryId) sp.set("library_id", filters.libraryId);
@@ -120,9 +124,9 @@ export default function AllImagesPage() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    setFilters((f) => ({ ...f, tags }));
-    setItems([]);
-    setOffset(0);
+  setFilters((f) => ({ ...f, tags }));
+  setItems([]);
+  setCursor(null);
   };
 
   // Keyboard shortcuts: S toggle selection, F focus search, N toggle no-tags
@@ -180,7 +184,9 @@ export default function AllImagesPage() {
     if (!el) return;
     const obs = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting) {
-        setOffset((o) => o + limit);
+  // Trigger next page: reuse last cursor in queryString to fetch next batch
+  // No state change needed here; data loader will advance cursor based on response
+  setLoading(true); // minimal nudge so loader effect doesn't skip due to no state change
       }
     });
     obs.observe(el);
@@ -342,7 +348,7 @@ export default function AllImagesPage() {
           if (filters.logic) sp.set("logic", filters.logic);
           if (filters.libraryId) sp.set("library_id", filters.libraryId);
           if (filters.noTags) sp.set("no_tags", "1");
-          sp.set("offset", String(offset));
+          if (cursor) sp.set("cursor", cursor);
           sp.set("limit", String(limit));
           navigate(`/image/${encodeURIComponent(id)}?${sp.toString()}`);
         }}

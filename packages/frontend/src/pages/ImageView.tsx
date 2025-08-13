@@ -32,7 +32,7 @@ export default function ImageView() {
   const [fileUrl, setFileUrl] = useState<string | null>(null);
 
   const query = useMemo(() => {
-    const allowed = ["tags", "logic", "library_id", "offset", "limit"];
+    const allowed = ["tags", "logic", "library_id", "cursor", "limit"];
     const sp = new URLSearchParams(searchParams);
     const out = new URLSearchParams();
     allowed.forEach((k) => {
@@ -44,7 +44,7 @@ export default function ImageView() {
 
   // Build return URL to gallery with filters preserved
   const returnQuery = useMemo(() => {
-    const allowed = ["tags", "logic", "library_id"];
+    const allowed = ["tags", "logic", "library_id", "cursor"];
     const sp = new URLSearchParams(searchParams);
     const out = new URLSearchParams();
     allowed.forEach((k) => sp.getAll(k).forEach((v) => out.append(k, v)));
