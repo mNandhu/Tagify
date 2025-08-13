@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Library = {
   _id: string;
@@ -23,6 +23,66 @@ export default function LibrariesPage() {
   const [editName, setEditName] = useState("");
   const [editPath, setEditPath] = useState("");
   const [editRescan, setEditRescan] = useState(false);
+
+  // Polling progress map
+  const [progress, setProgress] = useState<
+    Record<string, { scanning: boolean; scan_total: number; scan_done: number }>
+  >({});
+  const prevScanningRef = useRef<Record<string, boolean>>({});
+
+  // Compute which libraries need polling (those currently scanning)
+  const scanningIds = useMemo(
+    () => libs.filter((l: any) => l && (l as any).scanning).map((l) => l._id),
+    [libs]
+  );
+
+  // Poll scan progress for scanning libraries only
+  useEffect(() => {
+    if (!scanningIds.length) return;
+    let timer: number | undefined;
+    let cancelled = false;
+    const tick = async () => {
+      let updates: Record<
+        string,
+        { scanning: boolean; scan_total: number; scan_done: number }
+      > = {};
+      try {
+        await Promise.all(
+          scanningIds.map(async (id) => {
+            try {
+              const r = await fetch(`/api/libraries/${id}/progress`);
+              if (!r.ok) return;
+              const j = await r.json();
+              updates[id] = {
+                scanning: !!j.scanning,
+                scan_total: j.scan_total || 0,
+                scan_done: j.scan_done || 0,
+              };
+            } catch {}
+          })
+        );
+        // Detect scanning -> done transitions to refresh once
+        const prev = prevScanningRef.current;
+        let transitioned = false;
+        for (const [id, u] of Object.entries(updates)) {
+          if (prev[id] && !u.scanning) transitioned = true;
+        }
+        prevScanningRef.current = Object.fromEntries(
+          Object.entries(updates).map(([id, u]) => [id, u.scanning])
+        );
+        if (transitioned) refresh();
+        if (!cancelled) setProgress((p) => ({ ...p, ...updates }));
+      } finally {
+        const anyScanning = Object.values(updates).some((u) => u.scanning);
+        if (!cancelled && anyScanning) timer = window.setTimeout(tick, 1500);
+      }
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [scanningIds]);
 
   const refresh = async () => setLibs(await api<Library[]>(`/api/libraries`));
   useEffect(() => {
@@ -98,11 +158,12 @@ export default function LibrariesPage() {
                 <div className="text-xs text-neutral-400">{l.path}</div>
               </div>
               <div className="flex items-center gap-2">
-                {typeof l.indexed_count === "number" && (
-                  <span className="px-2 py-0.5 text-xs rounded bg-neutral-800 border border-neutral-700">
-                    {l.indexed_count} indexed
-                  </span>
-                )}
+                {!(progress[l._id]?.scanning || (l as any).scanning) &&
+                  typeof l.indexed_count === "number" && (
+                    <span className="px-2 py-0.5 text-xs rounded bg-neutral-800 border border-neutral-700">
+                      {l.indexed_count} indexed
+                    </span>
+                  )}
                 {l.last_scanned && (
                   <span
                     className="px-2 py-0.5 text-xs rounded bg-neutral-800 border border-neutral-700"
@@ -115,6 +176,20 @@ export default function LibrariesPage() {
                   <span className="px-2 py-0.5 text-xs rounded bg-purple-900/40 border border-purple-700 text-purple-300">
                     Rescanning…
                   </span>
+                )}
+                {progress[l._id]?.scanning && (
+                  <div className="mt-2 w-full min-w-[200px]">
+                    <progress
+                      className="w-full h-2 [&::-webkit-progress-bar]:bg-neutral-800 [&::-webkit-progress-value]:bg-purple-600 [&::-moz-progress-bar]:bg-purple-600 rounded"
+                      value={Math.max(0, progress[l._id]?.scan_done || 0)}
+                      max={Math.max(1, progress[l._id]?.scan_total || 1)}
+                      aria-label="Scanning progress"
+                    />
+                    <div className="mt-1 text-xs text-neutral-400">
+                      {progress[l._id]?.scan_done || 0} /{" "}
+                      {progress[l._id]?.scan_total || 0}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

@@ -4,10 +4,9 @@ import shutil
 
 from ..database.mongo import col
 from ..models.library import LibraryIn, LibraryUpdate
-from ..services.scanner import scan_library
+from ..services.scanner import scan_library_async
 from bson.objectid import ObjectId
 from ..core import config
-from datetime import datetime
 
 router = APIRouter()
 
@@ -36,18 +35,9 @@ async def add_library(body: LibraryIn):
         }
     )
     lib_id = str(res.inserted_id)
-    # trigger initial scan (sync for now)
-    count = scan_library(lib_id, body.path)
-    libraries.update_one(
-        {"_id": res.inserted_id},
-        {"$set": {"indexed_count": count, "last_scanned": datetime.utcnow()}},
-    )
-    return {
-        "_id": lib_id,
-        "path": body.path,
-        "name": body.name or body.path,
-        "indexed": count,
-    }
+    # trigger initial scan in background
+    scan_library_async(lib_id, body.path)
+    return {"_id": lib_id, "path": body.path, "name": body.name or body.path}
 
 
 @router.delete("/{library_id}")
@@ -77,12 +67,24 @@ async def rescan_library(library_id: str):
     lib = libraries.find_one({"_id": ObjectId(library_id)})
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
-    count = scan_library(library_id, lib["path"])
-    libraries.update_one(
-        {"_id": lib["_id"]},
-        {"$set": {"indexed_count": count, "last_scanned": datetime.utcnow()}},
-    )
-    return {"rescan": library_id, "indexed": count}
+    scan_library_async(library_id, lib["path"])
+    return {"rescan": library_id, "started": True}
+
+
+@router.get("/{library_id}/progress")
+async def library_progress(library_id: str):
+    libraries = col("libraries")
+    lib = libraries.find_one({"_id": ObjectId(library_id)})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Library not found")
+    return {
+        "scanning": lib.get("scanning", False),
+        "scan_total": lib.get("scan_total", 0),
+        "scan_done": lib.get("scan_done", 0),
+        "indexed_count": lib.get("indexed_count", 0),
+        "last_scanned": lib.get("last_scanned"),
+        "scan_error": lib.get("scan_error"),
+    }
 
 
 @router.patch("/{library_id}")
