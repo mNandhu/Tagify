@@ -22,7 +22,7 @@ export function GalleryGrid({
         <div key={it._id} className="mb-3 break-inside-avoid">
           <div className="relative group">
             <ImageThumbnail
-              src={it.thumb_rel ? `/api/thumbs/${it.thumb_rel}` : ""}
+              src={`/api/images/${encodeURIComponent(it._id)}/thumb`}
               alt={it.path}
               selected={selectionMode && selection.has(it._id)}
               onClick={() =>

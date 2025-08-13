@@ -1,7 +1,8 @@
 # Tagify Monorepo
 
-- packages/frontend: React + TypeScript + Tailwind (Vite)
-- packages/backend: FastAPI (Python) managed with uv
-- .thumbs: generated thumbnails storage
+MinIO buckets:
 
-See .github/prompts/tech_guide.md for architecture details.
+- tagify-thumbs: generated thumbnails (JPEG)
+- tagify-originals: original images
+
+See .github/prompts/tech_guide.md for architecture details. - FastAPI app with CORS for Vite, `/health` endpoint. Images are streamed from MinIO via `/images/:id/file` and `/images/:id/thumb`.

@@ -22,9 +22,6 @@ packages/**/.env
 .vscode/
 .idea/
 
-# Thumbs cache (kept as directory only)
-.thumbs/*
-!.thumbs/.gitkeep
 
 # Misc
 *.swp

@@ -31,11 +31,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ### Added
 
-- Monorepo structure using pnpm workspaces: `packages/frontend`, `packages/backend`, and shared `.thumbs/` directory.
+- Monorepo structure using pnpm workspaces: `packages/frontend`, `packages/backend`.
 - Root configuration: `.gitignore`, `pnpm-workspace.yaml`, root `package.json` scripts for backend dev.
 - Backend (FastAPI + uv):
   - `pyproject.toml` with dependencies: `fastapi[standard]`, `uvicorn`, `pymongo`, `pillow`, `python-dotenv`.
-  - FastAPI app with CORS for Vite, `/health` endpoint, and static `/thumbs` mount serving repo `.thumbs/`.
+  - FastAPI app with CORS for Vite, `/health` endpoint. Images are streamed via API backed by MinIO buckets.
   - Placeholder API routers: `libraries`, `images`, `tags`.
   - `.env.example` and config loader (`src/core/config.py`).
 - Frontend (Vite + React + TypeScript + Tailwind):

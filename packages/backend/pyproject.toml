@@ -9,7 +9,8 @@ dependencies = [
   "uvicorn",
   "pymongo",
   "pillow",
-  "python-dotenv"
+  "python-dotenv",
+  "minio"
 ]
 
 #[tool.uv]

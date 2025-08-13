@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import mimetypes
 
 from ..database.mongo import col
+from ..services.storage_minio import get_original, get_thumb
 
 router = APIRouter()
 
@@ -43,11 +44,36 @@ async def get_image(image_id: str):
 
 @router.get("/{image_id}/file")
 async def get_image_file(image_id: str):
-    img = col("images").find_one({"_id": image_id}, {"path": 1})
+    img = col("images").find_one({"_id": image_id}, {"path": 1, "original_key": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
+    original_key = img.get("original_key")
+    if original_key:
+        obj = get_original(original_key)
+        return StreamingResponse(
+            obj.stream(32 * 1024),
+            media_type=obj.headers.get("Content-Type", "application/octet-stream"),
+        )
+    # Fallback: serve from filesystem for pre-migration records
     path = img.get("path")
     if not path:
         raise HTTPException(status_code=404, detail="File path not available")
     media_type, _ = mimetypes.guess_type(path)
     return FileResponse(path, media_type=media_type)
+
+
+@router.get("/{image_id}/thumb")
+async def get_image_thumb(image_id: str):
+    img = col("images").find_one({"_id": image_id}, {"thumb_key": 1, "thumb_rel": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    thumb_key = img.get("thumb_key")
+    if thumb_key:
+        obj = get_thumb(thumb_key)
+        return StreamingResponse(obj.stream(32 * 1024), media_type="image/jpeg")
+    # Fallback to filesystem thumbs during migration if rel exists
+    rel = img.get("thumb_rel")
+    if not rel:
+        raise HTTPException(status_code=404, detail="Thumbnail not available")
+    # Legacy static path under /thumbs is removed in new setup; return 404 if not migrated
+    raise HTTPException(status_code=404, detail="Thumbnail not migrated yet")

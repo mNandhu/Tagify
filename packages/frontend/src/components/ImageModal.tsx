@@ -37,15 +37,11 @@ export function ImageModal({
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
       <div className="bg-neutral-900 border border-neutral-800 rounded max-w-6xl w-full h-[80vh] grid grid-cols-3">
         <div className="col-span-2 p-4 flex items-center justify-center overflow-auto">
-          {data.thumb_rel ? (
-            <img
-              src={`/api/thumbs/${data.thumb_rel}`}
-              alt="preview"
-              className="max-h-full max-w-full object-contain"
-            />
-          ) : (
-            <div className="text-neutral-400">No preview</div>
-          )}
+          <img
+            src={`/api/images/${encodeURIComponent(id)}/thumb`}
+            alt="preview"
+            className="max-h-full max-w-full object-contain"
+          />
         </div>
         <div className="border-l border-neutral-800 p-4 flex flex-col gap-3 overflow-auto">
           <div className="flex items-center justify-between">

@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,18 +13,12 @@ MONGO_URI: str = env_str("MONGO_URI", "mongodb://localhost:27017")
 AI_TAGGING_URL: str = env_str("AI_TAGGING_URL", "")
 
 
-# Thumbnails directory, default to repo root /.thumbs when running from backend folder
-def find_repo_thumbs(start: Path) -> Path:
-    p = start
-    for _ in range(6):
-        candidate = p / ".thumbs"
-        if candidate.exists():
-            return candidate
-        if p.parent == p:
-            break
-        p = p.parent
-    return start / ".thumbs"
+# Legacy THUMBS_DIR removed; MinIO is now the source of truth
 
-
-_default_thumbs = find_repo_thumbs(Path(__file__).resolve())
-THUMBS_DIR: Path = Path(env_str("THUMBS_DIR", str(_default_thumbs))).resolve()
+# MinIO / S3-compatible storage settings
+MINIO_ENDPOINT: str = env_str("MINIO_ENDPOINT", "127.0.0.1:9000")
+MINIO_ACCESS_KEY: str = env_str("MINIO_ACCESS_KEY", "")
+MINIO_SECRET_KEY: str = env_str("MINIO_SECRET_KEY", "")
+MINIO_SECURE: bool = env_str("MINIO_SECURE", "false").lower() == "true"
+MINIO_BUCKET_THUMBS: str = env_str("MINIO_BUCKET_THUMBS", "tagify-thumbs")
+MINIO_BUCKET_ORIGINALS: str = env_str("MINIO_BUCKET_ORIGINALS", "tagify-originals")

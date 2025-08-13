@@ -1,9 +1,10 @@
 from __future__ import annotations
 import os
 from pathlib import Path
+from io import BytesIO
 from PIL import Image as PILImage
 from ..database.mongo import col
-from .thumbnails import generate_thumbnail
+from .storage_minio import put_thumb, put_original
 import hashlib
 import mimetypes
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,6 +13,17 @@ from multiprocessing import cpu_count
 from threading import Lock
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+
+
+def _make_thumb_bytes(path: Path) -> bytes | None:
+    try:
+        with PILImage.open(path) as img:
+            img.thumbnail((512, 512))
+            buf = BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=85)
+            return buf.getvalue()
+    except Exception:
+        return None
 
 
 def is_image(path: Path) -> bool:
@@ -48,8 +60,25 @@ def scan_library(library_id: str, root: str) -> int:
                     pass
                 # relative path within library
                 rel = str(p.relative_to(root_path))
-                # generate thumbnail and store relative path for serving via /thumbs
-                thumb_rel = generate_thumbnail(library_id, str(p), rel)
+                # Upload to MinIO
+                thumb_bytes = _make_thumb_bytes(p)
+                original_key = None
+                thumb_key = None
+                try:
+                    mt, _ = mimetypes.guess_type(str(p))
+                    with open(p, "rb") as f:
+                        original_key = put_original(
+                            library_id, f"{library_id}:{rel}", f, stat.st_size, mt
+                        )
+                except Exception:
+                    original_key = None
+                if thumb_bytes is not None:
+                    try:
+                        thumb_key = put_thumb(
+                            library_id, f"{library_id}:{rel}", thumb_bytes
+                        )
+                    except Exception:
+                        thumb_key = None
                 doc = {
                     "_id": f"{library_id}:{rel}",
                     "library_id": library_id,
@@ -59,7 +88,8 @@ def scan_library(library_id: str, root: str) -> int:
                     "height": height,
                     "ctime": stat.st_ctime,
                     "mtime": stat.st_mtime,
-                    "thumb_rel": thumb_rel,
+                    "original_key": original_key,
+                    "thumb_key": thumb_key,
                 }
                 images_col.update_one(
                     {"_id": doc["_id"]},
@@ -89,7 +119,27 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> bool:
         except Exception:
             pass
         rel = str(p.relative_to(root_path))
-        thumb_rel = generate_thumbnail(library_id, str(p), rel)
+        # Generate a thumbnail in-memory for MinIO
+        thumb_bytes: bytes | None = _make_thumb_bytes(p)
+
+        original_key = None
+        thumb_key = None
+        # Upload original
+        try:
+            mt, _ = mimetypes.guess_type(str(p))
+            with open(p, "rb") as f:
+                original_key = put_original(
+                    library_id, f"{library_id}:{rel}", f, stat.st_size, mt
+                )
+        except Exception:
+            original_key = None
+        # Upload thumbnail if generated
+        if thumb_bytes is not None:
+            try:
+                thumb_key = put_thumb(library_id, f"{library_id}:{rel}", thumb_bytes)
+            except Exception:
+                thumb_key = None
+
         doc = {
             "_id": f"{library_id}:{rel}",
             "library_id": library_id,
@@ -99,7 +149,8 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> bool:
             "height": height,
             "ctime": stat.st_ctime,
             "mtime": stat.st_mtime,
-            "thumb_rel": thumb_rel,
+            "original_key": original_key,
+            "thumb_key": thumb_key,
         }
         col("images").update_one(
             {"_id": doc["_id"]},

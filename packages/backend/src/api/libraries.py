@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException
-from pathlib import Path
-import shutil
+
 
 from ..database.mongo import col
 from ..models.library import LibraryIn, LibraryUpdate
 from ..services.scanner import scan_library_async
 from bson.objectid import ObjectId
-from ..core import config
+
+from ..services.storage_minio import delete_by_prefix
 
 router = APIRouter()
 
@@ -50,13 +50,11 @@ async def remove_library(library_id: str):
         raise HTTPException(status_code=400, detail="Invalid library id")
     libraries.delete_one({"_id": oid})
     images.delete_many({"library_id": library_id})
-    # remove thumbnails folder for this library
-    thumbs_dir = Path(config.THUMBS_DIR) / library_id
+    # remove MinIO objects for this library
     try:
-        if thumbs_dir.exists() and thumbs_dir.is_dir():
-            shutil.rmtree(thumbs_dir)
+        delete_by_prefix(f"{library_id}/")
     except Exception:
-        # ignore failures to remove thumbnails
+        # ignore failures to remove objects
         pass
     return {"removed": library_id}
 

@@ -1,8 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from .api import libraries, images, tags
-from .core import config
 
 app = FastAPI(title="Tagify API", version="0.1.0")
 
@@ -15,8 +13,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve thumbnails statically
-app.mount("/thumbs", StaticFiles(directory=str(config.THUMBS_DIR)), name="thumbs")
+# Static thumbnails mount removed; images served via API backed by MinIO
 
 
 @app.get("/health")
