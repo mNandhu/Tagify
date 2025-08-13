@@ -1,0 +1,31 @@
+# Node
+node_modules/
+.pnpm-store/
+*.log
+
+# Python / uv
+.venv/
+uv.lock
+__pycache__/
+*.pyc
+
+# Env
+.env
+.env.*
+packages/**/.env
+
+# Builds
+/dist/
+/build/
+
+# IDE
+.vscode/
+.idea/
+
+# Thumbs cache (kept as directory only)
+.thumbs/*
+!.thumbs/.gitkeep
+
+# Misc
+*.swp
+*.swo

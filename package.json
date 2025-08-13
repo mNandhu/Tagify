@@ -1,0 +1,13 @@
+{
+    "name": "tagify-root",
+    "private": true,
+    "version": "0.1.0",
+    "workspaces": [
+        "packages/*"
+    ],
+    "scripts": {
+        "dev:backend": "pwsh -NoLogo -NoProfile -Command \"cd packages/backend; uv run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000\"",
+        "dev:frontend": "echo Frontend dev server requires pnpm. Install pnpm and run from packages/frontend",
+        "dev": "pwsh -NoLogo -NoProfile -Command \"Write-Host 'Tip: open two terminals and run pnpm -C packages/frontend dev and pnpm dev:backend'\""
+    }
+}
