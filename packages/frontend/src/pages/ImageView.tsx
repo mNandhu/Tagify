@@ -144,9 +144,9 @@ export default function ImageView() {
             <Info />
           </button>
         )}
-    {data ? (
+        {data ? (
           <img
-      src={fileUrl || `/api/images/${encodeURIComponent(data._id)}/file`}
+            src={fileUrl || `/api/images/${encodeURIComponent(data._id)}/file`}
             alt="image"
             onLoad={() => setImgLoaded(true)}
             className={`max-w-full max-h-[90vh] object-contain transition-opacity duration-300 ${

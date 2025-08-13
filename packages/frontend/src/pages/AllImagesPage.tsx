@@ -43,6 +43,7 @@ export default function AllImagesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [cursor, setCursor] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const limit = 100;
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -76,7 +77,9 @@ export default function AllImagesPage() {
         setHasMore(data.length === limit);
         if (data.length) {
           const last = data[data.length - 1];
-          setCursor(last._id);
+          setNextCursor(last._id);
+        } else {
+          setNextCursor(null);
         }
       })
       .catch((e) => console.error(e))
@@ -108,9 +111,9 @@ export default function AllImagesPage() {
     }
   }, [searchParams, setSearchParams]);
 
-  // push filters to URL when they change (excluding offset)
+  // push filters to URL when they change (excluding pagination cursor)
   useEffect(() => {
-  const sp = new URLSearchParams();
+    const sp = new URLSearchParams();
     filters.tags.forEach((t) => sp.append("tags", t));
     if (filters.logic) sp.set("logic", filters.logic);
     if (filters.libraryId) sp.set("library_id", filters.libraryId);
@@ -124,9 +127,9 @@ export default function AllImagesPage() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-  setFilters((f) => ({ ...f, tags }));
-  setItems([]);
-  setCursor(null);
+    setFilters((f) => ({ ...f, tags }));
+    setItems([]);
+    setCursor(null);
   };
 
   // Keyboard shortcuts: S toggle selection, F focus search, N toggle no-tags
@@ -153,7 +156,8 @@ export default function AllImagesPage() {
           return { ...f, noTags: next };
         });
         setItems([]);
-        setOffset(0);
+        setCursor(null);
+        setNextCursor(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -184,14 +188,14 @@ export default function AllImagesPage() {
     if (!el) return;
     const obs = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting) {
-  // Trigger next page: reuse last cursor in queryString to fetch next batch
-  // No state change needed here; data loader will advance cursor based on response
-  setLoading(true); // minimal nudge so loader effect doesn't skip due to no state change
+        if (nextCursor && !loading) {
+          setCursor(nextCursor);
+        }
       }
     });
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasMore, loading]);
+  }, [hasMore, loading, nextCursor]);
 
   return (
     <div className="p-4 space-y-3">
@@ -297,7 +301,8 @@ export default function AllImagesPage() {
               onClick={() => {
                 setFilters((f) => ({ ...f, noTags: !f.noTags }));
                 setItems([]);
-                setOffset(0);
+                setCursor(null);
+                setNextCursor(null);
               }}
               aria-label={filters.noTags ? "No tags on" : "No tags off"}
               title="No tags"
