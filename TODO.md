@@ -115,6 +115,6 @@ Testing note
   - Prefer CSS contain and transform-only animations to keep paint costs low.
 - Backend
   - Add indexes on images: tags (multikey), library_id, and compound (library_id, tags) if needed.
-  - Paginate with stable sort (e.g., _id) and consider cursor-based pagination for large collections.
+  - Paginate with stable sort (e.g., \_id) and consider cursor-based pagination for large collections.
   - Stream original files efficiently; apply conditional GET with ETag/Last-Modified.
   - Cache tag aggregations; maintain precomputed counts per library for faster Tags page.
