@@ -17,7 +17,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   - Tag aggregation TTL cache (30s) with invalidation on tag changes.
   - HTTP Range support for originals with correct `206 Partial Content`, `Content-Range`, and `Accept-Ranges: bytes`.
   - Scanner concurrency cap via `SCANNER_MAX_WORKERS`.
-  - Phase 1 (start): Configurable pre-signed media delivery via `MEDIA_PRESIGNED_MODE` = off|redirect|url and `MEDIA_PRESIGNED_EXPIRES` for expiry.
+  - Phase 1 (start): Configurable pre-signed media delivery via `MEDIA_PRESIGNED_MODE` = off|redirect|url and `MEDIA_PRESIGNED_EXPIRES` for expiry. Frontend updated to handle `url` mode seamlessly; backend default set to `redirect` to offload media.
 
 ### Notes
 

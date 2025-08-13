@@ -8,6 +8,7 @@ import {
   X,
   Sparkles,
 } from "lucide-react";
+import { resolveMediaUrl } from "../lib/media";
 
 type ImageDoc = {
   _id: string;
@@ -28,6 +29,7 @@ export default function ImageView() {
   const [list, setList] = useState<ImageDoc[]>([]);
   const [index, setIndex] = useState<number>(-1);
   const [imgLoaded, setImgLoaded] = useState(false);
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
 
   const query = useMemo(() => {
     const allowed = ["tags", "logic", "library_id", "offset", "limit"];
@@ -55,6 +57,16 @@ export default function ImageView() {
     fetch(`/api/images/${id}`).then(async (r) => setData(await r.json()));
   }, [id]);
 
+  // Resolve the actual file URL (supports pre-signed URL mode)
+  useEffect(() => {
+    if (!id) return;
+    const ep = `/api/images/${encodeURIComponent(id)}/file`;
+    setFileUrl(ep);
+    resolveMediaUrl(ep)
+      .then((u) => setFileUrl(u))
+      .catch(() => setFileUrl(ep));
+  }, [id]);
+
   useEffect(() => {
     const url = `/api/images${query ? `?${query}` : ""}`;
     fetch(url)
@@ -67,14 +79,17 @@ export default function ImageView() {
     setIndex(list.findIndex((x) => x._id === id));
   }, [id, list]);
 
-  // Preload previous/next images for snappier navigation
+  // Preload previous/next images for snappier navigation (works with redirect & url modes)
   useEffect(() => {
     if (!list.length || index < 0) return;
     const preload = (idx: number) => {
       const it = list[idx];
       if (!it) return;
       const img = new Image();
-      img.src = `/api/images/${encodeURIComponent(it._id)}/file`;
+      const ep = `/api/images/${encodeURIComponent(it._id)}/file`;
+      resolveMediaUrl(ep)
+        .then((u) => (img.src = u))
+        .catch(() => (img.src = ep));
     };
     preload(index - 1);
     preload(index + 1);
@@ -129,9 +144,9 @@ export default function ImageView() {
             <Info />
           </button>
         )}
-        {data ? (
+    {data ? (
           <img
-            src={`/api/images/${encodeURIComponent(data._id)}/file`}
+      src={fileUrl || `/api/images/${encodeURIComponent(data._id)}/file`}
             alt="image"
             onLoad={() => setImgLoaded(true)}
             className={`max-w-full max-h-[90vh] object-contain transition-opacity duration-300 ${

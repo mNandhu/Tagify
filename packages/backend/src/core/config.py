@@ -27,6 +27,6 @@ MINIO_BUCKET_ORIGINALS: str = env_str("MINIO_BUCKET_ORIGINALS", "tagify-original
 SCANNER_MAX_WORKERS: int = int(env_str("SCANNER_MAX_WORKERS", "0") or "0")
 
 # Media delivery mode: 'off' (proxy via API), 'redirect' (302/307 to presigned), 'url' (API returns URL JSON)
-MEDIA_PRESIGNED_MODE: str = env_str("MEDIA_PRESIGNED_MODE", "off").lower()
+MEDIA_PRESIGNED_MODE: str = env_str("MEDIA_PRESIGNED_MODE", "redirect").lower()
 # Expiration for presigned URLs in seconds
 MEDIA_PRESIGNED_EXPIRES: int = int(env_str("MEDIA_PRESIGNED_EXPIRES", "3600") or "3600")
