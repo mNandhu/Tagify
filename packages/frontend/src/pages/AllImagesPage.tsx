@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { GalleryGrid } from "../components/GalleryGrid";
 
@@ -28,10 +28,14 @@ export default function AllImagesPage() {
     logic: "and",
   });
   const [selection, setSelection] = useState<Set<string>>(new Set());
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const [offset, setOffset] = useState(0);
+  const limit = 100;
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // load libraries for filter
   useEffect(() => {
@@ -45,32 +49,55 @@ export default function AllImagesPage() {
     if (filters.tags.length) filters.tags.forEach((t) => p.append("tags", t));
     if (filters.logic) p.set("logic", filters.logic);
     if (filters.libraryId) p.set("library_id", filters.libraryId);
+    p.set("offset", String(offset));
+    p.set("limit", String(limit));
     return p.toString();
-  }, [filters]);
+  }, [filters, offset]);
 
+  // initial load and when filters or pagination change
   useEffect(() => {
     const url = `/api/images${queryString ? `?${queryString}` : ""}`;
+    setLoading(true);
     api<ImageDoc[]>(url)
-      .then(setItems)
-      .catch((e) => console.error(e));
+      .then((data) => {
+        setItems((prev) => (offset === 0 ? data : [...prev, ...data]));
+        setHasMore(data.length === limit);
+      })
+      .catch((e) => console.error(e))
+      .finally(() => setLoading(false));
   }, [queryString]);
 
-  // sync filters from URL (?tag=... can appear multiple times)
+  // sync filters from URL on mount and whenever search params change
   useEffect(() => {
-    const urlTags = searchParams.getAll("tag");
-    const lib = searchParams.get("library_id") || undefined;
-    if (urlTags.length || lib) {
+    const sp = new URLSearchParams(searchParams);
+    const urlTags = sp.getAll("tags");
+    const singleTag = sp.getAll("tag");
+    const lib = sp.get("library_id") || undefined;
+    const logic = (sp.get("logic") as Filters["logic"]) || undefined;
+    const nextTags = urlTags.length ? urlTags : singleTag;
+    if (nextTags.length || lib || logic) {
       setFilters((f) => ({
         ...f,
-        tags: urlTags.length ? urlTags : f.tags,
+        tags: nextTags.length ? nextTags : f.tags,
         libraryId: lib,
+        logic: logic || f.logic,
       }));
-      // Clean one-time tag param from URL to keep things tidy
-      const sp = new URLSearchParams(searchParams);
-      sp.delete("tag");
-      setSearchParams(sp, { replace: true });
+      if (singleTag.length) {
+        singleTag.forEach(() => sp.delete("tag"));
+        nextTags.forEach((t) => sp.append("tags", t));
+        setSearchParams(sp, { replace: true });
+      }
     }
   }, [searchParams, setSearchParams]);
+
+  // push filters to URL when they change (excluding offset)
+  useEffect(() => {
+    const sp = new URLSearchParams();
+    filters.tags.forEach((t) => sp.append("tags", t));
+    if (filters.logic) sp.set("logic", filters.logic);
+    if (filters.libraryId) sp.set("library_id", filters.libraryId);
+    setSearchParams(sp, { replace: true });
+  }, [filters, setSearchParams]);
 
   const onSubmitSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,6 +106,8 @@ export default function AllImagesPage() {
       .map((s) => s.trim())
       .filter(Boolean);
     setFilters((f) => ({ ...f, tags }));
+    setItems([]);
+    setOffset(0);
   };
 
   const toggleSelection = (id: string) =>
@@ -90,6 +119,27 @@ export default function AllImagesPage() {
 
   const clearSelection = () => setSelection(new Set());
   const selectionActive = selection.size > 0;
+
+  // when turning off selection mode, clear current selection
+  useEffect(() => {
+    if (!selectionMode && selectionActive) {
+      setSelection(new Set());
+    }
+  }, [selectionMode]);
+
+  // observe sentinel for infinite scroll
+  useEffect(() => {
+    if (!hasMore || loading) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        setOffset((o) => o + limit);
+      }
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loading]);
 
   return (
     <div className="p-4 space-y-3">
@@ -119,7 +169,7 @@ export default function AllImagesPage() {
         >
           {selectionMode ? "Done Selecting" : "Select"}
         </button>
-        {selectionActive && (
+        {selectionMode && selectionActive && (
           <button
             className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500"
             onClick={() =>
@@ -199,9 +249,19 @@ export default function AllImagesPage() {
         items={items}
         selection={selection}
         onToggle={toggleSelection}
-        onOpen={(id) => navigate(`/image/${encodeURIComponent(id)}`)}
+        onOpen={(id) => {
+          const sp = new URLSearchParams();
+          filters.tags.forEach((t) => sp.append("tags", t));
+          if (filters.logic) sp.set("logic", filters.logic);
+          if (filters.libraryId) sp.set("library_id", filters.libraryId);
+          sp.set("offset", String(offset));
+          sp.set("limit", String(limit));
+          navigate(`/image/${encodeURIComponent(id)}?${sp.toString()}`);
+        }}
         selectionMode={selectionMode}
       />
+
+      <div ref={sentinelRef} className="h-8" />
     </div>
   );
 }

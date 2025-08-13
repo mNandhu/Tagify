@@ -7,6 +7,7 @@ from ..models.library import LibraryIn, LibraryUpdate
 from ..services.scanner import scan_library
 from bson.objectid import ObjectId
 from ..core import config
+from datetime import datetime
 
 router = APIRouter()
 
@@ -26,10 +27,21 @@ async def add_library(body: LibraryIn):
     if existing:
         existing["_id"] = str(existing["_id"])
         return existing
-    res = libraries.insert_one({"path": body.path, "name": body.name or body.path})
+    res = libraries.insert_one(
+        {
+            "path": body.path,
+            "name": body.name or body.path,
+            "indexed_count": 0,
+            "last_scanned": None,
+        }
+    )
     lib_id = str(res.inserted_id)
     # trigger initial scan (sync for now)
     count = scan_library(lib_id, body.path)
+    libraries.update_one(
+        {"_id": res.inserted_id},
+        {"$set": {"indexed_count": count, "last_scanned": datetime.utcnow()}},
+    )
     return {
         "_id": lib_id,
         "path": body.path,
@@ -66,6 +78,10 @@ async def rescan_library(library_id: str):
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
     count = scan_library(library_id, lib["path"])
+    libraries.update_one(
+        {"_id": lib["_id"]},
+        {"$set": {"indexed_count": count, "last_scanned": datetime.utcnow()}},
+    )
     return {"rescan": library_id, "indexed": count}
 
 

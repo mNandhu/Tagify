@@ -14,10 +14,14 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-dvh bg-neutral-900 text-white flex">
-      <Sidebar current={loc.pathname} onNavigate={navigate} />
-      <div className="flex-1 flex flex-col">
-        <header className="p-4 border-b border-neutral-800 flex items-center justify-between">
+    <div className="h-dvh bg-neutral-900 text-white">
+      {/* Fixed sidebar */}
+      <div className="fixed inset-y-0 left-0 w-16">
+        <Sidebar current={loc.pathname} onNavigate={navigate} />
+      </div>
+      {/* Main column shifted right of sidebar */}
+      <div className="ml-16 h-full flex flex-col">
+        <header className="sticky top-0 z-10 p-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-900/95 backdrop-blur">
           <h1 className="text-xl font-semibold">Tagify</h1>
           <div className="text-sm text-neutral-300">Backend: {status}</div>
         </header>

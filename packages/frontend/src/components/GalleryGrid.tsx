@@ -24,7 +24,7 @@ export function GalleryGrid({
             <ImageThumbnail
               src={it.thumb_rel ? `/api/thumbs/${it.thumb_rel}` : ""}
               alt={it.path}
-              selected={selection.has(it._id)}
+              selected={selectionMode && selection.has(it._id)}
               onClick={() =>
                 selectionMode ? onToggle(it._id) : onOpen(it._id)
               }

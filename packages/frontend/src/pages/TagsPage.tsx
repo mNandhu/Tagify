@@ -25,7 +25,7 @@ export default function TagsPage() {
           <button
             key={t._id}
             className="rounded overflow-hidden bg-neutral-900 border border-neutral-800 p-4 text-left hover:bg-neutral-800"
-            onClick={() => navigate(`/?tag=${encodeURIComponent(t._id)}`)}
+            onClick={() => navigate(`/?tags=${encodeURIComponent(t._id)}`)}
           >
             <div className="text-lg font-semibold">{t._id}</div>
             <div className="text-xs text-neutral-400">{t.count} images</div>
