@@ -9,7 +9,7 @@
         "concurrently": "^9.1.2"
     },
     "scripts": {
-        "dev:backend": "pwsh -NoLogo -NoProfile -Command \"cd packages/backend; uv run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000\"",
+        "dev:backend": "uv --directory packages/backend run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000",
         "dev:frontend": "pnpm -C packages/frontend dev",
         "dev": "concurrently -c auto -n backend,frontend \"pnpm dev:backend\" \"pnpm dev:frontend\""
     }
