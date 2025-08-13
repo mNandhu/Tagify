@@ -56,23 +56,15 @@ export default function AllImagesPage() {
 
   // initial load and when filters or pagination change
   useEffect(() => {
-    const controller = new AbortController();
     const url = `/api/images${queryString ? `?${queryString}` : ""}`;
     setLoading(true);
-    fetch(url, { signal: controller.signal })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(await r.text());
-        return r.json();
-      })
-      .then((data: ImageDoc[]) => {
+    api<ImageDoc[]>(url)
+      .then((data) => {
         setItems((prev) => (offset === 0 ? data : [...prev, ...data]));
         setHasMore(data.length === limit);
       })
-      .catch((e) => {
-        if (e.name !== "AbortError") console.error(e);
-      })
+      .catch((e) => console.error(e))
       .finally(() => setLoading(false));
-    return () => controller.abort();
   }, [queryString]);
 
   // sync filters from URL on mount and whenever search params change
@@ -269,16 +261,6 @@ export default function AllImagesPage() {
         selectionMode={selectionMode}
       />
 
-      {(loading || hasMore) && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-40 bg-neutral-900/60 border border-neutral-800 rounded animate-pulse"
-            />
-          ))}
-        </div>
-      )}
       <div ref={sentinelRef} className="h-8" />
     </div>
   );
