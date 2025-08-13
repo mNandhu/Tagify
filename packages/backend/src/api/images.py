@@ -1,9 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query, Request, Header
+from fastapi import APIRouter, HTTPException, Query, Request, Header, Response
 from fastapi.responses import FileResponse, StreamingResponse
 import mimetypes
 
 from ..database.mongo import col
-from ..services.storage_minio import get_original, get_thumb, stat_original
+from ..services.storage_minio import (
+    get_original,
+    get_thumb,
+    stat_original,
+    presign_original,
+    presign_thumb,
+)
+from ..core import config
 
 
 def _find_image_doc(image_id: str, projection: dict | None = None):
@@ -66,6 +73,15 @@ def get_image_file(
         raise HTTPException(status_code=404, detail="Image not found")
     original_key = img.get("original_key")
     if original_key:
+        # If presigned mode is enabled and no Range requested, offload via redirect or return URL
+        if not range and config.MEDIA_PRESIGNED_MODE in ("redirect", "url"):
+            url = presign_original(original_key)
+            if config.MEDIA_PRESIGNED_MODE == "redirect":
+                resp = Response(status_code=307)
+                resp.headers["Location"] = url
+                return resp
+            else:
+                return {"url": url}
         # Support HTTP Range for partial content
         if range:
             # Parse bytes=start-end
@@ -129,6 +145,14 @@ def get_image_thumb(image_id: str):
         raise HTTPException(status_code=404, detail="Image not found")
     thumb_key = img.get("thumb_key")
     if thumb_key:
+        if config.MEDIA_PRESIGNED_MODE in ("redirect", "url"):
+            url = presign_thumb(thumb_key)
+            if config.MEDIA_PRESIGNED_MODE == "redirect":
+                resp = Response(status_code=307)
+                resp.headers["Location"] = url
+                return resp
+            else:
+                return {"url": url}
         obj = get_thumb(thumb_key)
         headers = {}
         etag = obj.headers.get("ETag")

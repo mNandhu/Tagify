@@ -6,6 +6,7 @@ from minio import Minio
 from minio.deleteobjects import DeleteObject
 
 from ..core import config
+from datetime import timedelta
 
 _client: Optional[Minio] = None
 
@@ -87,6 +88,22 @@ def stat_original(key: str):
     """Return metadata for original object (size, etag, content-type)."""
     client = get_minio()
     return client.stat_object(config.MINIO_BUCKET_ORIGINALS, key)
+
+
+def presign_original(key: str, expires: int | None = None) -> str:
+    client = get_minio()
+    ttl = expires or config.MEDIA_PRESIGNED_EXPIRES
+    return client.presigned_get_object(
+        config.MINIO_BUCKET_ORIGINALS, key, expires=timedelta(seconds=int(ttl))
+    )
+
+
+def presign_thumb(key: str, expires: int | None = None) -> str:
+    client = get_minio()
+    ttl = expires or config.MEDIA_PRESIGNED_EXPIRES
+    return client.presigned_get_object(
+        config.MINIO_BUCKET_THUMBS, key, expires=timedelta(seconds=int(ttl))
+    )
 
 
 def delete_by_prefix(prefix: str):
