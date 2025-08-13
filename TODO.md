@@ -76,6 +76,9 @@ A living checklist of work items for Tagify. Priorities: P0 (now), P1 (next), P2
 - Tagging: can add/remove tags individually and in batch; AI suggestions can be previewed and applied.
 - Gallery: smooth scroll with virtualization; search returns results < 200ms on indexed set (local).
 
+Testing note
+- Filters: Defer full verification of tag-based filters until a UI to add tags exists; add sample tags via API or UI before testing combinations (AND/OR, library filter, and no-tags).
+
 ## Open questions / decisions pending
 
 - Where to store user preferences (localStorage vs DB)?

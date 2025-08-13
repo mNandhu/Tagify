@@ -7,11 +7,15 @@ router = APIRouter()
 
 @router.get("")
 async def list_images(
-    tags: list[str] | None = Query(default=None), logic: str = Query(default="and")
+    tags: list[str] | None = Query(default=None),
+    logic: str = Query(default="and"),
+    library_id: str | None = Query(default=None),
 ):
-    q = {}
+    q: dict = {}
     if tags:
         q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}
+    if library_id:
+        q["library_id"] = library_id
     items = list(col("images").find(q).limit(200))
     for it in items:
         it["_id"] = str(it["_id"])  # string id
