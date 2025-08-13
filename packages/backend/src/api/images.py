@@ -176,6 +176,17 @@ def get_image_thumb(image_id: str):
     raise HTTPException(status_code=404, detail="Thumbnail not migrated yet")
 
 
+@router.head("/{image_id:path}/thumb")
+def head_image_thumb(image_id: str):
+    img = _find_image_doc(image_id, {"thumb_key": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    if config.MEDIA_PRESIGNED_MODE == "url":
+        return Response(status_code=200, media_type="application/json")
+    headers = {"Accept-Ranges": "bytes"}
+    return Response(status_code=200, headers=headers, media_type="image/jpeg")
+
+
 @router.get("/{image_id:path}")
 def get_image(image_id: str):
     img = _find_image_doc(image_id)
@@ -183,3 +194,24 @@ def get_image(image_id: str):
         raise HTTPException(status_code=404, detail="Image not found")
     img["_id"] = str(img["_id"])
     return img
+
+
+@router.head("/{image_id:path}/file")
+def head_image_file(image_id: str):
+    img = _find_image_doc(image_id, {"original_key": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    if config.MEDIA_PRESIGNED_MODE == "url":
+        return Response(status_code=200, media_type="application/json")
+    original_key = img.get("original_key")
+    media_type = "application/octet-stream"
+    headers: dict[str, str] = {"Accept-Ranges": "bytes"}
+    if original_key:
+        try:
+            st = stat_original(original_key)
+            mt = getattr(st, "content_type", None)
+            if isinstance(mt, str) and mt:
+                media_type = mt
+        except Exception:
+            pass
+    return Response(status_code=200, headers=headers, media_type=media_type)
