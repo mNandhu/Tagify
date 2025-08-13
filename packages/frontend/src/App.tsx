@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
 import { Tag } from "lucide-react";
 
 export default function App() {
-  const [status, setStatus] = useState("loading...");
+  const [status, setStatus] = useState("loading");
   const loc = useLocation();
   const navigate = useNavigate();
 
@@ -13,6 +13,26 @@ export default function App() {
       .then(async (r) => setStatus((await r.json()).status))
       .catch(() => setStatus("offline"));
   }, []);
+
+  const statusClasses = useMemo(() => {
+    switch (status) {
+      case "ok":
+        return {
+          container: "bg-emerald-900/25 border-emerald-700 text-emerald-200",
+          dot: "bg-emerald-400",
+        };
+      case "offline":
+        return {
+          container: "bg-red-900/25 border-red-700 text-red-200",
+          dot: "bg-red-400",
+        };
+      default:
+        return {
+          container: "bg-amber-900/25 border-amber-700 text-amber-200",
+          dot: "bg-amber-400 animate-pulse",
+        };
+    }
+  }, [status]);
 
   return (
     <div className="h-dvh bg-neutral-900 text-white">
@@ -31,7 +51,19 @@ export default function App() {
               Tagify
             </span>
           </h1>
-          <div className="text-sm text-neutral-300">Backend: {status}</div>
+          <div
+            className={
+              "inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border " +
+              statusClasses.container
+            }
+            aria-label={`Backend status: ${status}`}
+            title={`Backend: ${status}`}
+          >
+            <span className="opacity-90">Backend</span>
+            <span
+              className={`ml-1 h-2 w-2 rounded-full shadow-[0_0_0_1px_rgba(0,0,0,0.25)] ${statusClasses.dot}`}
+            />
+          </div>
         </header>
         <div className="flex-1 overflow-auto">
           <Outlet />
