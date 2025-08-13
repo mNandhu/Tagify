@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useToast } from "../components/Toasts";
 
 type Library = {
   _id: string;
@@ -15,6 +16,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export default function LibrariesPage() {
+  const { push } = useToast();
   const [libs, setLibs] = useState<Library[]>([]);
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
@@ -141,6 +143,7 @@ export default function LibrariesPage() {
             setPath("");
             setName("");
             refresh();
+            push("Library added", "success");
           }}
         >
           + Add Library
@@ -202,6 +205,7 @@ export default function LibrariesPage() {
                     await api(`/api/libraries/${l._id}/rescan`, {
                       method: "POST",
                     });
+                    push(`Rescan started for ${l.name || l.path}`, "info");
                   } finally {
                     refresh();
                     setRescanning((s) => {
@@ -209,6 +213,7 @@ export default function LibrariesPage() {
                       n.delete(l._id);
                       return n;
                     });
+                    push(`Rescan requested`, "success");
                   }
                 }}
                 disabled={rescanning.has(l._id)}
@@ -289,6 +294,7 @@ export default function LibrariesPage() {
                         await api(`/api/libraries/${editId}/rescan`, {
                           method: "POST",
                         });
+                        push("Rescan started", "info");
                       } finally {
                         setRescanning((s) => {
                           const n = new Set(s);
@@ -299,6 +305,7 @@ export default function LibrariesPage() {
                     }
                     setEditId(null);
                     refresh();
+                    push("Library saved", "success");
                   }}
                 >
                   Save

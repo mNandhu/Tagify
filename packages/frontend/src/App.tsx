@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
+import { Tag } from "lucide-react";
 
 export default function App() {
   const [status, setStatus] = useState("loading...");
@@ -22,7 +23,14 @@ export default function App() {
       {/* Main column shifted right of sidebar */}
       <div className="ml-16 h-full flex flex-col">
         <header className="sticky top-0 z-10 p-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-900/95 backdrop-blur">
-          <h1 className="text-xl font-semibold">Tagify</h1>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2 select-none">
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 via-fuchsia-500 to-blue-500 text-white">
+              <Tag size={18} />
+            </span>
+            <span className="bg-gradient-to-br from-purple-400 via-fuchsia-300 to-blue-300 bg-clip-text text-transparent">
+              Tagify
+            </span>
+          </h1>
           <div className="text-sm text-neutral-300">Backend: {status}</div>
         </header>
         <div className="flex-1 overflow-auto">

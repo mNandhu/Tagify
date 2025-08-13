@@ -23,6 +23,8 @@ export function ImageThumbnail({
       <img
         src={src}
         alt={alt}
+        decoding="async"
+        fetchPriority="low"
         className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
         loading="lazy"
       />

@@ -8,6 +8,7 @@ import LibrariesPage from "./pages/LibrariesPage";
 import TagsPage from "./pages/TagsPage";
 import SettingsPage from "./pages/SettingsPage";
 import ImageView from "./pages/ImageView";
+import { ToastProvider } from "./components/Toasts";
 
 const router = createBrowserRouter([
   {
@@ -25,6 +26,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <ToastProvider>
+      <RouterProvider router={router} />
+    </ToastProvider>
   </React.StrictMode>
 );

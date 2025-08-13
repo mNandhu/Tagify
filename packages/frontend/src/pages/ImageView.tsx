@@ -24,7 +24,7 @@ export default function ImageView() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [data, setData] = useState<ImageDoc | null>(null);
-  const [infoOpen, setInfoOpen] = useState(true);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [list, setList] = useState<ImageDoc[]>([]);
   const [index, setIndex] = useState<number>(-1);
   const [imgLoaded, setImgLoaded] = useState(false);
@@ -93,7 +93,8 @@ export default function ImageView() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") goPrev();
       if (e.key === "ArrowRight") goNext();
-      if (e.key === "Escape") navigate(-1);
+      if (e.key === "Escape")
+        navigate(`/${returnQuery ? `?${returnQuery}` : ""}`);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

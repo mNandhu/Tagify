@@ -14,9 +14,14 @@ async def list_images(
     library_id: str | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=200, ge=1, le=1000),
+    no_tags: int | None = Query(default=None, alias="no_tags"),
 ):
     q: dict = {}
-    if tags:
+    if no_tags == 1:
+        # Only "no tags" filter: images with no tags (missing or empty)
+        q["$or"] = [{"tags": {"$exists": False}}, {"tags": {"$size": 0}}]
+    elif tags:
+        # Tag filters: OR uses $in, AND uses $all
         q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}
     if library_id:
         q["library_id"] = library_id
