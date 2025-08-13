@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.get("")
-async def list_images(
+def list_images(
     tags: list[str] | None = Query(default=None),
     logic: str = Query(default="and"),
     library_id: str | None = Query(default=None),
@@ -26,7 +26,9 @@ async def list_images(
         q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}
     if library_id:
         q["library_id"] = library_id
-    cursor = col("images").find(q).skip(offset).limit(limit)
+    # Projection keeps payload small for the grid
+    projection = {"_id": 1, "path": 1, "width": 1, "height": 1}
+    cursor = col("images").find(q, projection).sort("_id", -1).skip(offset).limit(limit)
     items = list(cursor)
     for it in items:
         it["_id"] = str(it["_id"])  # string id
@@ -34,7 +36,7 @@ async def list_images(
 
 
 @router.get("/{image_id}")
-async def get_image(image_id: str):
+def get_image(image_id: str):
     img = col("images").find_one({"_id": image_id})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
@@ -43,16 +45,22 @@ async def get_image(image_id: str):
 
 
 @router.get("/{image_id}/file")
-async def get_image_file(image_id: str):
+def get_image_file(image_id: str):
     img = col("images").find_one({"_id": image_id}, {"path": 1, "original_key": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
     original_key = img.get("original_key")
     if original_key:
         obj = get_original(original_key)
+        headers = {}
+        etag = obj.headers.get("ETag")
+        if etag:
+            headers["ETag"] = etag
+            headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return StreamingResponse(
             obj.stream(32 * 1024),
             media_type=obj.headers.get("Content-Type", "application/octet-stream"),
+            headers=headers,
         )
     # Fallback: serve from filesystem for pre-migration records
     path = img.get("path")
@@ -63,14 +71,21 @@ async def get_image_file(image_id: str):
 
 
 @router.get("/{image_id}/thumb")
-async def get_image_thumb(image_id: str):
+def get_image_thumb(image_id: str):
     img = col("images").find_one({"_id": image_id}, {"thumb_key": 1, "thumb_rel": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
     thumb_key = img.get("thumb_key")
     if thumb_key:
         obj = get_thumb(thumb_key)
-        return StreamingResponse(obj.stream(32 * 1024), media_type="image/jpeg")
+        headers = {}
+        etag = obj.headers.get("ETag")
+        if etag:
+            headers["ETag"] = etag
+            headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return StreamingResponse(
+            obj.stream(32 * 1024), media_type="image/jpeg", headers=headers
+        )
     # Fallback to filesystem thumbs during migration if rel exists
     rel = img.get("thumb_rel")
     if not rel:
