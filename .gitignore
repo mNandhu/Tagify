@@ -16,7 +16,9 @@ packages/**/.env
 
 # Builds
 /dist/
-/build/
+**/dist/
+**/build/
+*.tsbuildinfo
 
 # IDE
 .vscode/
