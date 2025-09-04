@@ -3,6 +3,8 @@
 @tailwind components;
 @tailwind utilities;
 
+/* stylelint-enable at-rule-no-unknown */
+
 :root {
   color-scheme: dark;
 }

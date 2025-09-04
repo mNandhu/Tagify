@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ImageThumbnail } from "./ImageThumbnail";
 import { resolveMediaUrl } from "../lib/media";
 
@@ -19,8 +19,41 @@ export function GalleryGrid({
   onOpen: (id: string) => void;
   selectionMode: boolean;
 }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [colWidth, setColWidth] = useState<number>(0);
+  const [rowUnit, setRowUnit] = useState<number>(4); // px, matches auto-rows-[4px]
+  const [rowGap, setRowGap] = useState<number>(12); // px, from computed gap
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const compute = () => {
+      const cs = getComputedStyle(el);
+      // Determine number of columns from computed gridTemplateColumns
+      const gtc = cs.gridTemplateColumns;
+      const cols = gtc ? gtc.split(" ").length : 2;
+      const colGap = parseFloat(cs.columnGap || "12");
+      const width = el.clientWidth;
+      const trackWidth =
+        cols > 0 ? (width - colGap * (cols - 1)) / cols : width;
+      setColWidth(trackWidth);
+      const gar = cs.gridAutoRows || "4px";
+      const ru = parseFloat(gar) || 4;
+      setRowUnit(ru);
+      const rGap = parseFloat(cs.rowGap || cs.gap || "12");
+      setRowGap(rGap || 12);
+    };
+    compute();
+    const ro = new ResizeObserver(() => compute());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <div className="columns-2 md:columns-3 lg:columns-4 gap-3 [column-fill:_balance]">
+    <div
+      ref={containerRef}
+      className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 auto-rows-[4px] grid-flow-row-dense"
+    >
       {items.map((it) => (
         <ThumbnailItem
           key={it._id}
@@ -29,6 +62,9 @@ export function GalleryGrid({
           selectionMode={selectionMode}
           onOpen={onOpen}
           onToggle={onToggle}
+          colWidth={colWidth}
+          rowUnit={rowUnit}
+          rowGap={rowGap}
         />
       ))}
     </div>
@@ -41,16 +77,23 @@ function ThumbnailItem({
   selectionMode,
   onToggle,
   onOpen,
+  colWidth,
+  rowUnit,
+  rowGap,
 }: {
   it: ImageDocWithDims;
   selection: Set<string>;
   selectionMode: boolean;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
+  colWidth: number;
+  rowUnit: number;
+  rowGap: number;
 }) {
   const [thumbUrl, setThumbUrl] = useState<string>(
     `/api/images/${encodeURIComponent(it._id)}/thumb`
   );
+  const [rowSpan, setRowSpan] = useState<number>(1);
   useEffect(() => {
     let mounted = true;
     const ep = `/api/images/${encodeURIComponent(it._id)}/thumb`;
@@ -64,9 +107,31 @@ function ThumbnailItem({
     };
   }, [it._id]);
 
+  // Compute grid row span based on known aspect ratio, column width, and row gap
+  useEffect(() => {
+    const w = it.width || 1;
+    const h = it.height || 1;
+    if (colWidth > 0 && rowUnit > 0) {
+      const pxHeight = (h / w) * colWidth;
+      // Compute rows so N*rowUnit + (N-1)*rowGap >= pxHeight
+      const rows = Math.max(
+        1,
+        Math.ceil((pxHeight + rowGap) / (rowUnit + rowGap))
+      );
+      setRowSpan(rows);
+    } else {
+      setRowSpan(1);
+    }
+  }, [it.width, it.height, colWidth, rowUnit, rowGap]);
+
+  const spanClass = useMemo(
+    () => `rs-${Math.max(1, Math.min(rowSpan, 200))}`,
+    [rowSpan]
+  );
+
   return (
-    <div className="mb-3 break-inside-avoid">
-      <div className="relative group">
+    <div className={"break-inside-avoid " + spanClass}>
+      <div className="relative group h-full">
         <ImageThumbnail
           src={thumbUrl}
           alt={it.path}
