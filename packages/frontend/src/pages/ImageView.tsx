@@ -106,6 +106,19 @@ export default function ImageView() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Don't trigger global shortcuts when typing in form fields
+      const target = e.target as HTMLElement;
+      const isFormField = target && (
+        target.tagName.toLowerCase() === 'input' ||
+        target.tagName.toLowerCase() === 'textarea' ||
+        target.tagName.toLowerCase() === 'select' ||
+        target.isContentEditable
+      );
+      
+      if (isFormField) {
+        return;
+      }
+
       if (e.key === "ArrowLeft") goPrev();
       if (e.key === "ArrowRight") goNext();
       if (e.key === "Escape")
