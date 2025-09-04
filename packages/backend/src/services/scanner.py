@@ -94,7 +94,7 @@ def scan_library(library_id: str, root: str) -> int:
                 }
                 images_col.update_one(
                     {"_id": doc["_id"]},
-                    {"$set": doc, "$setOnInsert": {"tags": []}},
+                    {"$set": doc, "$setOnInsert": {"tags": [], "has_tags": False}},
                     upsert=True,
                 )
                 count += 1
@@ -155,7 +155,7 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> bool:
         }
         col("images").update_one(
             {"_id": doc["_id"]},
-            {"$set": doc, "$setOnInsert": {"tags": []}},
+            {"$set": doc, "$setOnInsert": {"tags": [], "has_tags": False}},
             upsert=True,
         )
         return True

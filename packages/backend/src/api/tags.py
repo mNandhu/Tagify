@@ -29,7 +29,11 @@ async def list_tags():
 @router.post("/apply/{image_id}")
 async def apply_tags(image_id: str, tags: list[str]):
     col("images").update_one(
-        {"_id": image_id}, {"$addToSet": {"tags": {"$each": tags}}}
+        {"_id": image_id},
+        {
+            "$addToSet": {"tags": {"$each": tags}},
+            "$set": {"has_tags": True},
+        },
     )
     # Invalidate cache
     _TAGS_CACHE.clear()
@@ -38,7 +42,13 @@ async def apply_tags(image_id: str, tags: list[str]):
 
 @router.post("/remove/{image_id}")
 async def remove_tags(image_id: str, tags: list[str]):
-    col("images").update_one({"_id": image_id}, {"$pull": {"tags": {"$in": tags}}})
+    # Pull tags; if array becomes empty, set has_tags False
+    images = col("images")
+    images.update_one({"_id": image_id}, {"$pull": {"tags": {"$in": tags}}})
+    doc = images.find_one({"_id": image_id}, {"tags": 1})
+    if doc is not None:
+        t = doc.get("tags") or []
+        images.update_one({"_id": image_id}, {"$set": {"has_tags": bool(t)}})
     _TAGS_CACHE.clear()
     return {"image_id": image_id, "removed": tags}
 
@@ -62,7 +72,8 @@ async def ai_tag(image_id: str):
             tags = []
     if tags:
         col("images").update_one(
-            {"_id": image_id}, {"$addToSet": {"tags": {"$each": tags}}}
+            {"_id": image_id},
+            {"$addToSet": {"tags": {"$each": tags}}, "$set": {"has_tags": True}},
         )
     _TAGS_CACHE.clear()
     return {"image_id": image_id, "suggested": tags}

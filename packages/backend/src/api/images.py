@@ -47,8 +47,8 @@ def list_images(
 ):
     q: dict = {}
     if no_tags == 1:
-        # Only "no tags" filter: images with no tags (missing or empty)
-        q["$or"] = [{"tags": {"$exists": False}}, {"tags": {"$size": 0}}]
+        # Fast-path: use has_tags boolean set at write time
+        q["has_tags"] = False
     elif tags:
         # Tag filters: OR uses $in, AND uses $all
         q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}

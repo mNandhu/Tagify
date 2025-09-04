@@ -37,6 +37,11 @@ def ensure_indexes() -> None:
         IndexModel([("library_id", ASCENDING), ("_id", DESCENDING)], name="lib_id__id"),
         # Tag queries ($in / $all) benefit from a multikey index on tags
         IndexModel([("tags", ASCENDING)], name="tags"),
+        # Optimize "no tags" filter via has_tags boolean combined with library and sort
+        IndexModel(
+            [("library_id", ASCENDING), ("has_tags", ASCENDING), ("_id", DESCENDING)],
+            name="lib_id_has_tags__id",
+        ),
     ]
     try:
         images.create_indexes(image_indexes)

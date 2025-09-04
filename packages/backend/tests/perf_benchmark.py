@@ -205,6 +205,7 @@ async def run_benchmark():
         # proceed with rest
         # Ensure library exists
         lib_id = await find_library(client, LIBRARY_PATH)
+        scan_time_sec: float | None = None
         if lib_id is None:
             # Adding a new library triggers initial scan automatically
             t0 = time.perf_counter()
@@ -212,6 +213,7 @@ async def run_benchmark():
             # Wait for scan completion
             progress = await wait_for_scan(client, lib_id)
             dt = time.perf_counter() - t0
+            scan_time_sec = dt
             print(
                 f"Initial scan status: scanning={progress.get('scanning')} done={progress.get('scan_done')} total={progress.get('scan_total')} time_sec={dt:.2f}"
             )
@@ -228,6 +230,7 @@ async def run_benchmark():
                 await wait_until_scanning(client, lib_id, timeout_s=5.0)
                 progress = await wait_for_scan(client, lib_id)
                 dt = time.perf_counter() - t0
+                scan_time_sec = dt
                 print(
                     f"Rescan status: scanning={progress.get('scanning')} done={progress.get('scan_done')} total={progress.get('scan_total')} time_sec={dt:.2f}"
                 )
@@ -250,6 +253,8 @@ async def run_benchmark():
         s_thumb = Stat("GET /images/{id}/thumb")
         s_file_head = Stat("HEAD /images/{id}/file")
         s_file_range = Stat("GET /images/{id}/file (range)")
+        s_no_tags = Stat("GET /images?no_tags=1")
+        s_no_tags_lib = Stat("GET /images?library_id&no_tags=1")
 
         # Define coroutines
         async def get_images():
@@ -263,6 +268,28 @@ async def run_benchmark():
 
         async def get_tags():
             r = await client.get(f"{BASE_URL}/tags", timeout=TIMEOUT)
+            if r.status_code == 200:
+                _ = r.json()
+                return True
+            return False
+
+        async def get_no_tags():
+            r = await client.get(
+                f"{BASE_URL}/images",
+                params={"no_tags": 1, "limit": 100},
+                timeout=TIMEOUT,
+            )
+            if r.status_code == 200:
+                _ = r.json()
+                return True
+            return False
+
+        async def get_no_tags_by_lib(library_id: str):
+            r = await client.get(
+                f"{BASE_URL}/images",
+                params={"no_tags": 1, "limit": 100, "library_id": library_id},
+                timeout=TIMEOUT,
+            )
             if r.status_code == 200:
                 _ = r.json()
                 return True
@@ -323,6 +350,12 @@ async def run_benchmark():
                 # interleave different endpoints
                 await bench_task("images", s_images, get_images)
                 await bench_task("tags", s_tags, get_tags)
+                await bench_task("no_tags", s_no_tags, get_no_tags)
+                await bench_task(
+                    "no_tags_lib",
+                    s_no_tags_lib,
+                    lambda library_id=lib_id: get_no_tags_by_lib(library_id),
+                )
                 await bench_task(
                     "image", s_image, lambda img_id=img_id: get_image_details(img_id)
                 )
@@ -351,6 +384,8 @@ async def run_benchmark():
         stats = [
             s_images,
             s_tags,
+            s_no_tags,
+            s_no_tags_lib,
             s_image,
             s_thumb_head,
             s_thumb,
@@ -359,6 +394,25 @@ async def run_benchmark():
         ]
         results = [s.summary() for s in stats]
         print("\n=== Benchmark Results ===")
+        if scan_time_sec is not None:
+            # Try to compute throughput from latest progress
+            try:
+                last = await wait_for_scan(client, lib_id)
+                done = int(last.get("scan_done") or 0)
+                if done > 0 and scan_time_sec > 0:
+                    thr = done / scan_time_sec
+                    print(
+                        json.dumps(
+                            {
+                                "name": "SCAN",
+                                "images": done,
+                                "seconds": round(scan_time_sec, 2),
+                                "images_per_sec": round(thr, 2),
+                            }
+                        )
+                    )
+            except Exception:
+                pass
         for res in results:
             print(json.dumps(res))
         # Basic pass/fail
