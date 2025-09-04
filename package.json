@@ -11,6 +11,7 @@
     "scripts": {
         "dev:backend": "uv --directory packages/backend run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000",
         "dev:frontend": "pnpm -C packages/frontend dev",
-        "dev": "concurrently -c auto -n backend,frontend \"pnpm dev:backend\" \"pnpm dev:frontend\""
+        "dev": "concurrently -c auto -n backend,frontend \"pnpm dev:backend\" \"pnpm dev:frontend\"",
+        "perf": "uv --directory packages/backend run python tests/perf_benchmark.py"
     }
 }

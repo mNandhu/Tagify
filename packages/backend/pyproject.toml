@@ -10,7 +10,8 @@ dependencies = [
   "pymongo",
   "pillow",
   "python-dotenv",
-  "minio"
+  "minio",
+  "httpx"
 ]
 
 #[tool.uv]
