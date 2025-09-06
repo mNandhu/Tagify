@@ -7,38 +7,78 @@ set -e
 
 echo "🧪 Testing Tagify Docker components..."
 
+# Function to cleanup containers
+cleanup() {
+    echo "🧹 Cleaning up test containers..."
+    docker stop test-mongo test-minio 2>/dev/null || true
+    docker rm test-mongo test-minio 2>/dev/null || true
+}
+
+# Trap to ensure cleanup on exit
+trap cleanup EXIT
+
 # Test 1: MongoDB
 echo "📊 Testing MongoDB..."
-docker run --rm -d --name test-mongo -p 27017:27017 \
+if ! docker run --rm -d --name test-mongo -p 27017:27017 \
   -e MONGO_INITDB_ROOT_USERNAME=admin \
   -e MONGO_INITDB_ROOT_PASSWORD=password \
-  mongo:7 > /dev/null
+  mongo:7 > /dev/null; then
+  echo "  ❌ Failed to start MongoDB container"
+  exit 1
+fi
 
 echo "  ⏳ Waiting for MongoDB to start..."
-sleep 10
+sleep 15
 
-if docker exec test-mongo mongosh --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
+# Test MongoDB connection with retry
+MONGO_READY=false
+for i in {1..10}; do
+  if docker exec test-mongo mongosh --quiet --eval "db.adminCommand('ping').ok" --authenticationDatabase admin > /dev/null 2>&1; then
+    MONGO_READY=true
+    break
+  fi
+  echo "  ⏳ MongoDB not ready yet (attempt $i/10)..."
+  sleep 2
+done
+
+if [ "$MONGO_READY" = true ]; then
   echo "  ✅ MongoDB is working"
 else
-  echo "  ❌ MongoDB failed"
+  echo "  ❌ MongoDB failed to become ready"
+  exit 1
 fi
 
 docker stop test-mongo > /dev/null
 
 # Test 2: MinIO
 echo "🗄️  Testing MinIO..."
-docker run --rm -d --name test-minio -p 9000:9000 \
+if ! docker run --rm -d --name test-minio -p 9000:9000 \
   -e MINIO_ROOT_USER=admin \
   -e MINIO_ROOT_PASSWORD=password123 \
-  minio/minio server /data > /dev/null
+  minio/minio server /data > /dev/null; then
+  echo "  ❌ Failed to start MinIO container"
+  exit 1
+fi
 
 echo "  ⏳ Waiting for MinIO to start..."
-sleep 10
+sleep 15
 
-if curl -f http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+# Test MinIO health with retry
+MINIO_READY=false
+for i in {1..10}; do
+  if curl -f http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+    MINIO_READY=true
+    break
+  fi
+  echo "  ⏳ MinIO not ready yet (attempt $i/10)..."
+  sleep 2
+done
+
+if [ "$MINIO_READY" = true ]; then
   echo "  ✅ MinIO is working"
 else
-  echo "  ❌ MinIO failed"
+  echo "  ❌ MinIO failed to become ready"
+  exit 1
 fi
 
 docker stop test-minio > /dev/null
