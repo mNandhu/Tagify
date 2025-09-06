@@ -1,12 +1,53 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ImageThumbnail } from "./ImageThumbnail";
 import { resolveMediaUrl } from "../lib/media";
+import { VirtualizedGrid } from "./VirtualizedGrid";
 
 type ImageDoc = { _id: string; thumb_rel?: string; path: string };
 // Upstream items from API contain width/height; extend locally to use for layout stabilization if present
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
 
 export function GalleryGrid({
+  items,
+  selection,
+  onToggle,
+  onOpen,
+  selectionMode,
+}: {
+  items: ImageDocWithDims[];
+  selection: Set<string>;
+  onToggle: (id: string) => void;
+  onOpen: (id: string) => void;
+  selectionMode: boolean;
+}) {
+  // Use virtualization for large datasets (>200 items)
+  const useVirtualization = items.length > 200;
+
+  if (useVirtualization) {
+    return (
+      <VirtualizedGrid
+        items={items}
+        selection={selection}
+        onToggle={onToggle}
+        onOpen={onOpen}
+        selectionMode={selectionMode}
+        className="min-h-screen"
+      />
+    );
+  }
+
+  return (
+    <StandardGrid
+      items={items}
+      selection={selection}
+      onToggle={onToggle}
+      onOpen={onOpen}
+      selectionMode={selectionMode}
+    />
+  );
+}
+
+function StandardGrid({
   items,
   selection,
   onToggle,
