@@ -1,9 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from .api import libraries, images, tags
 from .database.mongo import ensure_indexes
 
 app = FastAPI(title="Tagify API", version="0.1.0")
+
+# GZip compression for JSON responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS: allow frontend dev server
 app.add_middleware(

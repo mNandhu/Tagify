@@ -210,6 +210,60 @@ export default function AllImagesPage() {
     return () => obs.disconnect();
   }, [hasMore, loading, nextCursor]);
 
+  // Speculative prefetch: when user is 80% through current items, prefetch next page
+  useEffect(() => {
+    if (!hasMore || loading || !nextCursor || items.length < limit) return;
+
+    const prefetchThreshold = Math.floor(items.length * 0.8);
+    if (prefetchThreshold <= 0) return;
+
+    const prefetchSentinel = document.createElement('div');
+    const container = document.querySelector('.grid'); // Grid container
+    if (!container) return;
+
+    // Insert prefetch sentinel at 80% point
+    const targetItem = container.children[prefetchThreshold];
+    if (!targetItem) return;
+
+    targetItem.appendChild(prefetchSentinel);
+
+    const prefetchObs = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        // Prefetch next page
+        const prefetchParams = new URLSearchParams();
+        if (filters.tags.length) filters.tags.forEach((t) => prefetchParams.append("tags", t));
+        if (filters.logic) prefetchParams.set("logic", filters.logic);
+        if (filters.libraryId) prefetchParams.set("library_id", filters.libraryId);
+        if (filters.noTags) prefetchParams.set("no_tags", "1");
+        prefetchParams.set("limit", String(limit));
+        prefetchParams.set("cursor", nextCursor);
+
+        const prefetchUrl = `/api/images?${prefetchParams.toString()}`;
+        
+        // Use fetch with low priority for prefetch
+        fetch(prefetchUrl, { 
+          method: 'GET',
+          // @ts-ignore - priority is experimental but widely supported
+          priority: 'low' 
+        }).catch(() => {
+          // Ignore prefetch errors
+        });
+
+        prefetchObs.disconnect();
+      }
+    }, {
+      rootMargin: '100px', // Start prefetch when within 100px
+      threshold: 0.1,
+    });
+
+    prefetchObs.observe(prefetchSentinel);
+
+    return () => {
+      prefetchObs.disconnect();
+      prefetchSentinel.remove();
+    };
+  }, [filters, nextCursor, hasMore, loading, items.length, limit]);
+
   return (
     <div className="p-4 space-y-3">
       <div className="sticky top-0 z-10 -mt-4 -mx-4 px-4 pt-4 pb-3 bg-neutral-900/85 backdrop-blur border-b border-neutral-800 flex items-center gap-2">
