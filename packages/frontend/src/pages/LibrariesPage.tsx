@@ -18,8 +18,12 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 export default function LibrariesPage() {
   const { push } = useToast();
   const [libs, setLibs] = useState<Library[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
+  const [adding, setAdding] = useState(false);
   const [rescanning, setRescanning] = useState<Set<string>>(new Set());
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -86,9 +90,23 @@ export default function LibrariesPage() {
     };
   }, [scanningIds]);
 
-  const refresh = async () => setLibs(await api<Library[]>(`/api/libraries`));
+  const refresh = async (opts?: { initial?: boolean }) => {
+    if (opts?.initial) setInitialLoading(true);
+    else setRefreshing(true);
+    setError(null);
+    try {
+      const data = await api<Library[]>(`/api/libraries`);
+      setLibs(data);
+    } catch (e: any) {
+      const msg = e?.message || "Failed to load libraries";
+      setError(msg);
+    } finally {
+      if (opts?.initial) setInitialLoading(false);
+      else setRefreshing(false);
+    }
+  };
   useEffect(() => {
-    refresh();
+    refresh({ initial: true });
   }, []);
 
   const updateLibrary = async (id: string, data: Partial<Library>) => {
@@ -113,6 +131,7 @@ export default function LibrariesPage() {
 
   return (
     <div className="p-4 space-y-4">
+      {/* Header / Create */}
       <div className="flex items-end gap-2">
         <div>
           <label className="block text-sm">Path</label>
@@ -134,112 +153,179 @@ export default function LibrariesPage() {
         </div>
         <button
           className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500"
+          disabled={!path.trim() || adding}
           onClick={async () => {
-            await api(`/api/libraries`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ path, name: name || undefined }),
-            });
-            setPath("");
-            setName("");
-            refresh();
-            push("Library added", "success");
+            if (!path.trim()) return;
+            setAdding(true);
+            try {
+              await api(`/api/libraries`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path, name: name || undefined }),
+              });
+              setPath("");
+              setName("");
+              await refresh();
+              push("Library added", "success");
+            } catch (e: any) {
+              push(e?.message || "Failed to add library", "error");
+            } finally {
+              setAdding(false);
+            }
           }}
         >
-          + Add Library
+          {adding ? "Adding…" : "+ Add Library"}
         </button>
+        <div className="flex-1" />
+        {refreshing && !initialLoading && (
+          <div className="flex items-center gap-2 text-xs text-neutral-400">
+            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-neutral-500 border-t-transparent" />
+            Refreshing…
+          </div>
+        )}
       </div>
-      <div className="grid gap-3">
-        {libs.map((l) => (
-          <div
-            key={l._id}
-            className="rounded border border-neutral-800 bg-neutral-900 p-3 card-hover"
+      {/* Error banner */}
+      {error && !initialLoading && (
+        <div className="rounded border border-red-800 bg-red-900/40 p-3 text-sm text-red-200 flex items-start justify-between gap-3">
+          <div>{error}</div>
+          <button
+            className="px-2 py-1 text-xs rounded bg-red-700 hover:bg-red-600"
+            onClick={() => refresh()}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="font-semibold">{l.name || l.path}</div>
-                <div className="text-xs text-neutral-400">{l.path}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                {!(progress[l._id]?.scanning || (l as any).scanning) &&
-                  typeof l.indexed_count === "number" && (
-                    <span className="px-2 py-0.5 text-xs rounded bg-neutral-800 border border-neutral-700">
-                      {l.indexed_count} indexed
-                    </span>
-                  )}
-                {l.last_scanned && (
-                  <span
-                    className="px-2 py-0.5 text-xs rounded bg-neutral-800 border border-neutral-700"
-                    title={new Date(l.last_scanned).toLocaleString()}
-                  >
-                    {new Date(l.last_scanned).toLocaleDateString()}
-                  </span>
-                )}
-                {rescanning.has(l._id) && (
-                  <span className="px-2 py-0.5 text-xs rounded bg-purple-900/40 border border-purple-700 text-purple-300">
-                    Rescanning…
-                  </span>
-                )}
-                {progress[l._id]?.scanning && (
-                  <div className="mt-2 w-full min-w-[200px]">
-                    <progress
-                      className="w-full h-2 [&::-webkit-progress-bar]:bg-neutral-800 [&::-webkit-progress-value]:bg-purple-600 [&::-moz-progress-bar]:bg-purple-600 rounded"
-                      value={Math.max(0, progress[l._id]?.scan_done || 0)}
-                      max={Math.max(1, progress[l._id]?.scan_total || 1)}
-                      aria-label="Scanning progress"
-                    />
-                    <div className="mt-1 text-xs text-neutral-400">
-                      {progress[l._id]?.scan_done || 0} /{" "}
-                      {progress[l._id]?.scan_total || 0}
-                    </div>
+            Retry
+          </button>
+        </div>
+      )}
+      <div className="grid gap-3">
+        {/* Initial loading skeletons */}
+        {initialLoading && (
+          <>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div
+                key={i}
+                className="rounded border border-neutral-800 bg-neutral-900 p-3 animate-pulse"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-2">
+                    <div className="h-4 w-48 rounded bg-neutral-800" />
+                    <div className="h-3 w-72 rounded bg-neutral-800" />
                   </div>
-                )}
+                  <div className="flex items-center gap-2">
+                    <div className="h-5 w-20 rounded bg-neutral-800" />
+                    <div className="h-5 w-24 rounded bg-neutral-800" />
+                  </div>
+                </div>
+                <div className="mt-3 h-7 w-40 rounded bg-neutral-800" />
               </div>
+            ))}
+          </>
+        )}
+
+        {/* Empty state */}
+        {!initialLoading && !libs.length && !error && (
+          <div className="rounded border border-neutral-800 bg-neutral-900 p-6 text-center text-neutral-300">
+            <div className="text-lg font-semibold">No libraries yet</div>
+            <div className="mt-1 text-sm text-neutral-400">
+              Add your first library by entering a folder path above.
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700"
-                onClick={async () => {
-                  setRescanning((s) => new Set(s).add(l._id));
-                  try {
-                    await api(`/api/libraries/${l._id}/rescan`, {
-                      method: "POST",
-                    });
-                    push(`Rescan started for ${l.name || l.path}`, "info");
-                  } finally {
-                    refresh();
-                    setRescanning((s) => {
-                      const n = new Set(s);
-                      n.delete(l._id);
-                      return n;
-                    });
-                    push(`Rescan requested`, "success");
-                  }
-                }}
-                disabled={rescanning.has(l._id)}
-              >
-                {rescanning.has(l._id) ? "Rescanning…" : "Rescan"}
-              </button>
-              <button
-                className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700"
-                onClick={() => {
-                  setEditId(l._id);
-                  setEditName(l.name || "");
-                  setEditPath(l.path);
-                  setEditRescan(false);
-                }}
-              >
-                Edit
-              </button>
-              <button
-                className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-500"
-                onClick={() => deleteLibrary(l._id)}
-              >
-                Delete
-              </button>
+            <div className="mt-3 text-xs text-neutral-500">
+              Example: D:/images
             </div>
           </div>
-        ))}
+        )}
+
+        {/* Libraries list */}
+        {!initialLoading &&
+          libs.map((l) => (
+            <div
+              key={l._id}
+              className="rounded border border-neutral-800 bg-neutral-900 p-3 card-hover"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-semibold">{l.name || l.path}</div>
+                  <div className="text-xs text-neutral-400">{l.path}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!(progress[l._id]?.scanning || (l as any).scanning) &&
+                    typeof l.indexed_count === "number" && (
+                      <span className="px-2 py-0.5 text-xs rounded bg-neutral-800 border border-neutral-700">
+                        {l.indexed_count} indexed
+                      </span>
+                    )}
+                  {l.last_scanned && (
+                    <span
+                      className="px-2 py-0.5 text-xs rounded bg-neutral-800 border border-neutral-700"
+                      title={new Date(l.last_scanned).toLocaleString()}
+                    >
+                      {new Date(l.last_scanned).toLocaleDateString()}
+                    </span>
+                  )}
+                  {rescanning.has(l._id) && (
+                    <span className="px-2 py-0.5 text-xs rounded bg-purple-900/40 border border-purple-700 text-purple-300">
+                      Rescanning…
+                    </span>
+                  )}
+                  {progress[l._id]?.scanning && (
+                    <div className="mt-2 w-full min-w-[200px]">
+                      <progress
+                        className="w-full h-2 [&::-webkit-progress-bar]:bg-neutral-800 [&::-webkit-progress-value]:bg-purple-600 [&::-moz-progress-bar]:bg-purple-600 rounded"
+                        value={Math.max(0, progress[l._id]?.scan_done || 0)}
+                        max={Math.max(1, progress[l._id]?.scan_total || 1)}
+                        aria-label="Scanning progress"
+                      />
+                      <div className="mt-1 text-xs text-neutral-400">
+                        {progress[l._id]?.scan_done || 0} /{" "}
+                        {progress[l._id]?.scan_total || 0}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700"
+                  onClick={async () => {
+                    setRescanning((s) => new Set(s).add(l._id));
+                    try {
+                      await api(`/api/libraries/${l._id}/rescan`, {
+                        method: "POST",
+                      });
+                      push(`Rescan started for ${l.name || l.path}`, "info");
+                    } finally {
+                      refresh();
+                      setRescanning((s) => {
+                        const n = new Set(s);
+                        n.delete(l._id);
+                        return n;
+                      });
+                      push(`Rescan requested`, "success");
+                    }
+                  }}
+                  disabled={rescanning.has(l._id)}
+                >
+                  {rescanning.has(l._id) ? "Rescanning…" : "Rescan"}
+                </button>
+                <button
+                  className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700"
+                  onClick={() => {
+                    setEditId(l._id);
+                    setEditName(l.name || "");
+                    setEditPath(l.path);
+                    setEditRescan(false);
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-500"
+                  onClick={() => deleteLibrary(l._id)}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
       </div>
 
       {editId && (
