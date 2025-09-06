@@ -39,6 +39,7 @@ export default function ImageView() {
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const loadingMoreRef = useRef(false);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   // Derived page size from URL (defaults to 100 if unspecified/invalid)
   const pageLimit = useMemo(() => {
     const limStr = new URLSearchParams(searchParams).get("limit");
@@ -255,13 +256,57 @@ export default function ImageView() {
     return () => window.removeEventListener("keydown", onKey);
   }, [goPrev, goNext, navigate, returnQuery]);
 
+  // Touch/swipe navigation
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!touchStartRef.current || e.changedTouches.length !== 1) return;
+    
+    const touch = e.changedTouches[0];
+    const deltaX = touch.clientX - touchStartRef.current.x;
+    const deltaY = touch.clientY - touchStartRef.current.y;
+    
+    // Minimum swipe distance (pixels)
+    const minSwipeDistance = 50;
+    // Maximum vertical movement to still count as horizontal swipe
+    const maxVerticalDistance = 100;
+    
+    // Check if this is a horizontal swipe
+    if (Math.abs(deltaX) >= minSwipeDistance && Math.abs(deltaY) <= maxVerticalDistance) {
+      e.preventDefault();
+      if (deltaX > 0) {
+        // Swipe right -> go to previous image
+        goPrev();
+      } else {
+        // Swipe left -> go to next image
+        goNext();
+      }
+    }
+    
+    touchStartRef.current = null;
+  }, [goPrev, goNext]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    // Optional: could add visual feedback here for swipe in progress
+  }, []);
+
   if (!id) return null;
 
   const imageCol = "lg:col-span-12";
   const fileName = data?.path ? data.path.split(/[\\/]/).pop() : "";
 
   return (
-    <div className="min-h-dvh bg-neutral-950 text-white grid grid-cols-12 relative">
+    <div 
+      className="min-h-dvh bg-neutral-950 text-white grid grid-cols-12 relative"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
+    >
       <div
         className={`col-span-12 ${imageCol} flex items-center justify-center p-6 relative`}
       >
