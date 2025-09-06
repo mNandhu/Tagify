@@ -1,0 +1,68 @@
+# Development Docker Compose - Services only (no building)
+# Use this if you want to run dependencies in Docker but build locally
+
+services:
+  # MongoDB database
+  mongodb:
+    image: mongo:7
+    container_name: tagify-mongodb-dev
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data_dev:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # MinIO object storage
+  minio:
+    image: minio/minio:latest
+    container_name: tagify-minio-dev
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    volumes:
+      - minio_data_dev:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: tagify-minio-init-dev
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set minio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb minio/tagify-thumbs --ignore-existing;
+      mc mb minio/tagify-originals --ignore-existing;
+      echo 'Buckets created successfully';
+      "
+    restart: "no"
+
+volumes:
+  mongodb_data_dev:
+    driver: local
+  minio_data_dev:
+    driver: local
