@@ -1,0 +1,8 @@
+# docker-compose.override.yml
+services:
+  backend:
+    volumes:
+      - type: bind
+        source: G:\
+        target: /mnt/g
+        read_only: true
