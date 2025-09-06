@@ -137,9 +137,7 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> str | None:
         try:
             mt, _ = mimetypes.guess_type(str(p))
             with open(p, "rb") as f:
-                original_key = put_original(
-                    library_id, image_id, f, stat.st_size, mt
-                    )
+                original_key = put_original(library_id, image_id, f, stat.st_size, mt)
         except Exception:
             original_key = None
         # Upload thumbnail if generated

@@ -33,13 +33,13 @@ def put_thumb(
     """Upload thumbnail bytes as JPEG; returns object key."""
     client = get_minio()
     key = f"{library_id}/{image_id}.jpg"
-    
+
     # Set Cache-Control metadata for long-lived caching
     metadata = {
         "Cache-Control": "public, max-age=31536000, immutable",
         "Content-Type": content_type,
     }
-    
+
     client.put_object(
         config.MINIO_BUCKET_THUMBS,
         key,
