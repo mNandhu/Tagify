@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -30,9 +36,19 @@ export default function ImageView() {
   const [index, setIndex] = useState<number>(-1);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const loadingMoreRef = useRef(false);
+  // Derived page size from URL (defaults to 100 if unspecified/invalid)
+  const pageLimit = useMemo(() => {
+    const limStr = new URLSearchParams(searchParams).get("limit");
+    const n = limStr ? Number(limStr) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : 100;
+  }, [searchParams]);
 
-  const query = useMemo(() => {
-    const allowed = ["tags", "logic", "library_id", "cursor", "limit"];
+  // Build base query for list loading (exclude cursor on purpose so ImageView can page seamlessly)
+  const baseQuery = useMemo(() => {
+    const allowed = ["tags", "logic", "library_id", "limit", "no_tags"]; // exclude 'cursor'
     const sp = new URLSearchParams(searchParams);
     const out = new URLSearchParams();
     allowed.forEach((k) => {
@@ -67,17 +83,70 @@ export default function ImageView() {
       .catch(() => setFileUrl(ep));
   }, [id]);
 
+  // Initial load (no cursor) and whenever filters change
   useEffect(() => {
-    const url = `/api/images${query ? `?${query}` : ""}`;
+    const url = `/api/images${baseQuery ? `?${baseQuery}` : ""}`;
+    loadingMoreRef.current = true;
     fetch(url)
       .then(async (r) => r.json())
-      .then((arr: ImageDoc[]) => setList(arr));
-  }, [query]);
+      .then((arr: ImageDoc[]) => {
+        setList(arr);
+        setHasMore(arr.length >= pageLimit);
+        setNextCursor(arr.length ? arr[arr.length - 1]._id : null);
+      })
+      .finally(() => {
+        loadingMoreRef.current = false;
+      });
+  }, [baseQuery, pageLimit]);
 
   useEffect(() => {
     if (!id || !list.length) return;
     setIndex(list.findIndex((x) => x._id === id));
   }, [id, list]);
+
+  // If current id is not yet in list, and there are more pages, keep fetching until found or exhausted
+  useEffect(() => {
+    if (!id) return;
+    if (index !== -1) return; // already found
+    if (!hasMore || loadingMoreRef.current) return;
+    let cancelled = false;
+    const loadUntilFound = async () => {
+      loadingMoreRef.current = true;
+      try {
+        // Safety cap to avoid endless loops
+        const maxExtraPages = 50;
+        let pages = 0;
+        while (!cancelled && pages < maxExtraPages) {
+          if (!nextCursor) break;
+          const q = new URLSearchParams(baseQuery);
+          q.set("cursor", nextCursor);
+          const url = `/api/images?${q.toString()}`;
+          const resp = await fetch(url);
+          const arr: ImageDoc[] = await resp.json();
+          if (cancelled) return;
+          if (!arr.length) {
+            setHasMore(false);
+            setNextCursor(null);
+            break;
+          }
+          setList((prev) => [...prev, ...arr]);
+          setHasMore(arr.length >= pageLimit);
+          setNextCursor(arr.length ? arr[arr.length - 1]._id : null);
+          pages += 1;
+          // After appending, see if we've included the target id
+          const found = arr.find((x) => x._id === id);
+          if (found) break;
+          if (arr.length < pageLimit) break; // no more data
+        }
+      } finally {
+        loadingMoreRef.current = false;
+      }
+    };
+    loadUntilFound();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, index, hasMore, nextCursor, baseQuery, pageLimit]);
 
   // Preload previous/next images for snappier navigation (works with redirect & url modes)
   useEffect(() => {
@@ -95,38 +164,96 @@ export default function ImageView() {
     preload(index + 1);
   }, [index, list]);
 
+  const buildQueryForNav = useCallback(() => {
+    // Preserve filters when navigating but continue to exclude cursor so next page loads smoothly
+    return baseQuery;
+  }, [baseQuery]);
+
   const goPrev = useCallback(() => {
-    if (index > 0)
-      navigate(`/image/${encodeURIComponent(list[index - 1]._id)}?${query}`);
-  }, [index, list, navigate, query]);
-  const goNext = useCallback(() => {
-    if (index >= 0 && index < list.length - 1)
-      navigate(`/image/${encodeURIComponent(list[index + 1]._id)}?${query}`);
-  }, [index, list, navigate, query]);
+    if (index > 0) {
+      navigate(
+        `/image/${encodeURIComponent(list[index - 1]._id)}${
+          buildQueryForNav() ? `?${buildQueryForNav()}` : ""
+        }`
+      );
+    }
+  }, [index, list, navigate, buildQueryForNav]);
+
+  const goNext = useCallback(async () => {
+    if (index >= 0 && index < list.length - 1) {
+      navigate(
+        `/image/${encodeURIComponent(list[index + 1]._id)}${
+          buildQueryForNav() ? `?${buildQueryForNav()}` : ""
+        }`
+      );
+      return;
+    }
+    // At the end of current list: try to load more and then move forward
+    if (index >= list.length - 1 && hasMore && !loadingMoreRef.current) {
+      loadingMoreRef.current = true;
+      try {
+        if (!nextCursor) return;
+        const q = new URLSearchParams(baseQuery);
+        q.set("cursor", nextCursor);
+        const url = `/api/images?${q.toString()}`;
+        const resp = await fetch(url);
+        const arr: ImageDoc[] = await resp.json();
+        setList((prev) => [...prev, ...arr]);
+        setHasMore(arr.length >= pageLimit);
+        setNextCursor(arr.length ? arr[arr.length - 1]._id : null);
+        if (arr.length) {
+          navigate(
+            `/image/${encodeURIComponent(arr[0]._id)}${
+              buildQueryForNav() ? `?${buildQueryForNav()}` : ""
+            }`
+          );
+        }
+      } finally {
+        loadingMoreRef.current = false;
+      }
+    }
+  }, [
+    index,
+    list,
+    navigate,
+    hasMore,
+    nextCursor,
+    baseQuery,
+    pageLimit,
+    buildQueryForNav,
+  ]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Don't trigger global shortcuts when typing in form fields
       const target = e.target as HTMLElement;
-      const isFormField = target && (
-        target.tagName.toLowerCase() === 'input' ||
-        target.tagName.toLowerCase() === 'textarea' ||
-        target.tagName.toLowerCase() === 'select' ||
-        target.isContentEditable
-      );
-      
+      const isFormField =
+        target &&
+        (target.tagName.toLowerCase() === "input" ||
+          target.tagName.toLowerCase() === "textarea" ||
+          target.tagName.toLowerCase() === "select" ||
+          target.isContentEditable);
+
       if (isFormField) {
         return;
       }
 
-      if (e.key === "ArrowLeft") goPrev();
-      if (e.key === "ArrowRight") goNext();
-      if (e.key === "Escape")
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goPrev();
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goNext();
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
         navigate(`/${returnQuery ? `?${returnQuery}` : ""}`);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [goPrev, goNext, navigate]);
+  }, [goPrev, goNext, navigate, returnQuery]);
 
   if (!id) return null;
 
@@ -180,7 +307,7 @@ export default function ImageView() {
             <ChevronLeft />
           </button>
           <button
-            disabled={index < 0 || index >= list.length - 1}
+            disabled={index < 0 || (index >= list.length - 1 && !hasMore)}
             onClick={goNext}
             className="pointer-events-auto p-2 rounded-full bg-black/40 border border-white/10 hover:bg-black/60 disabled:opacity-40 disabled:hover:bg-black/40 transition-opacity duration-200 opacity-80 hover:opacity-100"
             aria-label="Next"
