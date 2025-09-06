@@ -93,7 +93,7 @@ function StandardGrid({
   return (
     <div
       ref={containerRef}
-      className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 auto-rows-[4px] grid-flow-row-dense"
+      className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 auto-rows-[4px] grid-flow-row-dense"
     >
       {items.map((it, index) => (
         <ThumbnailItem
