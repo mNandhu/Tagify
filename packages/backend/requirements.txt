@@ -1,7 +1,0 @@
-fastapi[standard]
-uvicorn
-pymongo
-pillow
-python-dotenv
-minio
-httpx
