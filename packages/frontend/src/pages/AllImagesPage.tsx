@@ -9,6 +9,13 @@ import {
   Tag as TagIcon,
   Slash,
 } from "lucide-react";
+import {
+  saveScrollState,
+  restoreScrollState,
+  clearScrollState,
+  clearOldScrollStates,
+  createDebouncedScrollSaver,
+} from "../lib/scrollRestoration";
 
 type ImageDoc = { _id: string; thumb_rel?: string; path: string };
 type Library = { _id: string; name?: string; path: string };
@@ -49,6 +56,41 @@ export default function AllImagesPage() {
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
+  // Scroll restoration state
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false);
+  const [restoredScrollState, setRestoredScrollState] = useState<ReturnType<typeof restoreScrollState>>(null);
+  const debouncedScrollSaver = useMemo(() => createDebouncedScrollSaver(200), []);
+
+  // Clean up old scroll states on mount
+  useEffect(() => {
+    clearOldScrollStates();
+  }, []);
+
+  // Track scroll position for restoration
+  useEffect(() => {
+    // Use the parent scroll container (from App.tsx)
+    const container = containerRef.current?.closest('.overflow-auto') as HTMLElement || containerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const scrollTop = container.scrollTop;
+      debouncedScrollSaver(scrollTop, searchParams, cursor || undefined, items.length);
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [searchParams, cursor, items.length, debouncedScrollSaver]);
+
+  // Check for scroll restoration on mount or when returning from ImageView
+  useEffect(() => {
+    const restored = restoreScrollState(searchParams);
+    if (restored) {
+      setRestoredScrollState(restored);
+      setShouldRestoreScroll(true);
+    }
+  }, []); // Only run on mount
+
   // load libraries for filter
   useEffect(() => {
     api<Library[]>(`/api/libraries`)
@@ -85,6 +127,45 @@ export default function AllImagesPage() {
       .catch((e) => console.error(e))
       .finally(() => setLoading(false));
   }, [queryString]);
+
+  // Restore scroll position after data loads
+  useEffect(() => {
+    if (!shouldRestoreScroll || !restoredScrollState || !containerRef.current || loading) {
+      return;
+    }
+
+    const container = containerRef.current?.closest('.overflow-auto') as HTMLElement || containerRef.current;
+    const targetScrollTop = restoredScrollState.scrollTop;
+    
+    // If we have fewer items than before, try to load more data
+    if (restoredScrollState.itemCount > items.length && hasMore && !cursor) {
+      // Start loading from the restored cursor position
+      if (restoredScrollState.cursor && restoredScrollState.cursor !== nextCursor) {
+        setCursor(restoredScrollState.cursor);
+        return; // Will trigger data load, then retry restoration
+      }
+    }
+
+    // Attempt to restore scroll position
+    setTimeout(() => {
+      if (container.scrollHeight > targetScrollTop) {
+        container.scrollTo({
+          top: targetScrollTop,
+          behavior: 'auto' // Instant restore
+        });
+      }
+      setShouldRestoreScroll(false);
+      setRestoredScrollState(null);
+    }, 100); // Small delay to ensure DOM is updated
+  }, [shouldRestoreScroll, restoredScrollState, items.length, loading, hasMore, cursor, nextCursor]);
+
+  // Clear scroll state when filters change
+  useEffect(() => {
+    if (!shouldRestoreScroll) {
+      // Only clear if we're not in the middle of restoring
+      clearScrollState(searchParams);
+    }
+  }, [filters.tags, filters.logic, filters.libraryId, filters.noTags, shouldRestoreScroll]);
 
   // sync filters from URL on mount and whenever search params change
   useEffect(() => {
@@ -265,7 +346,7 @@ export default function AllImagesPage() {
   }, [filters, nextCursor, hasMore, loading, items.length, limit]);
 
   return (
-    <div className="p-4 space-y-3">
+    <div ref={containerRef} className="p-4 space-y-3">
       <div className="sticky top-0 z-10 -mt-4 -mx-4 px-4 pt-4 pb-3 bg-neutral-900/85 backdrop-blur border-b border-neutral-800 flex items-center gap-2">
         <button
           className={
@@ -415,6 +496,13 @@ export default function AllImagesPage() {
         selection={selection}
         onToggle={toggleSelection}
         onOpen={(id) => {
+          // Save current scroll position before navigating
+          const container = containerRef.current?.closest('.overflow-auto') as HTMLElement || containerRef.current;
+          if (container) {
+            const scrollTop = container.scrollTop;
+            saveScrollState(scrollTop, searchParams, cursor || undefined, items.length);
+          }
+          
           const sp = new URLSearchParams();
           filters.tags.forEach((t) => sp.append("tags", t));
           if (filters.logic) sp.set("logic", filters.logic);
