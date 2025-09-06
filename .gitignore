@@ -11,7 +11,9 @@ __pycache__/
 
 # Env
 .env
-.env.*
+.env.local
+.env.development
+.env.production
 packages/**/.env
 
 # Builds
