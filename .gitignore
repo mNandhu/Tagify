@@ -5,7 +5,6 @@ node_modules/
 
 # Python / uv
 .venv/
-uv.lock
 __pycache__/
 *.pyc
 
