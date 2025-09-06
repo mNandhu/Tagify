@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "copilot/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-images-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y jq curl
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compose up (CI stack)
+        run: |
+          docker compose -f docker-compose.ci.yml up --build -d
+
+      - name: Wait for backend health
+        run: |
+          for i in {1..60}; do
+            if curl -sf http://localhost:8000/health > /dev/null; then
+              echo "Backend healthy"; exit 0; fi; sleep 2; done; echo "Backend not healthy"; docker compose -f docker-compose.ci.yml logs backend; exit 1
+
+      - name: Add library for test images
+        run: |
+          curl -s -X POST -H 'Content-Type: application/json' \
+            -d '{"path":"/data/test_images","name":"ci-test"}' \
+            http://localhost:8000/libraries > add_lib.json
+          cat add_lib.json
+          echo "LIB_ID=$(jq -r '._id // .id' add_lib.json)" >> $GITHUB_ENV
+
+      - name: Wait for scan to finish
+        run: |
+          for i in {1..120}; do
+            DONE=$(curl -sf http://localhost:8000/libraries/$LIB_ID/progress | jq -r '.scan_done');
+            TOTAL=$(curl -sf http://localhost:8000/libraries/$LIB_ID/progress | jq -r '.scan_total');
+            SCANNING=$(curl -sf http://localhost:8000/libraries/$LIB_ID/progress | jq -r '.scanning');
+            echo "Progress: $DONE/$TOTAL (scanning=$SCANNING)";
+            if [ "$SCANNING" = "false" ]; then break; fi; sleep 2; done
+          curl -sf http://localhost:8000/libraries/$LIB_ID/progress | tee progress.json
+          test "$(jq -r '.indexed_count' progress.json)" != "0"
+
+      - name: Verify images exist
+        run: |
+          curl -sf "http://localhost:8000/images?limit=5&library_id=$LIB_ID" | tee images.json
+          COUNT=$(jq length images.json)
+          if [ "$COUNT" -lt 1 ]; then echo "No images indexed"; exit 1; fi
+
+      - name: Verify media endpoints
+        run: |
+          IMG_ID=$(jq -r '.[0]._id' images.json)
+          # HEAD thumb & file
+          curl -sI http://localhost:8000/images/$IMG_ID/thumb | tee head_thumb.txt
+          curl -sI http://localhost:8000/images/$IMG_ID/file | tee head_file.txt
+          # GET thumb and file (CI presigned mode is off, so streaming works directly)
+          curl -sfL http://localhost:8000/images/$IMG_ID/thumb -o thumb.jpg
+          curl -sfL http://localhost:8000/images/$IMG_ID/file -o original.bin
+          file thumb.jpg || true
+          ls -lh thumb.jpg original.bin
+
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.ci.yml logs --no-color
+
+      - name: Compose down
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
