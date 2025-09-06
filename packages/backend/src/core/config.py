@@ -26,6 +26,10 @@ MINIO_BUCKET_ORIGINALS: str = env_str("MINIO_BUCKET_ORIGINALS", "tagify-original
 # Scanner concurrency cap
 SCANNER_MAX_WORKERS: int = int(env_str("SCANNER_MAX_WORKERS", "0") or "0")
 
+# Thumbnails: maximum size (pixels) for the longest edge
+# Used by scanner to generate JPEG thumbnails via Pillow
+THUMB_MAX_SIZE: int = int(env_str("THUMB_MAX_SIZE", "512") or "512")
+
 # Media delivery mode: 'off' (proxy via API), 'redirect' (302/307 to presigned), 'url' (API returns URL JSON)
 MEDIA_PRESIGNED_MODE: str = env_str("MEDIA_PRESIGNED_MODE", "redirect").lower()
 # Expiration for presigned URLs in seconds
