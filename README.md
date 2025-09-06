@@ -39,6 +39,20 @@ pnpm install
 pnpm dev
 ```
 
+#### Alternative: Hybrid Development (Docker dependencies, local code)
+
+If you want to run dependencies in Docker but develop locally:
+
+```bash
+# Start only MongoDB and MinIO
+docker compose -f docker-compose.dev.yml up -d
+
+# Then run the application locally
+pnpm dev
+```
+
+This gives you the benefits of containerized dependencies with fast local development iteration.
+
 ## Architecture
 
 - **Backend**: FastAPI app with MongoDB for metadata, MinIO for image storage
@@ -80,3 +94,30 @@ See .github/prompts/tech_guide.md for architecture details. Key endpoints:
 Docker volumes ensure data persists across restarts:
 - `mongodb_data`: MongoDB database
 - `minio_data`: MinIO storage buckets
+
+## Troubleshooting
+
+### Common Issues
+
+**Docker build fails with SSL errors:**
+- Use the development setup: `docker compose -f docker-compose.dev.yml up -d`
+- Then run locally: `pnpm dev`
+
+**Services not starting:**
+- Check logs: `docker compose logs -f`
+- Restart services: `docker compose restart`
+
+**Port conflicts:**
+- MongoDB (27017), MinIO (9000, 9001), Backend (8000), Frontend (5173)
+- Change ports in `docker-compose.yml` if needed
+
+**Health check failures:**
+- Wait longer for services to start (especially MongoDB)
+- Check container logs for specific errors
+
+### Testing the Setup
+
+Run the validation script to test components:
+```bash
+./scripts/test-docker.sh
+```
