@@ -1,0 +1,42 @@
+# Root Docker ignore for monorepo context builds
+
+# VCS
+.git
+.gitignore
+
+# Node-related
+node_modules
+**/node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store
+
+# Build outputs
+**/dist
+**/build
+**/.cache
+**/.vite
+**/.turbo
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+
+# Env files
+.env
+.env.*
+*.local
+
+# Python caches (backend not using root context, but keep tidy)
+__pycache__
+*.pyc
+*.pyo
+.mypy_cache
+.pytest_cache
+
+# Frontend specific (ensure excluded even if patterns change)
+packages/frontend/node_modules
+packages/frontend/dist
