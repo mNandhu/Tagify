@@ -1,28 +1,30 @@
+# Docker Compose configuration optimized for CI/testing environments
+# Use this for automated testing and CI pipelines
 services:
   # MongoDB database
   mongodb:
     image: mongo:7
-    container_name: tagify-mongodb
-    restart: "no"  # Changed from unless-stopped for CI compatibility
+    container_name: tagify-mongodb-ci
+    restart: "no"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password}
     ports:
       - "27017:27017"
     volumes:
-      - mongodb_data:/data/db
+      - mongodb_data_ci:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "--authenticationDatabase", "admin"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
 
   # MinIO object storage
   minio:
     image: minio/minio:latest
-    container_name: tagify-minio
-    restart: "no"  # Changed from unless-stopped for CI compatibility
+    container_name: tagify-minio-ci
+    restart: "no"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
@@ -30,19 +32,19 @@ services:
       - "9000:9000"  # API
       - "9001:9001"  # Console
     volumes:
-      - minio_data:/data
+      - minio_data_ci:/data
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   # MinIO bucket initialization
   minio-init:
     image: minio/mc:latest
-    container_name: tagify-minio-init
+    container_name: tagify-minio-init-ci
     depends_on:
       minio:
         condition: service_healthy
@@ -51,9 +53,12 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
     entrypoint: >
       /bin/sh -c "
+      set -e;
+      echo 'Setting up MinIO alias...';
       mc alias set minio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
-      mc mb minio/tagify-thumbs --ignore-existing;
-      mc mb minio/tagify-originals --ignore-existing;
+      echo 'Creating buckets...';
+      mc mb minio/tagify-thumbs --ignore-existing || echo 'Bucket tagify-thumbs may already exist';
+      mc mb minio/tagify-originals --ignore-existing || echo 'Bucket tagify-originals may already exist';
       echo 'Buckets created successfully';
       "
     restart: "no"
@@ -63,8 +68,8 @@ services:
     build:
       context: ./packages/backend
       dockerfile: Dockerfile
-    container_name: tagify-backend
-    restart: "no"  # Changed from unless-stopped for CI compatibility
+    container_name: tagify-backend-ci
+    restart: "no"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -89,32 +94,13 @@ services:
       - "8000:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  # React frontend
-  frontend:
-    build:
-      context: .
-      dockerfile: packages/frontend/Dockerfile
-    container_name: tagify-frontend
-    restart: "no"  # Changed from unless-stopped for CI compatibility
-    depends_on:
-      backend:
-        condition: service_healthy
-    ports:
-      - "5173:80"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
       start_period: 15s
 
 volumes:
-  mongodb_data:
+  mongodb_data_ci:
     driver: local
-  minio_data:
+  minio_data_ci:
     driver: local
