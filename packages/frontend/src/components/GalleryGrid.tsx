@@ -54,10 +54,11 @@ export function GalleryGrid({
       ref={containerRef}
       className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 auto-rows-[4px] grid-flow-row-dense"
     >
-      {items.map((it) => (
+      {items.map((it, index) => (
         <ThumbnailItem
           key={it._id}
           it={it}
+          index={index}
           selection={selection}
           selectionMode={selectionMode}
           onOpen={onOpen}
@@ -73,6 +74,7 @@ export function GalleryGrid({
 
 function ThumbnailItem({
   it,
+  index,
   selection,
   selectionMode,
   onToggle,
@@ -82,6 +84,7 @@ function ThumbnailItem({
   rowGap,
 }: {
   it: ImageDocWithDims;
+  index: number;
   selection: Set<string>;
   selectionMode: boolean;
   onToggle: (id: string) => void;
@@ -139,6 +142,7 @@ function ThumbnailItem({
           height={it.height}
           selected={selectionMode && selection.has(it._id)}
           onClick={() => (selectionMode ? onToggle(it._id) : onOpen(it._id))}
+          priority={index < 12} // First 12 items get high priority
         />
         {selectionMode && (
           <button

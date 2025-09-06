@@ -42,6 +42,11 @@ def ensure_indexes() -> None:
             [("library_id", ASCENDING), ("has_tags", ASCENDING), ("_id", DESCENDING)],
             name="lib_id_has_tags__id",
         ),
+        # Compound index for tag filter queries with library and sort
+        IndexModel(
+            [("library_id", ASCENDING), ("tags", ASCENDING), ("_id", DESCENDING)],
+            name="lib_id_tags__id",
+        ),
     ]
     try:
         images.create_indexes(image_indexes)
