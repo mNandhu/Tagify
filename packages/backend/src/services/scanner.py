@@ -4,7 +4,7 @@ from pathlib import Path
 from io import BytesIO
 from PIL import Image as PILImage
 from ..database.mongo import col
-from .storage_minio import put_thumb, put_original
+from .storage_minio import put_thumb, put_original, delete_by_prefix
 import hashlib
 import mimetypes
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -109,8 +109,8 @@ _scan_lock = Lock()
 _current_scans: set[str] = set()
 
 
-def _process_image(library_id: str, root_path: Path, p: Path) -> bool:
-    """Process a single image file. Returns True if indexed, False otherwise."""
+def _process_image(library_id: str, root_path: Path, p: Path) -> str | None:
+    """Process a single image file. Returns image ID if indexed, None otherwise."""
     try:
         stat = p.stat()
         width = height = 0
@@ -120,6 +120,7 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> bool:
         except Exception:
             pass
         rel = str(p.relative_to(root_path))
+        image_id = f"{library_id}:{rel}"
         # Generate a thumbnail in-memory for MinIO
         thumb_bytes: bytes | None = _make_thumb_bytes(p)
 
@@ -130,19 +131,19 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> bool:
             mt, _ = mimetypes.guess_type(str(p))
             with open(p, "rb") as f:
                 original_key = put_original(
-                    library_id, f"{library_id}:{rel}", f, stat.st_size, mt
+                    library_id, image_id, f, stat.st_size, mt
                 )
         except Exception:
             original_key = None
         # Upload thumbnail if generated
         if thumb_bytes is not None:
             try:
-                thumb_key = put_thumb(library_id, f"{library_id}:{rel}", thumb_bytes)
+                thumb_key = put_thumb(library_id, image_id, thumb_bytes)
             except Exception:
                 thumb_key = None
 
         doc = {
-            "_id": f"{library_id}:{rel}",
+            "_id": image_id,
             "library_id": library_id,
             "path": str(p),
             "size": stat.st_size,
@@ -158,9 +159,9 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> bool:
             {"$set": doc, "$setOnInsert": {"tags": [], "has_tags": False}},
             upsert=True,
         )
-        return True
+        return image_id
     except Exception:
-        return False
+        return None
 
 
 def scan_library_async(library_id: str, root: str) -> dict:
@@ -189,6 +190,7 @@ def scan_library_async(library_id: str, root: str) -> dict:
         nonlocal library_id
         total = 0
         done = 0
+        discovered_image_ids: set[str] = set()
         try:
             # Discover image files
             files: list[Path] = []
@@ -216,9 +218,10 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 ]
                 for fut in as_completed(futures):
                     try:
-                        ok = fut.result()
-                        if ok:
+                        image_id = fut.result()
+                        if image_id:
                             done += 1
+                            discovered_image_ids.add(image_id)
                     except Exception:
                         pass
                     batch += 1
@@ -228,6 +231,63 @@ def scan_library_async(library_id: str, root: str) -> dict:
                             {"_id": ObjectId_or_str(library_id)},
                             {"$set": {"scan_done": done}},
                         )
+
+            # Clean up stale images (images that exist in DB but weren't discovered in current scan)
+            images_col = col("images")
+            existing_docs = list(images_col.find(
+                {"library_id": library_id}, 
+                {"_id": 1, "original_key": 1, "thumb_key": 1}
+            ))
+            
+            stale_image_ids = []
+            stale_minio_keys = []
+            
+            for doc in existing_docs:
+                existing_id = doc["_id"]
+                if existing_id not in discovered_image_ids:
+                    stale_image_ids.append(existing_id)
+                    # Collect MinIO keys for cleanup
+                    if doc.get("original_key"):
+                        stale_minio_keys.append(doc["original_key"])
+                    if doc.get("thumb_key"):
+                        stale_minio_keys.append(doc["thumb_key"])
+
+            # Remove stale images from MongoDB
+            if stale_image_ids:
+                images_col.delete_many({"_id": {"$in": stale_image_ids}})
+                
+                # Clean up corresponding MinIO objects
+                # Group keys by prefix to optimize deletion
+                if stale_minio_keys:
+                    try:
+                        # For efficiency, we could delete by prefix for each stale image
+                        # but since we have the exact keys, let's delete them individually
+                        from minio.deleteobjects import DeleteObject
+                        from .storage_minio import get_minio
+                        
+                        client = get_minio()
+                        
+                        # Separate keys by bucket type (original vs thumb)
+                        original_keys = [k for k in stale_minio_keys if not k.endswith('.jpg')]
+                        thumb_keys = [k for k in stale_minio_keys if k.endswith('.jpg')]
+                        
+                        # Delete from originals bucket
+                        if original_keys:
+                            delete_list = [DeleteObject(key) for key in original_keys]
+                            for err in client.remove_objects(config.MINIO_BUCKET_ORIGINALS, delete_list):
+                                # Best effort cleanup, ignore errors
+                                _ = err
+                        
+                        # Delete from thumbs bucket  
+                        if thumb_keys:
+                            delete_list = [DeleteObject(key) for key in thumb_keys]
+                            for err in client.remove_objects(config.MINIO_BUCKET_THUMBS, delete_list):
+                                # Best effort cleanup, ignore errors
+                                _ = err
+                                
+                    except Exception:
+                        # Best effort cleanup - don't fail the scan if MinIO cleanup fails
+                        pass
 
             # Finalize
             libraries.update_one(
