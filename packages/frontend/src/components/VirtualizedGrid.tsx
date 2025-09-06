@@ -101,7 +101,7 @@ export function VirtualizedGrid({
     return rows;
   }, [items, colWidth, cols]);
 
-  // Calculate visible rows
+  // Calculate visible rows  
   const visibleRows = useMemo(() => {
     const viewportTop = scrollTop;
     const viewportBottom = scrollTop + containerHeight;

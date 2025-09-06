@@ -20,8 +20,9 @@ export function GalleryGrid({
   onOpen: (id: string) => void;
   selectionMode: boolean;
 }) {
-  // Use virtualization for large datasets (>200 items)
-  const useVirtualization = items.length > 200;
+  // Use virtualization for large datasets (>200 items), but prefer standard grid
+  // when scroll restoration might be needed to avoid complexity
+  const useVirtualization = items.length > 500; // Increased threshold
 
   if (useVirtualization) {
     return (
