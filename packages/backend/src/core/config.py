@@ -22,6 +22,11 @@ MINIO_SECRET_KEY: str = env_str("MINIO_SECRET_KEY", "")
 MINIO_SECURE: bool = env_str("MINIO_SECURE", "false").lower() == "true"
 MINIO_BUCKET_THUMBS: str = env_str("MINIO_BUCKET_THUMBS", "tagify-thumbs")
 MINIO_BUCKET_ORIGINALS: str = env_str("MINIO_BUCKET_ORIGINALS", "tagify-originals")
+MINIO_REGION: str = env_str("MINIO_REGION", "us-east-1")
+
+# Optional: Public endpoint for presigned URLs (e.g., "localhost:9000" or "http://media.example.com")
+# When set, backend will rewrite presigned MinIO URLs to use this origin so browsers outside Docker can reach it.
+MEDIA_PUBLIC_MINIO_ENDPOINT: str = env_str("MEDIA_PUBLIC_MINIO_ENDPOINT", "")
 
 # Scanner concurrency cap
 SCANNER_MAX_WORKERS: int = int(env_str("SCANNER_MAX_WORKERS", "0") or "0")

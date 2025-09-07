@@ -1,14 +1,16 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Union, List, Tuple, cast
 from io import BytesIO
 
 from minio import Minio
 from minio.deleteobjects import DeleteObject
 
 from ..core import config
+from urllib.parse import urlparse
 from datetime import timedelta
 
 _client: Optional[Minio] = None
+_sign_client: Optional[Minio] = None
 
 
 def get_minio() -> Minio:
@@ -19,12 +21,41 @@ def get_minio() -> Minio:
             access_key=config.MINIO_ACCESS_KEY,
             secret_key=config.MINIO_SECRET_KEY,
             secure=config.MINIO_SECURE,
+            region=config.MINIO_REGION or None,
         )
         # Ensure buckets exist
         for bucket in (config.MINIO_BUCKET_THUMBS, config.MINIO_BUCKET_ORIGINALS):
             if not _client.bucket_exists(bucket):
                 _client.make_bucket(bucket)
     return _client
+
+
+def _get_signing_minio() -> Minio:
+    """Return a MinIO client used ONLY for generating presigned URLs.
+    If MEDIA_PUBLIC_MINIO_ENDPOINT is set, use that host:port (and scheme) so the signature matches the URL the browser will fetch.
+    Otherwise, reuse the internal client.
+    """
+    global _sign_client
+    public = (config.MEDIA_PUBLIC_MINIO_ENDPOINT or "").strip()
+    if not public:
+        return get_minio()
+    if _sign_client is not None:
+        return _sign_client
+    # Determine endpoint and secure from value; allow http(s):// or host:port
+    endpoint = public
+    secure = False
+    if public.startswith("http://") or public.startswith("https://"):
+        u = urlparse(public)
+        endpoint = u.netloc or u.path
+        secure = u.scheme == "https"
+    _sign_client = Minio(
+        endpoint,
+        access_key=config.MINIO_ACCESS_KEY,
+        secret_key=config.MINIO_SECRET_KEY,
+        secure=secure,
+        region=config.MINIO_REGION or None,
+    )
+    return _sign_client
 
 
 def put_thumb(
@@ -35,7 +66,7 @@ def put_thumb(
     key = f"{library_id}/{image_id}.jpg"
 
     # Set Cache-Control metadata for long-lived caching
-    metadata = {
+    metadata: dict[str, Union[str, List[str], Tuple[str]]] = {
         "Cache-Control": "public, max-age=31536000, immutable",
         "Content-Type": content_type,
     }
@@ -46,7 +77,7 @@ def put_thumb(
         data=BytesIO(data),
         length=len(data),
         content_type=content_type,
-        metadata=metadata,
+        metadata=cast(dict[str, Union[str, List[str], Tuple[str]]], metadata),
     )
     return key
 
@@ -99,19 +130,21 @@ def stat_original(key: str):
 
 
 def presign_original(key: str, expires: int | None = None) -> str:
-    client = get_minio()
+    client = _get_signing_minio()
     ttl = expires or config.MEDIA_PRESIGNED_EXPIRES
-    return client.presigned_get_object(
+    url = client.presigned_get_object(
         config.MINIO_BUCKET_ORIGINALS, key, expires=timedelta(seconds=int(ttl))
     )
+    return url
 
 
 def presign_thumb(key: str, expires: int | None = None) -> str:
-    client = get_minio()
+    client = _get_signing_minio()
     ttl = expires or config.MEDIA_PRESIGNED_EXPIRES
-    return client.presigned_get_object(
+    url = client.presigned_get_object(
         config.MINIO_BUCKET_THUMBS, key, expires=timedelta(seconds=int(ttl))
     )
+    return url
 
 
 def delete_by_prefix(prefix: str):
