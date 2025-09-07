@@ -49,6 +49,20 @@ cp .env.example .env
 docker compose up --build
 ```
 
+> [!WARNING]
+> 
+> You must mount host image directories into the backend service via `docker-compose.override.yml` so the backend can access libraries on the host. Edit the `backend` service `volumes` section, for example:
+> 
+> ```yaml
+> services:
+>   backend:
+>     volumes:
+>       - /absolute/path/to/your/images:/data/libraries
+>       - ./packages/backend:/app
+> ```
+> 
+> Use absolute host paths and verify file permissions.
+
 **Access Points:**
 - **Frontend**: http://localhost:5173 
 - **Backend API**: http://localhost:8000
