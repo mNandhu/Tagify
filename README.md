@@ -14,7 +14,6 @@ Tagify is purpose-built for organizing and exploring large collections of AI-gen
 > See the [ROADMAP](ROADMAP.md) for planned features.
 > I'm pretty much working on this in my spare time, so don't expect rapid progress.
 
-
 ## ✨ Features
 
 - **🎨 AI Art Focused**: Optimized for AI-generated image workflows and metadata
@@ -27,14 +26,16 @@ Tagify is purpose-built for organizing and exploring large collections of AI-gen
 
 ## 📸 Screenshots
 
+### All Images Gallery
 
-### All Images Gallery  
 ![Gallery View](docs/images/AllImagesPage.jpeg)
 
 ### Libraries Management
+
 ![Libraries Page](docs/images/LibrariesPage.jpeg)
 
 ### Image Detail View
+
 ![Image Detail](docs/images/ImageDetailView.jpeg)
 
 ## 🚀 Quick Start
@@ -56,9 +57,9 @@ docker compose up --build
 ```
 
 > [!WARNING]
-> 
+>
 > You must mount host image directories into the backend service via `docker-compose.override.yml` so the backend can access libraries on the host. Edit the `backend` service `volumes` section, for example:
-> 
+>
 > ```yaml
 > services:
 >   backend:
@@ -66,11 +67,12 @@ docker compose up --build
 >       - /absolute/path/to/your/images:/data/libraries
 >       - ./packages/backend:/app
 > ```
-> 
+>
 > Use absolute host paths and verify file permissions.
 
 **Access Points:**
-- **Frontend**: http://localhost:5173 
+
+- **Frontend**: http://localhost:5173
 - **Backend API**: http://localhost:8000
 - **MinIO Console**: http://localhost:9001 (admin:password123)
 - **Health Check**: http://localhost:8000/health
@@ -102,6 +104,7 @@ This approach gives you containerized dependencies with fast local code reloadin
 ### Local Development Setup
 
 1. **Clone and install dependencies:**
+
    ```bash
    git clone https://github.com/mNandhu/Tagify.git
    cd Tagify
@@ -109,12 +112,14 @@ This approach gives you containerized dependencies with fast local code reloadin
    ```
 
 2. **Set up environment configuration:**
+
    ```bash
    cp .env.example .env
    # Edit .env if needed for custom MongoDB/MinIO settings
    ```
 
 3. **Start dependencies with Docker:**
+
    ```bash
    docker compose -f docker-compose.dev.yml up -d
    ```
@@ -149,7 +154,7 @@ This approach gives you containerized dependencies with fast local code reloadin
 
 - **Backend**: FastAPI app with MongoDB for metadata, MinIO for image storage
 - **Frontend**: Vite + React + TypeScript with TailwindCSS
-- **Storage**: 
+- **Storage**:
   - MongoDB: Image metadata, tags, library information
   - MinIO: Original images and JPEG thumbnails in separate buckets
 
@@ -158,18 +163,21 @@ This approach gives you containerized dependencies with fast local code reloadin
 Tagify supports external AI tagging services for automatic tag generation. While Tagify stores and manages tags internally, you can connect it to autotagging services like [danbooru/autotagger](https://github.com/danbooru/autotagger) for automatic tag suggestions.
 
 **Configuration:**
+
 ```bash
 # In packages/backend/.env
 AI_TAGGING_URL=http://your-autotagger-service:port/predict
 ```
 
 **How it works:**
+
 1. Tagify sends images to your configured autotagger service
 2. Receives tag suggestions back
 3. You review and accept/reject suggestions before applying
 4. Tags are stored in Tagify's database for future searches
 
 **Compatible Services:**
+
 - [danbooru/autotagger](https://github.com/danbooru/autotagger) - Deep learning model for anime/artwork tagging
 - Custom APIs that accept image input and return JSON tag arrays
 
@@ -178,6 +186,7 @@ AI_TAGGING_URL=http://your-autotagger-service:port/predict
 Key environment variables (see `.env.example`):
 
 ### Media Delivery
+
 - `MEDIA_PRESIGNED_MODE`: How images are served (`redirect`, `url`, `off`)
   - `redirect`: 307 redirect to pre-signed URLs (default, offloads media)
   - `url`: Return JSON with pre-signed URL
@@ -185,11 +194,13 @@ Key environment variables (see `.env.example`):
 - `MEDIA_PRESIGNED_EXPIRES`: Pre-signed URL expiry in seconds (default: 3600)
 
 ### Storage
+
 - `MINIO_ROOT_USER/PASSWORD`: MinIO credentials
 - `MONGO_ROOT_USERNAME/PASSWORD`: MongoDB credentials
 - `MINIO_BUCKET_THUMBS/ORIGINALS`: Bucket names for thumbnails and originals
 
 ### Performance
+
 - `THUMB_MAX_SIZE`: Maximum thumbnail size in pixels (default: 512, recommended: 1024)
 - `SCANNER_MAX_WORKERS`: Scanner thread count (0 = auto-detect CPU cores)
 
@@ -223,6 +234,7 @@ Tagify/
 See [.github/prompts/tech_guide.md](.github/prompts/tech_guide.md) for detailed architecture documentation.
 
 **Key Endpoints:**
+
 - `GET /health` - Health check
 - `GET /images` - List images with filtering and pagination
 - `GET /images/{id}/file` - Original image (supports Range requests)
@@ -232,6 +244,7 @@ See [.github/prompts/tech_guide.md](.github/prompts/tech_guide.md) for detailed 
 - `POST /tags/apply` - Apply tags to images
 
 **Image Filtering:**
+
 - `tags[]=tag1&tags[]=tag2` - Filter by tags
 - `logic=and|or` - Tag filter logic
 - `library_id=...` - Filter by library
@@ -241,7 +254,7 @@ See [.github/prompts/tech_guide.md](.github/prompts/tech_guide.md) for detailed 
 ## 📚 Documentation & Links
 
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
-- **[ROADMAP.md](ROADMAP.md)** - Future features and development plan  
+- **[ROADMAP.md](ROADMAP.md)** - Future features and development plan
 - **[TODO.md](TODO.md)** - Current development tasks and priorities
 - **[Backend README](packages/backend/README.md)** - Backend-specific documentation
 - **[Frontend README](packages/frontend/README.md)** - Frontend-specific documentation
@@ -251,12 +264,14 @@ See [.github/prompts/tech_guide.md](.github/prompts/tech_guide.md) for detailed 
 ## 🐳 Data Persistence
 
 Docker volumes ensure data persists across container restarts:
+
 - `mongodb_data`: MongoDB database files
 - `minio_data`: MinIO storage buckets
 
 To backup your data:
 
 **POSIX (Linux/macOS):**
+
 ```bash
 # Backup MongoDB
 docker compose exec mongodb mongodump --out /data/backup
@@ -267,6 +282,7 @@ docker compose exec minio mc mirror minio/tagify-thumbs /data/backup/thumbs
 ```
 
 **Windows PowerShell:**
+
 ```powershell
 # Backup MongoDB
 docker compose exec mongodb mongodump --out /data/backup
@@ -285,7 +301,7 @@ docker compose exec minio mc mirror minio/tagify-thumbs /data/backup/thumbs
 cd packages/backend
 uv run pytest
 
-# Frontend tests (when available)  
+# Frontend tests (when available)
 cd packages/frontend
 pnpm test
 ```
@@ -307,6 +323,7 @@ pnpm perf
 ### Common Issues
 
 **Docker build fails with SSL errors:**
+
 ```bash
 # Use development setup instead
 docker compose -f docker-compose.dev.yml up -d
@@ -314,6 +331,7 @@ pnpm dev
 ```
 
 **Services not starting:**
+
 ```bash
 # Check logs
 docker compose logs -f
@@ -323,6 +341,7 @@ docker compose restart
 ```
 
 **Port conflicts:**
+
 - MongoDB: 27017 (Unlikely as it is not exposed by default)
 - MinIO: 9000 (API), 9001 (Console)
 - Backend: 8000
@@ -331,12 +350,14 @@ docker compose restart
 Change ports in `docker-compose.yml` if needed.
 
 **Health check failures:**
+
 - Wait longer for services to start (especially MongoDB)
 - Check container logs: `docker compose logs [service-name]`
 
 ### Testing Setup
 
 Validate your installation:
+
 ```bash
 ./scripts/test-docker.sh
 ```
@@ -348,28 +369,31 @@ We welcome contributions! Here's how to get started:
 ### Development Setup
 
 1. **Fork and clone:**
+
    ```bash
    git clone https://github.com/your-username/Tagify.git
    cd Tagify
    ```
 
 2. **Set up development environment:**
+
    ```bash
    # Install dependencies
    pnpm install
-   
+
    # Start dependencies
    docker compose -f docker-compose.dev.yml up -d
-   
+
    # Configure backend
    cp packages/backend/.env.example packages/backend/.env
    # Edit packages/backend/.env with MongoDB/MinIO credentials
-   
+
    # Start development servers
    pnpm dev
    ```
 
 3. **Make your changes and test:**
+
    ```bash
    # Test your changes work end-to-end
    # Add a library, scan images, verify functionality
@@ -391,8 +415,9 @@ We welcome contributions! Here's how to get started:
 ### Reporting Issues
 
 When reporting bugs, please include:
+
 - Steps to reproduce
-- Expected vs actual behavior  
+- Expected vs actual behavior
 - Environment details (OS, Docker version, etc.)
 - Relevant logs from `docker compose logs`
 

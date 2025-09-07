@@ -59,14 +59,20 @@ class Stat:
                 else:
                     quantiles = statistics.quantiles(self.latencies_ms, n=100)
                     p50 = quantiles[49] if len(quantiles) > 49 else self.latencies_ms[0]
-                    p95 = quantiles[94] if len(quantiles) > 94 else self.latencies_ms[-1]
-                    p99 = quantiles[98] if len(quantiles) > 98 else self.latencies_ms[-1]
+                    p95 = (
+                        quantiles[94] if len(quantiles) > 94 else self.latencies_ms[-1]
+                    )
+                    p99 = (
+                        quantiles[98] if len(quantiles) > 98 else self.latencies_ms[-1]
+                    )
                 avg = sum(self.latencies_ms) / len(self.latencies_ms)
                 mn = min(self.latencies_ms)
                 mx = max(self.latencies_ms)
             except (IndexError, ValueError):
                 # Fallback for edge cases
-                avg = mn = mx = p50 = p95 = p99 = self.latencies_ms[0] if self.latencies_ms else 0.0
+                avg = mn = mx = p50 = p95 = p99 = (
+                    self.latencies_ms[0] if self.latencies_ms else 0.0
+                )
         else:
             p50 = p95 = p99 = avg = mn = mx = 0.0
         return {
