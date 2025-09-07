@@ -89,7 +89,7 @@ This approach gives you containerized dependencies with fast local code reloadin
 ### Prerequisites
 
 - **Node.js** 18+ and **pnpm** ([installation guide](https://pnpm.io/installation))
-- **Python** 3.12+ and **uv** (`pip install uv`)
+- **Python** 3.12+ and **uv** ([installation guide](https://docs.astral.sh/uv/getting-started/installation/))
 - **MongoDB** (local or Docker)
 - **MinIO** (local or Docker)
 
@@ -113,7 +113,7 @@ This approach gives you containerized dependencies with fast local code reloadin
    docker compose -f docker-compose.dev.yml up -d
    ```
 
-4. **Configure backend environment:**
+4. **Configure backend environment**
 
    Create and edit the file packages/backend/.env and set the following environment variables (adjust values as needed):
 
@@ -124,7 +124,6 @@ This approach gives you containerized dependencies with fast local code reloadin
    MINIO_SECRET_KEY=password123
    MINIO_SECURE=false
    MEDIA_PRESIGNED_MODE=redirect
-   "@ | Out-File -FilePath packages/backend/.env -Encoding utf8
    ```
 
 5. **Start the application:**
