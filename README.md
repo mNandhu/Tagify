@@ -2,12 +2,18 @@
 
 **AI-generated image management made simple.**
 
-Tagify is purpose-built for organizing and exploring large collections of AI-generated images from Stable Diffusion, Midjourney, DALL-E, and other AI art tools. Use powerful tag-based organization with optional AI autotagging to keep your diffusion models and generated artwork easily discoverable.
+Tagify is purpose-built for organizing and exploring large collections of AI-generated images from ComfyUI and other AI art tools. Use powerful tag-based organization with optional AI autotagging to keep your diffusion models and generated artwork easily discoverable.
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![TypeScript](https://img.shields.io/badge/typescript-5.x-blue)
+
+> [!NOTE]
+> This is a work in progress and not all features are implemented yet.
+> See the [ROADMAP](ROADMAP.md) for planned features.
+> I'm pretty much working on this in my spare time, so don't expect rapid progress.
+
 
 ## ✨ Features
 
