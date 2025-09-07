@@ -147,7 +147,7 @@ This approach gives you containerized dependencies with fast local code reloadin
   - MongoDB: Image metadata, tags, library information
   - MinIO: Original images and JPEG thumbnails in separate buckets
 
-## 🤖 AI Autotagger Integration
+## 🤖 AI Autotagger Integration (Not Yet Implemented)
 
 Tagify supports external AI tagging services for automatic tag generation. While Tagify stores and manages tags internally, you can connect it to autotagging services like [danbooru/autotagger](https://github.com/danbooru/autotagger) for automatic tag suggestions.
 
@@ -184,7 +184,7 @@ Key environment variables (see `.env.example`):
 - `MINIO_BUCKET_THUMBS/ORIGINALS`: Bucket names for thumbnails and originals
 
 ### Performance
-- `THUMB_MAX_SIZE`: Maximum thumbnail size in pixels (default: 512)
+- `THUMB_MAX_SIZE`: Maximum thumbnail size in pixels (default: 512, recommended: 1024)
 - `SCANNER_MAX_WORKERS`: Scanner thread count (0 = auto-detect CPU cores)
 
 ## 📁 Project Structure
@@ -317,8 +317,8 @@ docker compose restart
 ```
 
 **Port conflicts:**
-- MongoDB: 27017
-- MinIO: 9000 (API), 9001 (Console)  
+- MongoDB: 27017 (Unlikely as it is not exposed by default)
+- MinIO: 9000 (API), 9001 (Console)
 - Backend: 8000
 - Frontend: 5173
 
