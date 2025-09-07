@@ -21,14 +21,15 @@ Tagify is purpose-built for organizing and exploring large collections of AI-gen
 
 ## 📸 Screenshots
 
-### Libraries Management
-![Libraries Page](https://github.com/user-attachments/assets/da5b6283-2db2-4f05-9e99-7a5816916e76)
 
 ### All Images Gallery  
-![Gallery View](https://github.com/user-attachments/assets/c17f4f72-7587-40fd-9d90-74f438652fdb)
+![Gallery View](docs/images/AllImagesPage.jpeg)
+
+### Libraries Management
+![Libraries Page](docs/images/LibrariesPage.jpeg)
 
 ### Image Detail View
-![Image Detail](https://github.com/user-attachments/assets/ec60fd75-b69b-4501-991a-d10fcc134bc5)
+![Image Detail](docs/images/ImageDetailView.jpeg)
 
 ## 🚀 Quick Start
 
