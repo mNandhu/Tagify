@@ -115,23 +115,9 @@ This approach gives you containerized dependencies with fast local code reloadin
 
 4. **Configure backend environment:**
 
-   **POSIX (Linux/macOS):**
-   ```bash
-   # Create packages/backend/.env
-   cat > packages/backend/.env << EOF
-   MONGO_URI=mongodb://admin:password@localhost:27017/tagify?authSource=admin
-   MINIO_ENDPOINT=localhost:9000
-   MINIO_ACCESS_KEY=admin
-   MINIO_SECRET_KEY=password123
-   MINIO_SECURE=false
-   MEDIA_PRESIGNED_MODE=redirect
-   EOF
-   ```
+   Create and edit the file packages/backend/.env and set the following environment variables (adjust values as needed):
 
-   **Windows PowerShell:**
-   ```powershell
-   # Create packages/backend/.env
-   @"
+   ```env
    MONGO_URI=mongodb://admin:password@localhost:27017/tagify?authSource=admin
    MINIO_ENDPOINT=localhost:9000
    MINIO_ACCESS_KEY=admin
