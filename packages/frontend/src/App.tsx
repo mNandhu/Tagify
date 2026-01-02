@@ -63,19 +63,27 @@ export default function App() {
       }
       if (key === " " || key === "Spacebar") {
         // Space scrolls down; Shift+Space scrolls up.
+        // Don't prevent default if focus is on a button (Space activates buttons).
+        const active = document.activeElement as HTMLElement | null;
+        if (active && active.tagName?.toLowerCase() === "button") {
+          return;
+        }
         e.preventDefault();
         scroller.scrollBy({ top: e.shiftKey ? -page : page, behavior: "auto" });
         return;
       }
       // Optional: arrows for consistent behavior when focus is on body
-      if (key === "ArrowDown") {
+      // Only override arrow keys when the body has focus, so we don't
+      // interfere with keyboard navigation in interactive controls.
+      if (key === "ArrowDown" || key === "ArrowUp") {
+        if (document.activeElement !== document.body) {
+          return;
+        }
         e.preventDefault();
-        scroller.scrollBy({ top: small, behavior: "auto" });
-        return;
-      }
-      if (key === "ArrowUp") {
-        e.preventDefault();
-        scroller.scrollBy({ top: -small, behavior: "auto" });
+        scroller.scrollBy({
+          top: key === "ArrowDown" ? small : -small,
+          behavior: "auto",
+        });
         return;
       }
     };
