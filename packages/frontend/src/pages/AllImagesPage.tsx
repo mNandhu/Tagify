@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { GalleryGrid } from "../components/GalleryGrid";
 import { useToast } from "../components/Toasts";
@@ -59,28 +59,54 @@ export default function AllImagesPage() {
   // Scroll restoration state
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false);
-  const [restoredScrollState, setRestoredScrollState] = useState<ReturnType<typeof restoreScrollState>>(null);
-  const debouncedScrollSaver = useMemo(() => createDebouncedScrollSaver(200), []);
+  const [restoredScrollState, setRestoredScrollState] =
+    useState<ReturnType<typeof restoreScrollState>>(null);
+  const debouncedScrollSaver = useMemo(
+    () => createDebouncedScrollSaver(200),
+    []
+  );
+
+  // Keep latest values for scroll saver without reattaching listeners.
+  const scrollSaveRef = useRef<{
+    searchParams: URLSearchParams;
+    cursor: string | null;
+    itemCount: number;
+  }>({ searchParams, cursor, itemCount: items.length });
+
+  useEffect(() => {
+    scrollSaveRef.current = {
+      searchParams,
+      cursor,
+      itemCount: items.length,
+    };
+  }, [searchParams, cursor, items.length]);
 
   // Clean up old scroll states on mount
   useEffect(() => {
     clearOldScrollStates();
   }, []);
 
-  // Track scroll position for restoration
+  // Track scroll position for restoration (attach once; read latest values from ref)
   useEffect(() => {
     // Use the parent scroll container (from App.tsx)
-    const container = containerRef.current?.closest('.overflow-auto') as HTMLElement || containerRef.current;
+    const container =
+      (containerRef.current?.closest(".overflow-auto") as HTMLElement) ||
+      containerRef.current;
     if (!container) return;
 
     const handleScroll = () => {
-      const scrollTop = container.scrollTop;
-      debouncedScrollSaver(scrollTop, searchParams, cursor || undefined, items.length);
+      const { searchParams, cursor, itemCount } = scrollSaveRef.current;
+      debouncedScrollSaver(
+        container.scrollTop,
+        searchParams,
+        cursor || undefined,
+        itemCount
+      );
     };
 
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [searchParams, cursor, items.length, debouncedScrollSaver]);
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [debouncedScrollSaver]);
 
   // Check for scroll restoration on mount or when returning from ImageView
   useEffect(() => {
@@ -112,10 +138,16 @@ export default function AllImagesPage() {
   // initial load and when filters or pagination change
   useEffect(() => {
     const url = `/api/images${queryString ? `?${queryString}` : ""}`;
+    const controller = new AbortController();
+    const isPaging = !!cursor;
     setLoading(true);
-    api<ImageDoc[]>(url)
+    fetch(url, { signal: controller.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return (await r.json()) as ImageDoc[];
+      })
       .then((data) => {
-        setItems((prev) => (cursor ? [...prev, ...data] : data));
+        setItems((prev) => (isPaging ? [...prev, ...data] : data));
         setHasMore(data.length === limit);
         if (data.length) {
           const last = data[data.length - 1];
@@ -124,23 +156,40 @@ export default function AllImagesPage() {
           setNextCursor(null);
         }
       })
-      .catch((e) => console.error(e))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+        console.error(e);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
   }, [queryString]);
 
   // Restore scroll position after data loads
   useEffect(() => {
-    if (!shouldRestoreScroll || !restoredScrollState || !containerRef.current || loading) {
+    if (
+      !shouldRestoreScroll ||
+      !restoredScrollState ||
+      !containerRef.current ||
+      loading
+    ) {
       return;
     }
 
-    const container = containerRef.current?.closest('.overflow-auto') as HTMLElement || containerRef.current;
+    const container =
+      (containerRef.current?.closest(".overflow-auto") as HTMLElement) ||
+      containerRef.current;
     const targetScrollTop = restoredScrollState.scrollTop;
-    
+
     // If we have fewer items than before, try to load more data
     if (restoredScrollState.itemCount > items.length && hasMore && !cursor) {
       // Start loading from the restored cursor position
-      if (restoredScrollState.cursor && restoredScrollState.cursor !== nextCursor) {
+      if (
+        restoredScrollState.cursor &&
+        restoredScrollState.cursor !== nextCursor
+      ) {
         setCursor(restoredScrollState.cursor);
         return; // Will trigger data load, then retry restoration
       }
@@ -151,13 +200,21 @@ export default function AllImagesPage() {
       if (container.scrollHeight > targetScrollTop) {
         container.scrollTo({
           top: targetScrollTop,
-          behavior: 'auto' // Instant restore
+          behavior: "auto", // Instant restore
         });
       }
       setShouldRestoreScroll(false);
       setRestoredScrollState(null);
     }, 100); // Small delay to ensure DOM is updated
-  }, [shouldRestoreScroll, restoredScrollState, items.length, loading, hasMore, cursor, nextCursor]);
+  }, [
+    shouldRestoreScroll,
+    restoredScrollState,
+    items.length,
+    loading,
+    hasMore,
+    cursor,
+    nextCursor,
+  ]);
 
   // Clear scroll state when filters change
   useEffect(() => {
@@ -165,7 +222,13 @@ export default function AllImagesPage() {
       // Only clear if we're not in the middle of restoring
       clearScrollState(searchParams);
     }
-  }, [filters.tags, filters.logic, filters.libraryId, filters.noTags, shouldRestoreScroll]);
+  }, [
+    filters.tags,
+    filters.logic,
+    filters.libraryId,
+    filters.noTags,
+    shouldRestoreScroll,
+  ]);
 
   // sync filters from URL on mount and whenever search params change
   useEffect(() => {
@@ -176,19 +239,22 @@ export default function AllImagesPage() {
     const noTags = sp.get("no_tags") === "1";
     const logic = (sp.get("logic") as Filters["logic"]) || undefined;
     const nextTags = urlTags.length ? urlTags : singleTag;
-    if (nextTags.length || lib || logic) {
-      setFilters((f) => ({
-        ...f,
-        tags: nextTags.length ? nextTags : f.tags,
-        libraryId: lib,
-        logic: logic || f.logic,
-        noTags,
-      }));
-      if (singleTag.length) {
-        singleTag.forEach(() => sp.delete("tag"));
-        nextTags.forEach((t) => sp.append("tags", t));
-        setSearchParams(sp, { replace: true });
-      }
+    // Always synchronize filter state from the URL (single source of truth).
+    // This fixes cases like navigating to /?no_tags=1, which previously failed to
+    // update state and then got overwritten by the "push filters to URL" effect.
+    setFilters((f) => ({
+      ...f,
+      tags: nextTags,
+      libraryId: lib,
+      logic: logic || f.logic,
+      noTags,
+    }));
+
+    // Back-compat: migrate legacy ?tag=... to ?tags=... (multi) once.
+    if (singleTag.length) {
+      singleTag.forEach(() => sp.delete("tag"));
+      nextTags.forEach((t) => sp.append("tags", t));
+      setSearchParams(sp, { replace: true });
     }
   }, [searchParams, setSearchParams]);
 
@@ -219,13 +285,13 @@ export default function AllImagesPage() {
     const onKey = (e: KeyboardEvent) => {
       // Don't trigger global shortcuts when typing in form fields
       const target = e.target as HTMLElement;
-      const isFormField = target && (
-        target.tagName.toLowerCase() === 'input' ||
-        target.tagName.toLowerCase() === 'textarea' ||
-        target.tagName.toLowerCase() === 'select' ||
-        target.isContentEditable
-      );
-      
+      const isFormField =
+        target &&
+        (target.tagName.toLowerCase() === "input" ||
+          target.tagName.toLowerCase() === "textarea" ||
+          target.tagName.toLowerCase() === "select" ||
+          target.isContentEditable);
+
       if (isFormField) {
         return;
       }
@@ -258,12 +324,57 @@ export default function AllImagesPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [push]);
 
-  const toggleSelection = (id: string) =>
+  const toggleSelection = useCallback((id: string) => {
     setSelection((s) => {
       const n = new Set(s);
       n.has(id) ? n.delete(id) : n.add(id);
       return n;
     });
+  }, []);
+
+  const getScrollContainer = useCallback(() => {
+    return (
+      (containerRef.current?.closest(".overflow-auto") as HTMLElement | null) ||
+      containerRef.current
+    );
+  }, []);
+
+  const openImage = useCallback(
+    (id: string) => {
+      // Save current scroll position before navigating
+      const container = getScrollContainer();
+      if (container) {
+        const scrollTop = container.scrollTop;
+        saveScrollState(
+          scrollTop,
+          searchParams,
+          cursor || undefined,
+          items.length
+        );
+      }
+
+      const sp = new URLSearchParams();
+      filters.tags.forEach((t) => sp.append("tags", t));
+      if (filters.logic) sp.set("logic", filters.logic);
+      if (filters.libraryId) sp.set("library_id", filters.libraryId);
+      if (filters.noTags) sp.set("no_tags", "1");
+      if (cursor) sp.set("cursor", cursor);
+      sp.set("limit", String(limit));
+      navigate(`/image/${encodeURIComponent(id)}?${sp.toString()}`);
+    },
+    [
+      cursor,
+      filters.libraryId,
+      filters.logic,
+      filters.noTags,
+      filters.tags,
+      getScrollContainer,
+      items.length,
+      limit,
+      navigate,
+      searchParams,
+    ]
+  );
 
   const clearSelection = () => setSelection(new Set());
   const selectionActive = selection.size > 0;
@@ -273,7 +384,7 @@ export default function AllImagesPage() {
     if (!selectionMode && selectionActive) {
       setSelection(new Set());
     }
-  }, [selectionMode]);
+  }, [selectionMode, selectionActive]);
 
   // observe sentinel for infinite scroll
   useEffect(() => {
@@ -290,60 +401,6 @@ export default function AllImagesPage() {
     obs.observe(el);
     return () => obs.disconnect();
   }, [hasMore, loading, nextCursor]);
-
-  // Speculative prefetch: when user is 80% through current items, prefetch next page
-  useEffect(() => {
-    if (!hasMore || loading || !nextCursor || items.length < limit) return;
-
-    const prefetchThreshold = Math.floor(items.length * 0.8);
-    if (prefetchThreshold <= 0) return;
-
-    const prefetchSentinel = document.createElement('div');
-    const container = document.querySelector('.grid'); // Grid container
-    if (!container) return;
-
-    // Insert prefetch sentinel at 80% point
-    const targetItem = container.children[prefetchThreshold];
-    if (!targetItem) return;
-
-    targetItem.appendChild(prefetchSentinel);
-
-    const prefetchObs = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) {
-        // Prefetch next page
-        const prefetchParams = new URLSearchParams();
-        if (filters.tags.length) filters.tags.forEach((t) => prefetchParams.append("tags", t));
-        if (filters.logic) prefetchParams.set("logic", filters.logic);
-        if (filters.libraryId) prefetchParams.set("library_id", filters.libraryId);
-        if (filters.noTags) prefetchParams.set("no_tags", "1");
-        prefetchParams.set("limit", String(limit));
-        prefetchParams.set("cursor", nextCursor);
-
-        const prefetchUrl = `/api/images?${prefetchParams.toString()}`;
-        
-        // Use fetch with low priority for prefetch
-        fetch(prefetchUrl, { 
-          method: 'GET',
-          // @ts-ignore - priority is experimental but widely supported
-          priority: 'low' 
-        }).catch(() => {
-          // Ignore prefetch errors
-        });
-
-        prefetchObs.disconnect();
-      }
-    }, {
-      rootMargin: '100px', // Start prefetch when within 100px
-      threshold: 0.1,
-    });
-
-    prefetchObs.observe(prefetchSentinel);
-
-    return () => {
-      prefetchObs.disconnect();
-      prefetchSentinel.remove();
-    };
-  }, [filters, nextCursor, hasMore, loading, items.length, limit]);
 
   return (
     <div ref={containerRef} className="p-4 space-y-3">
@@ -495,23 +552,8 @@ export default function AllImagesPage() {
         items={items}
         selection={selection}
         onToggle={toggleSelection}
-        onOpen={(id) => {
-          // Save current scroll position before navigating
-          const container = containerRef.current?.closest('.overflow-auto') as HTMLElement || containerRef.current;
-          if (container) {
-            const scrollTop = container.scrollTop;
-            saveScrollState(scrollTop, searchParams, cursor || undefined, items.length);
-          }
-          
-          const sp = new URLSearchParams();
-          filters.tags.forEach((t) => sp.append("tags", t));
-          if (filters.logic) sp.set("logic", filters.logic);
-          if (filters.libraryId) sp.set("library_id", filters.libraryId);
-          if (filters.noTags) sp.set("no_tags", "1");
-          if (cursor) sp.set("cursor", cursor);
-          sp.set("limit", String(limit));
-          navigate(`/image/${encodeURIComponent(id)}?${sp.toString()}`);
-        }}
+        onOpen={openImage}
+        getScrollContainer={getScrollContainer}
         selectionMode={selectionMode}
       />
 

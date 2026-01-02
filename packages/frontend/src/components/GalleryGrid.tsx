@@ -13,12 +13,14 @@ export function GalleryGrid({
   onToggle,
   onOpen,
   selectionMode,
+  getScrollContainer,
 }: {
   items: ImageDocWithDims[];
   selection: Set<string>;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
   selectionMode: boolean;
+  getScrollContainer?: () => HTMLElement | null;
 }) {
   // Use virtualization for large datasets (>200 items), but prefer standard grid
   // when scroll restoration might be needed to avoid complexity
@@ -32,6 +34,7 @@ export function GalleryGrid({
         onToggle={onToggle}
         onOpen={onOpen}
         selectionMode={selectionMode}
+        getScrollContainer={getScrollContainer}
         className="min-h-screen"
       />
     );
@@ -101,7 +104,7 @@ function StandardGrid({
           key={it._id}
           it={it}
           index={index}
-          selection={selection}
+          selected={selectionMode && selection.has(it._id)}
           selectionMode={selectionMode}
           onOpen={onOpen}
           onToggle={onToggle}
@@ -114,10 +117,10 @@ function StandardGrid({
   );
 }
 
-function ThumbnailItem({
+const ThumbnailItem = React.memo(function ThumbnailItem({
   it,
   index,
-  selection,
+  selected,
   selectionMode,
   onToggle,
   onOpen,
@@ -127,7 +130,7 @@ function ThumbnailItem({
 }: {
   it: ImageDocWithDims;
   index: number;
-  selection: Set<string>;
+  selected: boolean;
   selectionMode: boolean;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
@@ -182,7 +185,7 @@ function ThumbnailItem({
           alt={it.path}
           width={it.width}
           height={it.height}
-          selected={selectionMode && selection.has(it._id)}
+          selected={selected}
           onClick={() => (selectionMode ? onToggle(it._id) : onOpen(it._id))}
           priority={index < 12} // First 12 items get high priority
         />
@@ -192,10 +195,10 @@ function ThumbnailItem({
               e.stopPropagation();
               onToggle(it._id);
             }}
-            aria-label={selection.has(it._id) ? "Deselect" : "Select"}
+            aria-label={selected ? "Deselect" : "Select"}
             className="absolute top-2 right-2 w-6 h-6 rounded border border-white/60 bg-black/40 flex items-center justify-center"
           >
-            {selection.has(it._id) ? (
+            {selected ? (
               <span className="w-3 h-3 bg-purple-500 block rounded-sm" />
             ) : (
               <span className="w-3 h-3 block rounded-sm" />
@@ -205,4 +208,4 @@ function ThumbnailItem({
       </div>
     </div>
   );
-}
+});
