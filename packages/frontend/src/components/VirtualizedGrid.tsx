@@ -133,6 +133,8 @@ export function VirtualizedGrid({
     return { virtualRows: rows, totalHeight: currentY };
   }, [items, colWidth, cols]);
 
+  // Binary search to find the first row with y >= targetY.
+  // Precondition: rows array is sorted by y in ascending order (guaranteed by row construction loop above).
   const lowerBoundByY = (rows: Array<{ y: number }>, y: number) => {
     let lo = 0;
     let hi = rows.length;
@@ -215,22 +217,12 @@ function VirtualRow({
   cols: number;
   children: React.ReactNode;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    // Position without JSX inline styles
-    el.style.transform = `translateY(${y}px)`;
-    el.style.height = `${height}px`;
-  }, [y, height]);
-
   return (
     <div
-      ref={ref}
       className={`absolute left-0 right-0 grid gap-3 will-change-transform ${
         cols === 2 ? "grid-cols-2" : cols === 3 ? "grid-cols-3" : "grid-cols-4"
       }`}
+      style={{ transform: `translateY(${y}px)`, height: `${height}px` }}
     >
       {children}
     </div>

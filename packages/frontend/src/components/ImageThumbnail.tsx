@@ -52,8 +52,8 @@ export function ImageThumbnail({
   const [assignedSrc, setAssignedSrc] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
-  const slotAcquiredRef = useRef(false);
-  const slotReleasedRef = useRef(false);
+  // Track the current load's slot token to ensure exactly-once cleanup per acquired slot.
+  const currentSlotTokenRef = useRef<symbol | null>(null);
   const latestRef = useRef<{ src: string; shouldLoad: boolean }>({
     src,
     shouldLoad,
@@ -61,30 +61,29 @@ export function ImageThumbnail({
   latestRef.current.src = src;
   latestRef.current.shouldLoad = shouldLoad;
 
-  const releaseSlot = () => {
-    if (slotReleasedRef.current) return;
-    slotReleasedRef.current = true;
-    if (slotAcquiredRef.current) {
+  const releaseSlot = (token: symbol | null) => {
+    // Only release if this token matches the current slot token (prevents double-release).
+    if (token && token === currentSlotTokenRef.current) {
+      currentSlotTokenRef.current = null;
       imageLoadQueue.dequeue();
     }
   };
 
-  // Cleanup on unmount: if we acquired a queue slot but never released it, release.
+  // Cleanup on unmount: release the current slot if any.
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      releaseSlot();
+      releaseSlot(currentSlotTokenRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When src changes, reset state and re-load (if shouldLoad is already true).
+  // When src changes, reset state and release any prior slot.
   useEffect(() => {
-    // Release any prior slot in case src changed mid-load.
-    releaseSlot();
-    slotAcquiredRef.current = false;
-    slotReleasedRef.current = false;
+    // Release the old slot if src changed mid-load.
+    releaseSlot(currentSlotTokenRef.current);
+    currentSlotTokenRef.current = null;
     setLoaded(false);
     setError(false);
     setAssignedSrc(null);
@@ -129,7 +128,7 @@ export function ImageThumbnail({
 
     const srcAtEnqueue = src;
     imageLoadQueue.enqueue(() => {
-      // If component unmounted or state changed while waiting in the queue, release immediately.
+      // If component unmounted or state changed while waiting in the queue, skip.
       if (!mountedRef.current) {
         imageLoadQueue.dequeue();
         return;
@@ -142,7 +141,9 @@ export function ImageThumbnail({
         return;
       }
 
-      slotAcquiredRef.current = true;
+      // Acquire a new token for this load attempt.
+      const token = Symbol("loadToken");
+      currentSlotTokenRef.current = token;
       setAssignedSrc(srcAtEnqueue);
     });
   }, [shouldLoad, loaded, error, assignedSrc, src]);
@@ -185,12 +186,12 @@ export function ImageThumbnail({
         onLoad={() => {
           if (!mountedRef.current) return;
           setLoaded(true);
-          releaseSlot();
+          releaseSlot(currentSlotTokenRef.current);
         }}
         onError={() => {
           if (!mountedRef.current) return;
           setError(true);
-          releaseSlot();
+          releaseSlot(currentSlotTokenRef.current);
         }}
         className={cn(
           "h-auto w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]",

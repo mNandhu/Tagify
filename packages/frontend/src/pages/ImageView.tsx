@@ -165,7 +165,9 @@ export default function ImageView() {
           if (arr.length < pageLimit) break; // no more data
         }
       } finally {
-        if (!controller.signal.aborted) loadingMoreRef.current = false;
+        // Always reset loadingMoreRef so subsequent effect runs can proceed,
+        // even if this fetch was aborted (e.g., when deps change).
+        loadingMoreRef.current = false;
       }
     };
     loadUntilFound();
