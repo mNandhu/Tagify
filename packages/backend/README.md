@@ -18,6 +18,11 @@ Environment variables (see `.env.example`):
 - Mongo / AI
 
   - `MONGO_URI` (default: mongodb://localhost:27017)
+  - Mongo pool tuning (optional):
+    - `MONGO_MAX_POOL_SIZE` (default: 100)
+    - `MONGO_MIN_POOL_SIZE` (default: 0)
+    - `MONGO_SERVER_SELECTION_TIMEOUT_MS` (default: 5000)
+    - `MONGO_CONNECT_TIMEOUT_MS` (default: 5000)
   - `AI_TAGGING_URL` optional external tagging endpoint
 
 - MinIO / S3
@@ -28,6 +33,7 @@ Environment variables (see `.env.example`):
 - Scanner
 
   - `SCANNER_MAX_WORKERS` cap worker threads (0 = auto)
+    - Auto mode is conservative (max 16) to avoid saturating Mongo/MinIO and spiking memory.
 
 - Media delivery
   - `MEDIA_PRESIGNED_MODE`: `off` | `redirect` | `url` (default: `redirect`)
@@ -39,6 +45,11 @@ Environment variables (see `.env.example`):
 Notes:
 
 - Range requests are honored when clients send `Range` for originals; API proxies with `206 Partial Content`.
+
+- Ops / safety
+  - `LOG_SLOW_REQUESTS_MS`: log requests slower than this threshold (default: 1000)
+  - `RATE_LIMIT_ENABLED`: `true` to enable a simple per-process rate limiter (default: false)
+  - `RATE_LIMIT_RESCAN_PER_MINUTE`: max `POST /libraries/{id}/rescan` per IP per minute (default: 1)
 
 ## API highlights
 

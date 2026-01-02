@@ -1,10 +1,12 @@
 from fastapi import APIRouter, HTTPException
+import anyio
 
 
-from ..database.mongo import col
+from ..database.motor import acol
 from ..models.library import LibraryIn, LibraryUpdate
-from ..services.scanner import scan_library_async
-from bson.objectid import ObjectId
+from ..services.scanner import cancel_scan, scan_library_async
+
+from ._utils import parse_object_id
 
 from ..services.storage_minio import delete_by_prefix
 
@@ -13,7 +15,24 @@ router = APIRouter()
 
 @router.get("")
 async def list_libraries():
-    libraries = list(col("libraries").find())
+    libraries = (
+        await acol("libraries")
+        .find(
+            {},
+            {
+                "path": 1,
+                "name": 1,
+                "indexed_count": 1,
+                "last_scanned": 1,
+                "scanning": 1,
+                "scan_total": 1,
+                "scan_done": 1,
+                "scan_error": 1,
+                "scan_failed_count": 1,
+            },
+        )
+        .to_list(length=10000)
+    )
     for lib in libraries:
         lib["_id"] = str(lib["_id"])  # stringify ObjectId
     return libraries
@@ -21,12 +40,12 @@ async def list_libraries():
 
 @router.post("")
 async def add_library(body: LibraryIn):
-    libraries = col("libraries")
-    existing = libraries.find_one({"path": body.path})
+    libraries = acol("libraries")
+    existing = await libraries.find_one({"path": body.path})
     if existing:
         existing["_id"] = str(existing["_id"])
         return existing
-    res = libraries.insert_one(
+    res = await libraries.insert_one(
         {
             "path": body.path,
             "name": body.name or body.path,
@@ -42,17 +61,17 @@ async def add_library(body: LibraryIn):
 
 @router.delete("/{library_id}")
 async def remove_library(library_id: str):
-    libraries = col("libraries")
-    images = col("images")
-    try:
-        oid = ObjectId(library_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid library id")
-    libraries.delete_one({"_id": oid})
-    images.delete_many({"library_id": library_id})
+    # Cancel an in-flight scan first to avoid the scan recreating docs/objects after deletion.
+    cancel_scan(library_id)
+
+    oid = parse_object_id(library_id)
+    libraries = acol("libraries")
+    images = acol("images")
+    await libraries.delete_one({"_id": oid})
+    await images.delete_many({"library_id": library_id})
     # remove MinIO objects for this library
     try:
-        delete_by_prefix(f"{library_id}/")
+        await anyio.to_thread.run_sync(delete_by_prefix, f"{library_id}/")
     except Exception:
         # ignore failures to remove objects
         pass
@@ -61,8 +80,9 @@ async def remove_library(library_id: str):
 
 @router.post("/{library_id}/rescan")
 async def rescan_library(library_id: str):
-    libraries = col("libraries")
-    lib = libraries.find_one({"_id": ObjectId(library_id)})
+    oid = parse_object_id(library_id)
+    libraries = acol("libraries")
+    lib = await libraries.find_one({"_id": oid})
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
     scan_library_async(library_id, lib["path"])
@@ -71,8 +91,9 @@ async def rescan_library(library_id: str):
 
 @router.get("/{library_id}/progress")
 async def library_progress(library_id: str):
-    libraries = col("libraries")
-    lib = libraries.find_one({"_id": ObjectId(library_id)})
+    oid = parse_object_id(library_id)
+    libraries = acol("libraries")
+    lib = await libraries.find_one({"_id": oid})
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
     return {
@@ -82,21 +103,19 @@ async def library_progress(library_id: str):
         "indexed_count": lib.get("indexed_count", 0),
         "last_scanned": lib.get("last_scanned"),
         "scan_error": lib.get("scan_error"),
+        "scan_failed_count": lib.get("scan_failed_count", 0),
     }
 
 
 @router.patch("/{library_id}")
 async def update_library(library_id: str, body: LibraryUpdate):
-    try:
-        oid = ObjectId(library_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid library id")
+    oid = parse_object_id(library_id)
     update_doc = {k: v for k, v in body.dict(exclude_unset=True).items()}
     if not update_doc:
         raise HTTPException(status_code=400, detail="No fields to update")
-    libraries = col("libraries")
-    libraries.update_one({"_id": oid}, {"$set": update_doc})
-    doc = libraries.find_one({"_id": oid})
+    libraries = acol("libraries")
+    await libraries.update_one({"_id": oid}, {"$set": update_doc})
+    doc = await libraries.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Library not found")
     doc["_id"] = str(doc["_id"])  # stringify

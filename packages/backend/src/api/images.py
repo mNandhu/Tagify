@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Query, Request, Header, Response
 from fastapi.responses import FileResponse, StreamingResponse
 import mimetypes
+import anyio
 
-from ..database.mongo import col
+from ..database.motor import acol
 from ..services.storage_minio import (
     get_original,
     get_thumb,
@@ -13,20 +14,20 @@ from ..services.storage_minio import (
 from ..core import config
 
 
-def _find_image_doc(image_id: str, projection: dict | None = None):
-    images = col("images")
-    doc = images.find_one({"_id": image_id}, projection)
+async def _find_image_doc(image_id: str, projection: dict | None = None):
+    images = acol("images")
+    doc = await images.find_one({"_id": image_id}, projection)
     if doc:
         return doc
     # Tolerate Windows backslash vs forward slash mismatches
     if "/" in image_id:
         alt = image_id.replace("/", "\\")
-        doc = images.find_one({"_id": alt}, projection)
+        doc = await images.find_one({"_id": alt}, projection)
         if doc:
             return doc
     if "\\" in image_id:
         alt = image_id.replace("\\", "/")
-        doc = images.find_one({"_id": alt}, projection)
+        doc = await images.find_one({"_id": alt}, projection)
         if doc:
             return doc
     return None
@@ -36,7 +37,8 @@ router = APIRouter()
 
 
 @router.get("")
-def list_images(
+async def list_images(
+    response: Response,
     tags: list[str] | None = Query(default=None),
     logic: str = Query(default="and"),
     library_id: str | None = Query(default=None),
@@ -45,6 +47,20 @@ def list_images(
     no_tags: int | None = Query(default=None, alias="no_tags"),
     cursor: str | None = Query(default=None),
 ):
+    # Lightweight input validation / abuse guards
+    if logic not in ("and", "or"):
+        raise HTTPException(status_code=422, detail="logic must be 'and' or 'or'")
+    if tags:
+        if len(tags) > 100:
+            raise HTTPException(status_code=422, detail="too many tags (max 100)")
+        for t in tags:
+            if not isinstance(t, str) or len(t) == 0:
+                raise HTTPException(status_code=422, detail="tags must be non-empty")
+            if len(t) > 128:
+                raise HTTPException(status_code=422, detail="tag too long (max 128)")
+    if cursor and len(cursor) > 1024:
+        raise HTTPException(status_code=422, detail="cursor too long")
+
     q: dict = {}
     if no_tags == 1:
         # Fast-path: use has_tags boolean set at write time
@@ -59,22 +75,25 @@ def list_images(
     # Cursor-based pagination: when cursor is provided, fetch items with _id < cursor (descending order)
     if cursor:
         q["_id"] = {"$lt": cursor}
-    cur = col("images").find(q, projection).sort("_id", -1).limit(limit)
+    cur = acol("images").find(q, projection).sort("_id", -1).limit(limit)
     if not cursor and offset:
+        response.headers["X-Tagify-Warn"] = (
+            "offset pagination is deprecated; prefer cursor-based pagination"
+        )
         cur = cur.skip(offset)
-    items = list(cur)
+    items = await cur.to_list(length=limit)
     for it in items:
         it["_id"] = str(it["_id"])  # string id
     return items
 
 
 @router.get("/{image_id:path}/file")
-def get_image_file(
+async def get_image_file(
     image_id: str,
     request: Request,
     range: str | None = Header(default=None, alias="Range"),
 ):
-    img = _find_image_doc(image_id, {"path": 1, "original_key": 1})
+    img = await _find_image_doc(image_id, {"path": 1, "original_key": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
     original_key = img.get("original_key")
@@ -102,14 +121,16 @@ def get_image_file(
                 raise HTTPException(status_code=416, detail="Invalid Range header")
 
             # Stat object to get total size and etag
-            st = stat_original(original_key)
+            st = await anyio.to_thread.run_sync(stat_original, original_key)
             total_len = getattr(st, "size", None)
             # Compute readable range
             if end is None and total_len is not None:
                 end = total_len - 1
             length = None if end is None else (end - start + 1)
             # Fetch ranged stream
-            stream_obj = get_original(original_key, offset=start, length=length)
+            stream_obj = await anyio.to_thread.run_sync(
+                lambda: get_original(original_key, offset=start, length=length)
+            )
             headers = {"Accept-Ranges": "bytes"}
             if total_len is not None and end is not None:
                 headers["Content-Range"] = f"bytes {start}-{end}/{int(total_len)}"
@@ -125,7 +146,7 @@ def get_image_file(
                 headers=headers,
             )
         # Full object
-        obj = get_original(original_key)
+        obj = await anyio.to_thread.run_sync(lambda: get_original(original_key))
         headers = {"Accept-Ranges": "bytes"}
         etag = obj.headers.get("ETag")
         if etag:
@@ -145,8 +166,8 @@ def get_image_file(
 
 
 @router.get("/{image_id:path}/thumb")
-def get_image_thumb(image_id: str):
-    img = _find_image_doc(image_id, {"thumb_key": 1, "thumb_rel": 1})
+async def get_image_thumb(image_id: str):
+    img = await _find_image_doc(image_id, {"thumb_key": 1, "thumb_rel": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
     thumb_key = img.get("thumb_key")
@@ -159,7 +180,7 @@ def get_image_thumb(image_id: str):
                 return resp
             else:
                 return {"url": url}
-        obj = get_thumb(thumb_key)
+        obj = await anyio.to_thread.run_sync(lambda: get_thumb(thumb_key))
         headers = {}
         etag = obj.headers.get("ETag")
         if etag:
@@ -177,8 +198,8 @@ def get_image_thumb(image_id: str):
 
 
 @router.head("/{image_id:path}/thumb")
-def head_image_thumb(image_id: str):
-    img = _find_image_doc(image_id, {"thumb_key": 1})
+async def head_image_thumb(image_id: str):
+    img = await _find_image_doc(image_id, {"thumb_key": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
     if config.MEDIA_PRESIGNED_MODE == "url":
@@ -188,8 +209,8 @@ def head_image_thumb(image_id: str):
 
 
 @router.get("/{image_id:path}")
-def get_image(image_id: str):
-    img = _find_image_doc(image_id)
+async def get_image(image_id: str):
+    img = await _find_image_doc(image_id)
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
     img["_id"] = str(img["_id"])
@@ -197,8 +218,8 @@ def get_image(image_id: str):
 
 
 @router.head("/{image_id:path}/file")
-def head_image_file(image_id: str):
-    img = _find_image_doc(image_id, {"original_key": 1})
+async def head_image_file(image_id: str):
+    img = await _find_image_doc(image_id, {"original_key": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
     if config.MEDIA_PRESIGNED_MODE == "url":
@@ -208,7 +229,7 @@ def head_image_file(image_id: str):
     headers: dict[str, str] = {"Accept-Ranges": "bytes"}
     if original_key:
         try:
-            st = stat_original(original_key)
+            st = await anyio.to_thread.run_sync(stat_original, original_key)
             mt = getattr(st, "content_type", None)
             if isinstance(mt, str) and mt:
                 media_type = mt
