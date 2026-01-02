@@ -11,6 +11,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
 from multiprocessing import cpu_count
+import threading
 from threading import Lock
 import time
 
@@ -142,7 +143,7 @@ def scan_library(library_id: str, root: str) -> int:
 _scan_lock = Lock()
 _current_scans: set[str] = set()
 _cancel_scans: set[str] = set()
-_scan_threads: dict[str, "threading.Thread"] = {}
+_scan_threads: dict[str, threading.Thread] = {}
 
 
 @dataclass
@@ -516,8 +517,6 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 _scan_threads.pop(library_id, None)
 
     # Start background thread
-    import threading
-
     t = threading.Thread(target=_run, name=f"scan-{library_id}", daemon=True)
     with _scan_lock:
         _scan_threads[library_id] = t
@@ -530,8 +529,6 @@ def cancel_scan(library_id: str, *, join_timeout_s: float = 0.5) -> bool:
 
     Returns True if a scan was running (cancellation requested), False otherwise.
     """
-    import threading
-
     t: threading.Thread | None = None
     with _scan_lock:
         running = library_id in _current_scans
