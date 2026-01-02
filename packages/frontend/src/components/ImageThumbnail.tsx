@@ -49,6 +49,47 @@ export function ImageThumbnail({
   const [error, setError] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
   const [shouldLoad, setShouldLoad] = useState(false);
+  const [assignedSrc, setAssignedSrc] = useState<string | null>(null);
+
+  const mountedRef = useRef(true);
+  const slotAcquiredRef = useRef(false);
+  const slotReleasedRef = useRef(false);
+  const latestRef = useRef<{ src: string; shouldLoad: boolean }>({
+    src,
+    shouldLoad,
+  });
+  latestRef.current.src = src;
+  latestRef.current.shouldLoad = shouldLoad;
+
+  const releaseSlot = () => {
+    if (slotReleasedRef.current) return;
+    slotReleasedRef.current = true;
+    if (slotAcquiredRef.current) {
+      imageLoadQueue.dequeue();
+    }
+  };
+
+  // Cleanup on unmount: if we acquired a queue slot but never released it, release.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      releaseSlot();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When src changes, reset state and re-load (if shouldLoad is already true).
+  useEffect(() => {
+    // Release any prior slot in case src changed mid-load.
+    releaseSlot();
+    slotAcquiredRef.current = false;
+    slotReleasedRef.current = false;
+    setLoaded(false);
+    setError(false);
+    setAssignedSrc(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
 
   // Use Intersection Observer for lazy loading
   useEffect(() => {
@@ -71,7 +112,7 @@ export function ImageThumbnail({
         });
       },
       {
-        rootMargin: '50px', // Start loading when within 50px of viewport
+        rootMargin: "50px", // Start loading when within 50px of viewport
         threshold: 0.1,
       }
     );
@@ -80,44 +121,40 @@ export function ImageThumbnail({
     return () => observer.disconnect();
   }, [priority]);
 
-  // Load image through queue when shouldLoad becomes true
+  // Acquire a queue slot and only then assign the real <img src>.
+  // This avoids double-fetching (preload Image() + <img>) while still limiting concurrency.
   useEffect(() => {
     if (!shouldLoad || loaded || error) return;
+    if (assignedSrc) return; // already started
 
-    const img = imgRef.current;
-    if (!img) return;
-
-    const loadImage = () => {
-      const tempImg = new Image();
-      
-      tempImg.onload = () => {
-        setLoaded(true);
+    const srcAtEnqueue = src;
+    imageLoadQueue.enqueue(() => {
+      // If component unmounted or state changed while waiting in the queue, release immediately.
+      if (!mountedRef.current) {
         imageLoadQueue.dequeue();
-      };
-      
-      tempImg.onerror = () => {
-        setError(true);
+        return;
+      }
+      if (
+        !latestRef.current.shouldLoad ||
+        latestRef.current.src !== srcAtEnqueue
+      ) {
         imageLoadQueue.dequeue();
-      };
-      
-      tempImg.src = src;
-    };
+        return;
+      }
 
-    imageLoadQueue.enqueue(loadImage);
-  }, [shouldLoad, src, loaded, error]);
+      slotAcquiredRef.current = true;
+      setAssignedSrc(srcAtEnqueue);
+    });
+  }, [shouldLoad, loaded, error, assignedSrc, src]);
 
   return (
     <button
       className={cn(
         "group relative w-full overflow-hidden rounded bg-neutral-900",
-        "content-visibility: auto", // Improve offscreen performance
+        "content-visibility-auto contain-intrinsic-thumb", // Improve offscreen performance
         selected && "ring-2 ring-purple-500"
       )}
       onClick={onClick}
-      style={{
-        contentVisibility: 'auto',
-        containIntrinsicSize: width && height ? `${width}px ${height}px` : 'auto',
-      }}
     >
       {/* Skeleton shimmer (only while loading) */}
       {!loaded && !error && (
@@ -129,22 +166,32 @@ export function ImageThumbnail({
           aria-hidden="true"
         />
       )}
-      
+
       {/* Error state */}
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-neutral-800 text-neutral-500">
           <span className="text-sm">Failed to load</span>
         </div>
       )}
-      
+
       <img
         ref={imgRef}
-        src={loaded ? src : undefined} // Only set src when loaded to prevent browser prefetch
+        src={assignedSrc ?? undefined}
         alt={alt}
         decoding="async"
         fetchPriority={priority ? "high" : "low"}
         width={width}
         height={height}
+        onLoad={() => {
+          if (!mountedRef.current) return;
+          setLoaded(true);
+          releaseSlot();
+        }}
+        onError={() => {
+          if (!mountedRef.current) return;
+          setError(true);
+          releaseSlot();
+        }}
         className={cn(
           "h-auto w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]",
           "transition-opacity duration-300",

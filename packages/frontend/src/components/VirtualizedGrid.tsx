@@ -12,6 +12,7 @@ interface VirtualizedGridProps {
   onOpen: (id: string) => void;
   selectionMode: boolean;
   className?: string;
+  getScrollContainer?: () => HTMLElement | null;
 }
 
 // Estimate item height based on aspect ratio for virtualization
@@ -29,146 +30,227 @@ export function VirtualizedGrid({
   onOpen,
   selectionMode,
   className,
+  getScrollContainer,
 }: VirtualizedGridProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerHeight, setContainerHeight] = useState(600);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const virtualContainerRef = useRef<HTMLDivElement>(null);
+  const [viewportHeight, setViewportHeight] = useState(600);
   const [scrollTop, setScrollTop] = useState(0);
+  const [wrapperTop, setWrapperTop] = useState(0);
   const [colWidth, setColWidth] = useState(0);
   const [cols, setCols] = useState(2);
 
-  // Calculate columns and width
+  // Tailwind breakpoints: md=768px, lg=1024px
+  const computeCols = (w: number) => {
+    if (w >= 1024) return 4;
+    if (w >= 768) return 3;
+    return 2;
+  };
+
+  const recomputeLayout = (scrollEl: HTMLElement) => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+
+    const w = wrapper.clientWidth;
+    const nextCols = computeCols(w);
+    setCols(nextCols);
+
+    const gap = 12; // gap-3 (0.75rem)
+    const nextColWidth =
+      nextCols > 0 ? (w - gap * (nextCols - 1)) / nextCols : w;
+    setColWidth(nextColWidth);
+
+    setViewportHeight(scrollEl.clientHeight || 600);
+    // wrapper's top in scroll content coordinates
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const top = wrapperRect.top - scrollRect.top + scrollEl.scrollTop;
+    setWrapperTop(top);
+  };
+
+  // Track scrollTop from the *outer* scroll container.
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    const scrollEl = getScrollContainer?.();
+    const wrapper = wrapperRef.current;
+    if (!scrollEl || !wrapper) return;
 
-    const compute = () => {
-      const cs = getComputedStyle(el);
-      const gtc = cs.gridTemplateColumns;
-      const detectedCols = gtc ? gtc.split(" ").length : 2;
-      setCols(detectedCols);
-      
-      const colGap = parseFloat(cs.columnGap || "12");
-      const width = el.clientWidth;
-      const trackWidth = detectedCols > 0 ? (width - colGap * (detectedCols - 1)) / detectedCols : width;
-      setColWidth(trackWidth);
-    };
-
-    compute();
-    const ro = new ResizeObserver(() => {
-      compute();
-      setContainerHeight(el.clientHeight);
-    });
-    ro.observe(el);
-    
     const handleScroll = () => {
-      setScrollTop(el.scrollTop);
+      setScrollTop(scrollEl.scrollTop);
     };
-    el.addEventListener('scroll', handleScroll, { passive: true });
 
+    // Initial
+    recomputeLayout(scrollEl);
+    setScrollTop(scrollEl.scrollTop);
+
+    // Observe wrapper resize for column changes
+    const ro = new ResizeObserver(() => recomputeLayout(scrollEl));
+    ro.observe(wrapper);
+
+    // Also keep viewport height + wrapperTop reasonably fresh
+    const roScroll = new ResizeObserver(() => recomputeLayout(scrollEl));
+    roScroll.observe(scrollEl);
+
+    scrollEl.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       ro.disconnect();
-      el.removeEventListener('scroll', handleScroll);
+      roScroll.disconnect();
+      scrollEl.removeEventListener("scroll", handleScroll);
     };
-  }, []);
+  }, [getScrollContainer]);
 
   // Create virtual rows from items
-  const virtualRows = useMemo(() => {
-    if (!colWidth || cols === 0) return [];
-    
-    const rows: Array<{ items: Array<{ item: ImageDocWithDims; index: number }>, height: number, y: number }> = [];
+  const { virtualRows, totalHeight } = useMemo(() => {
+    if (!colWidth || cols === 0) return { virtualRows: [], totalHeight: 0 };
+
+    const rows: Array<{
+      items: Array<{ item: ImageDocWithDims; index: number }>;
+      height: number;
+      y: number;
+    }> = [];
     let currentY = 0;
-    
+
     for (let i = 0; i < items.length; i += cols) {
-      const rowItems = [];
+      const rowItems: Array<{ item: ImageDocWithDims; index: number }> = [];
       let maxHeight = 150; // Minimum row height
-      
+
       for (let j = 0; j < cols && i + j < items.length; j++) {
         const item = items[i + j];
         const height = estimateItemHeight(item, colWidth);
         maxHeight = Math.max(maxHeight, height);
         rowItems.push({ item, index: i + j });
       }
-      
+
+      const rowHeight = maxHeight + 12; // Add gap
       rows.push({
         items: rowItems,
-        height: maxHeight + 12, // Add gap
-        y: currentY
+        height: rowHeight,
+        y: currentY,
       });
-      
-      currentY += maxHeight + 12;
+
+      currentY += rowHeight;
     }
-    
-    return rows;
+
+    return { virtualRows: rows, totalHeight: currentY };
   }, [items, colWidth, cols]);
 
-  // Calculate visible rows  
-  const visibleRows = useMemo(() => {
-    const viewportTop = scrollTop;
-    const viewportBottom = scrollTop + containerHeight;
-    
-    return virtualRows.filter(row => {
-      const rowTop = row.y;
-      const rowBottom = row.y + row.height;
-      return rowBottom >= viewportTop && rowTop <= viewportBottom;
-    });
-  }, [virtualRows, scrollTop, containerHeight]);
+  const lowerBoundByY = (rows: Array<{ y: number }>, y: number) => {
+    let lo = 0;
+    let hi = rows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid].y < y) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
 
-  // Total height for scrollbar
-  const totalHeight = virtualRows.reduce((sum, row) => sum + row.height, 0);
+  // Calculate visible rows
+  const visibleRows = useMemo(() => {
+    // Translate scroll container viewport to wrapper-local coordinates.
+    const viewportTop = Math.max(0, scrollTop - wrapperTop);
+    const viewportBottom = viewportTop + viewportHeight;
+
+    // Overscan to reduce pop-in while scrolling.
+    const overscanPx = 800;
+    const startY = Math.max(0, viewportTop - overscanPx);
+    const endY = viewportBottom + overscanPx;
+
+    if (!virtualRows.length) return [];
+
+    // Slice rows using binary search on row.y (monotonic)
+    const startIdx = Math.max(0, lowerBoundByY(virtualRows, startY) - 1);
+    const endExclusive = Math.min(
+      virtualRows.length,
+      lowerBoundByY(virtualRows, endY) + 2
+    );
+
+    return virtualRows.slice(startIdx, endExclusive);
+  }, [virtualRows, scrollTop, viewportHeight, wrapperTop]);
+
+  // Apply total height without using inline styles
+  useEffect(() => {
+    const el = virtualContainerRef.current;
+    if (!el) return;
+    el.style.height = `${totalHeight}px`;
+  }, [totalHeight]);
 
   return (
-    <div
-      ref={containerRef}
-      className={`relative overflow-auto ${className || ''}`}
-      style={{ height: '100%' }}
-    >
+    <div ref={wrapperRef} className={`relative ${className || ""}`}>
       {/* Virtual container with total height */}
-      <div style={{ height: totalHeight, position: 'relative' }}>
+      <div ref={virtualContainerRef} className="relative">
         {/* Render only visible rows */}
-        {visibleRows.map((row, rowIndex) => (
-          <div
+        {visibleRows.map((row) => (
+          <VirtualRow
             key={`row-${row.y}`}
-            className="absolute left-0 right-0 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
-            style={{
-              top: row.y,
-              height: row.height - 12, // Subtract gap
-            }}
+            y={row.y}
+            height={row.height - 12}
+            cols={cols}
           >
             {row.items.map(({ item, index }) => (
               <VirtualThumbnailItem
                 key={item._id}
                 item={item}
                 index={index}
-                selection={selection}
+                selected={selectionMode && selection.has(item._id)}
                 selectionMode={selectionMode}
                 onOpen={onOpen}
                 onToggle={onToggle}
-                colWidth={colWidth}
               />
             ))}
-          </div>
+          </VirtualRow>
         ))}
       </div>
     </div>
   );
 }
 
-function VirtualThumbnailItem({
+function VirtualRow({
+  y,
+  height,
+  cols,
+  children,
+}: {
+  y: number;
+  height: number;
+  cols: number;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Position without JSX inline styles
+    el.style.transform = `translateY(${y}px)`;
+    el.style.height = `${height}px`;
+  }, [y, height]);
+
+  return (
+    <div
+      ref={ref}
+      className={`absolute left-0 right-0 grid gap-3 will-change-transform ${
+        cols === 2 ? "grid-cols-2" : cols === 3 ? "grid-cols-3" : "grid-cols-4"
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+const VirtualThumbnailItem = React.memo(function VirtualThumbnailItem({
   item,
   index,
-  selection,
+  selected,
   selectionMode,
   onToggle,
   onOpen,
-  colWidth,
 }: {
   item: ImageDocWithDims;
   index: number;
-  selection: Set<string>;
+  selected: boolean;
   selectionMode: boolean;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
-  colWidth: number;
 }) {
   const [thumbUrl, setThumbUrl] = useState<string>(
     `/api/images/${encodeURIComponent(item._id)}/thumb`
@@ -177,13 +259,13 @@ function VirtualThumbnailItem({
   useEffect(() => {
     let mounted = true;
     const ep = `/api/images/${encodeURIComponent(item._id)}/thumb`;
-    
+
     resolveMediaUrl(ep)
       .then((u) => {
         if (mounted) setThumbUrl(u);
       })
       .catch(() => {});
-    
+
     return () => {
       mounted = false;
     };
@@ -196,7 +278,7 @@ function VirtualThumbnailItem({
         alt={item.path}
         width={item.width}
         height={item.height}
-        selected={selectionMode && selection.has(item._id)}
+        selected={selected}
         onClick={() => (selectionMode ? onToggle(item._id) : onOpen(item._id))}
         priority={index < 12} // First 12 items get high priority
       />
@@ -206,10 +288,10 @@ function VirtualThumbnailItem({
             e.stopPropagation();
             onToggle(item._id);
           }}
-          aria-label={selection.has(item._id) ? "Deselect" : "Select"}
+          aria-label={selected ? "Deselect" : "Select"}
           className="absolute top-2 right-2 w-6 h-6 rounded border border-white/60 bg-black/40 flex items-center justify-center"
         >
-          {selection.has(item._id) ? (
+          {selected ? (
             <span className="w-3 h-3 bg-purple-500 block rounded-sm" />
           ) : (
             <span className="w-3 h-3 block rounded-sm" />
@@ -218,4 +300,4 @@ function VirtualThumbnailItem({
       )}
     </div>
   );
-}
+});

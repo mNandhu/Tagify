@@ -71,7 +71,20 @@ export default function ImageView() {
   useEffect(() => {
     if (!id) return;
     setImgLoaded(false);
-    fetch(`/api/images/${id}`).then(async (r) => setData(await r.json()));
+    const controller = new AbortController();
+    fetch(`/api/images/${encodeURIComponent(id)}`, {
+      signal: controller.signal,
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return (await r.json()) as ImageDoc;
+      })
+      .then((doc) => setData(doc))
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+        console.error(e);
+      });
+    return () => controller.abort();
   }, [id]);
 
   // Resolve the actual file URL (supports pre-signed URL mode)
@@ -87,17 +100,27 @@ export default function ImageView() {
   // Initial load (no cursor) and whenever filters change
   useEffect(() => {
     const url = `/api/images${baseQuery ? `?${baseQuery}` : ""}`;
+    const controller = new AbortController();
     loadingMoreRef.current = true;
-    fetch(url)
-      .then(async (r) => r.json())
+    fetch(url, { signal: controller.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return (await r.json()) as ImageDoc[];
+      })
       .then((arr: ImageDoc[]) => {
         setList(arr);
         setHasMore(arr.length >= pageLimit);
         setNextCursor(arr.length ? arr[arr.length - 1]._id : null);
       })
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+        console.error(e);
+      })
       .finally(() => {
-        loadingMoreRef.current = false;
+        if (!controller.signal.aborted) loadingMoreRef.current = false;
       });
+
+    return () => controller.abort();
   }, [baseQuery, pageLimit]);
 
   useEffect(() => {
@@ -111,6 +134,7 @@ export default function ImageView() {
     if (index !== -1) return; // already found
     if (!hasMore || loadingMoreRef.current) return;
     let cancelled = false;
+    const controller = new AbortController();
     const loadUntilFound = async () => {
       loadingMoreRef.current = true;
       try {
@@ -122,7 +146,8 @@ export default function ImageView() {
           const q = new URLSearchParams(baseQuery);
           q.set("cursor", nextCursor);
           const url = `/api/images?${q.toString()}`;
-          const resp = await fetch(url);
+          const resp = await fetch(url, { signal: controller.signal });
+          if (!resp.ok) throw new Error(await resp.text());
           const arr: ImageDoc[] = await resp.json();
           if (cancelled) return;
           if (!arr.length) {
@@ -140,12 +165,13 @@ export default function ImageView() {
           if (arr.length < pageLimit) break; // no more data
         }
       } finally {
-        loadingMoreRef.current = false;
+        if (!controller.signal.aborted) loadingMoreRef.current = false;
       }
     };
     loadUntilFound();
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [id, index, hasMore, nextCursor, baseQuery, pageLimit]);
 
@@ -264,32 +290,38 @@ export default function ImageView() {
     }
   }, []);
 
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (!touchStartRef.current || e.changedTouches.length !== 1) return;
-    
-    const touch = e.changedTouches[0];
-    const deltaX = touch.clientX - touchStartRef.current.x;
-    const deltaY = touch.clientY - touchStartRef.current.y;
-    
-    // Minimum swipe distance (pixels)
-    const minSwipeDistance = 50;
-    // Maximum vertical movement to still count as horizontal swipe
-    const maxVerticalDistance = 100;
-    
-    // Check if this is a horizontal swipe
-    if (Math.abs(deltaX) >= minSwipeDistance && Math.abs(deltaY) <= maxVerticalDistance) {
-      e.preventDefault();
-      if (deltaX > 0) {
-        // Swipe right -> go to previous image
-        goPrev();
-      } else {
-        // Swipe left -> go to next image
-        goNext();
+  const handleTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      if (!touchStartRef.current || e.changedTouches.length !== 1) return;
+
+      const touch = e.changedTouches[0];
+      const deltaX = touch.clientX - touchStartRef.current.x;
+      const deltaY = touch.clientY - touchStartRef.current.y;
+
+      // Minimum swipe distance (pixels)
+      const minSwipeDistance = 50;
+      // Maximum vertical movement to still count as horizontal swipe
+      const maxVerticalDistance = 100;
+
+      // Check if this is a horizontal swipe
+      if (
+        Math.abs(deltaX) >= minSwipeDistance &&
+        Math.abs(deltaY) <= maxVerticalDistance
+      ) {
+        e.preventDefault();
+        if (deltaX > 0) {
+          // Swipe right -> go to previous image
+          goPrev();
+        } else {
+          // Swipe left -> go to next image
+          goNext();
+        }
       }
-    }
-    
-    touchStartRef.current = null;
-  }, [goPrev, goNext]);
+
+      touchStartRef.current = null;
+    },
+    [goPrev, goNext]
+  );
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     // Optional: could add visual feedback here for swipe in progress
@@ -301,7 +333,7 @@ export default function ImageView() {
   const fileName = data?.path ? data.path.split(/[\\/]/).pop() : "";
 
   return (
-    <div 
+    <div
       className="min-h-dvh bg-neutral-950 text-white grid grid-cols-12 relative"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
@@ -407,8 +439,15 @@ export default function ImageView() {
               <TagEditor
                 id={data._id}
                 onChange={async () => {
-                  const r = await fetch(`/api/images/${data._id}`);
-                  setData(await r.json());
+                  try {
+                    const r = await fetch(
+                      `/api/images/${encodeURIComponent(data._id)}`
+                    );
+                    if (!r.ok) throw new Error(await r.text());
+                    setData(await r.json());
+                  } catch (e) {
+                    console.error(e);
+                  }
                 }}
               />
             </div>
@@ -427,7 +466,7 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
       .map((s) => s.trim())
       .filter(Boolean);
     if (!tags.length) return;
-    await fetch(`/api/tags/apply/${id}`, {
+    await fetch(`/api/tags/apply/${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(tags),
@@ -436,7 +475,7 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
     onChange();
   };
   const ai = async () => {
-    await fetch(`/api/tags/ai/${id}`, { method: "POST" });
+    await fetch(`/api/tags/ai/${encodeURIComponent(id)}`, { method: "POST" });
     onChange();
   };
   return (

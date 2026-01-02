@@ -1,65 +1,89 @@
 // Cache for media mode detection per session
-let mediaMode: 'redirect' | 'url' | 'off' | null = null;
+let mediaMode: "redirect" | "url" | "off" | null = null;
 let mediaHost: string | null = null;
 
-export async function resolveMediaUrl(endpoint: string): Promise<string> {
-  try {
-    // If we've already detected the mode, use it directly
-    if (mediaMode === 'redirect' || mediaMode === 'off') {
-      return endpoint;
-    }
-    
-    if (mediaMode === 'url') {
-      // Skip HEAD probe, go directly to JSON fetch
-      const res = await fetch(endpoint, { method: "GET" });
-      if (!res.ok) return endpoint;
-      const data = (await res.json()) as { url?: string };
-      if (data && typeof data.url === "string" && data.url) {
-        // Cache media host for preconnect on first URL resolution
-        if (!mediaHost && data.url.startsWith('http')) {
-          try {
-            const url = new URL(data.url);
-            mediaHost = url.origin;
-            addPreconnect(mediaHost);
-          } catch {
-            // Ignore URL parsing errors
-          }
-        }
-        return data.url;
-      }
-      return endpoint;
-    }
+// Deduplicate concurrent mode detection and URL extraction.
+let mediaModeDetection: Promise<"redirect" | "url"> | null = null;
+const resolvedUrlCache = new Map<string, string>();
+const resolvedUrlInFlight = new Map<string, Promise<string>>();
 
-    // First time - probe to detect mode
-    const head = await fetch(endpoint, { method: "HEAD" });
-    if (!head.ok) return endpoint;
-    
-    const ct = head.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) {
-      // Redirect mode or direct stream => cache mode and return endpoint
-      mediaMode = 'redirect'; // Could be 'off' too, but both behave the same for our purposes
-      return endpoint;
-    }
-    
-    // URL mode: fetch JSON to extract url and cache mode
-    mediaMode = 'url';
+async function detectMediaMode(endpoint: string): Promise<"redirect" | "url"> {
+  const head = await fetch(endpoint, { method: "HEAD" });
+  if (!head.ok) return "redirect";
+  const ct = head.headers.get("content-type") || "";
+  return ct.includes("application/json") ? "url" : "redirect";
+}
+
+async function resolveUrlMode(endpoint: string): Promise<string> {
+  const cached = resolvedUrlCache.get(endpoint);
+  if (cached) return cached;
+
+  const inflight = resolvedUrlInFlight.get(endpoint);
+  if (inflight) return inflight;
+
+  const p = (async () => {
     const res = await fetch(endpoint, { method: "GET" });
     if (!res.ok) return endpoint;
     const data = (await res.json()) as { url?: string };
-    if (data && typeof data.url === "string" && data.url) {
+    const url =
+      data && typeof data.url === "string" && data.url ? data.url : endpoint;
+
+    if (url !== endpoint) {
+      resolvedUrlCache.set(endpoint, url);
       // Cache media host for preconnect on first URL resolution
-      if (!mediaHost && data.url.startsWith('http')) {
+      if (!mediaHost && url.startsWith("http")) {
         try {
-          const url = new URL(data.url);
-          mediaHost = url.origin;
+          const u = new URL(url);
+          mediaHost = u.origin;
           addPreconnect(mediaHost);
         } catch {
           // Ignore URL parsing errors
         }
       }
-      return data.url;
     }
-    return endpoint;
+
+    return url;
+  })()
+    .catch(() => endpoint)
+    .finally(() => {
+      resolvedUrlInFlight.delete(endpoint);
+    });
+
+  resolvedUrlInFlight.set(endpoint, p);
+  return p;
+}
+
+export async function resolveMediaUrl(endpoint: string): Promise<string> {
+  try {
+    // If we've already detected the mode, use it directly
+    if (mediaMode === "redirect" || mediaMode === "off") {
+      return endpoint;
+    }
+
+    if (mediaMode === "url") {
+      // Skip HEAD probe, go directly to JSON fetch (deduped per endpoint)
+      return await resolveUrlMode(endpoint);
+    }
+
+    // First time (or unknown) - probe to detect mode, but dedupe concurrent probes.
+    if (!mediaModeDetection) {
+      mediaModeDetection = detectMediaMode(endpoint)
+        .then((m) => {
+          mediaMode = m;
+          return m;
+        })
+        .catch(() => {
+          mediaMode = "redirect";
+          return "redirect" as const;
+        });
+    }
+
+    const detected = await mediaModeDetection;
+    if (detected !== "url") {
+      return endpoint;
+    }
+
+    return await resolveUrlMode(endpoint);
   } catch {
     return endpoint;
   }
@@ -71,10 +95,10 @@ function addPreconnect(origin: string) {
   if (document.querySelector(`link[rel="preconnect"][href="${origin}"]`)) {
     return;
   }
-  
-  const link = document.createElement('link');
-  link.rel = 'preconnect';
+
+  const link = document.createElement("link");
+  link.rel = "preconnect";
   link.href = origin;
-  link.crossOrigin = 'anonymous';
+  link.crossOrigin = "anonymous";
   document.head.appendChild(link);
 }

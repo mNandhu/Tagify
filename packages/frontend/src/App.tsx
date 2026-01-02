@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
 import { Tag } from "lucide-react";
@@ -7,11 +7,81 @@ export default function App() {
   const [status, setStatus] = useState("loading");
   const loc = useLocation();
   const navigate = useNavigate();
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     fetch("/api/health")
       .then(async (r) => setStatus((await r.json()).status))
       .catch(() => setStatus("offline"));
+  }, []);
+
+  // Enable keyboard scrolling (PageDown/PageUp/Home/End/Space) for the main scroll container.
+  // The app scrolls inside an overflow div, so default PageDown on window does nothing.
+  useEffect(() => {
+    const isFormField = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName?.toLowerCase();
+      return (
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        (el as any).isContentEditable
+      );
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isFormField(e.target)) return;
+
+      const scroller = scrollRef.current;
+      if (!scroller) return;
+
+      // Only handle keys that should scroll.
+      const key = e.key;
+      const page = Math.max(120, Math.floor(scroller.clientHeight * 0.9));
+      const small = 48;
+
+      if (key === "PageDown") {
+        e.preventDefault();
+        scroller.scrollBy({ top: page, behavior: "auto" });
+        return;
+      }
+      if (key === "PageUp") {
+        e.preventDefault();
+        scroller.scrollBy({ top: -page, behavior: "auto" });
+        return;
+      }
+      if (key === "Home") {
+        e.preventDefault();
+        scroller.scrollTo({ top: 0, behavior: "auto" });
+        return;
+      }
+      if (key === "End") {
+        e.preventDefault();
+        scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
+        return;
+      }
+      if (key === " " || key === "Spacebar") {
+        // Space scrolls down; Shift+Space scrolls up.
+        e.preventDefault();
+        scroller.scrollBy({ top: e.shiftKey ? -page : page, behavior: "auto" });
+        return;
+      }
+      // Optional: arrows for consistent behavior when focus is on body
+      if (key === "ArrowDown") {
+        e.preventDefault();
+        scroller.scrollBy({ top: small, behavior: "auto" });
+        return;
+      }
+      if (key === "ArrowUp") {
+        e.preventDefault();
+        scroller.scrollBy({ top: -small, behavior: "auto" });
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   const statusClasses = useMemo(() => {
@@ -65,7 +135,7 @@ export default function App() {
             />
           </div>
         </header>
-        <div className="flex-1 overflow-auto">
+        <div ref={scrollRef} className="flex-1 overflow-auto">
           <Outlet />
         </div>
       </div>

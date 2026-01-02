@@ -34,3 +34,12 @@ body {
   box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.25), 0 8px 30px -10px rgba(139,92,246,0.25);
   transform: translateY(-1px);
 }
+
+/* Performance helpers (avoid inline styles to keep lint happy) */
+.content-visibility-auto {
+  content-visibility: auto;
+}
+/* A reasonable placeholder size for content-visibility; actual <img> still has width/height. */
+.contain-intrinsic-thumb {
+  contain-intrinsic-size: 320px 240px;
+}
