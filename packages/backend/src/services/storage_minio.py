@@ -8,9 +8,21 @@ from minio.deleteobjects import DeleteObject
 from ..core import config
 from urllib.parse import urlparse
 from datetime import timedelta
+import mimetypes
 
 _client: Optional[Minio] = None
 _sign_client: Optional[Minio] = None
+
+
+def ensure_buckets() -> None:
+    """Ensure required buckets exist.
+
+    Run this at startup (preferably), so request paths don't pay bucket_exists costs.
+    """
+    client = get_minio()
+    for bucket in (config.MINIO_BUCKET_THUMBS, config.MINIO_BUCKET_ORIGINALS):
+        if not client.bucket_exists(bucket):
+            client.make_bucket(bucket)
 
 
 def get_minio() -> Minio:
@@ -23,10 +35,6 @@ def get_minio() -> Minio:
             secure=config.MINIO_SECURE,
             region=config.MINIO_REGION or None,
         )
-        # Ensure buckets exist
-        for bucket in (config.MINIO_BUCKET_THUMBS, config.MINIO_BUCKET_ORIGINALS):
-            if not _client.bucket_exists(bucket):
-                _client.make_bucket(bucket)
     return _client
 
 
@@ -86,12 +94,19 @@ def put_original(
     library_id: str, image_id: str, stream, length: int, content_type: Optional[str]
 ) -> str:
     """Upload original file stream; returns object key."""
-    # Try to infer extension from content type
+    # Try to infer a safe extension from content type
     ext = ""
-    if content_type and "/" in content_type:
-        subtype = content_type.split("/")[-1]
-        if subtype:
-            ext = "." + subtype
+    if content_type:
+        ct = content_type.split(";", 1)[0].strip().lower()
+        guessed = mimetypes.guess_extension(ct) or ""
+        # Very defensive: only allow short-ish simple extensions.
+        if (
+            guessed
+            and guessed.startswith(".")
+            and guessed[1:].replace("_", "").isalnum()
+        ):
+            if 1 < len(guessed) <= 10:
+                ext = guessed
     key = f"{library_id}/{image_id}{ext}"
     client = get_minio()
     client.put_object(
