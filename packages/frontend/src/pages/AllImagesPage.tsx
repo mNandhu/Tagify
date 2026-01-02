@@ -66,6 +66,11 @@ export default function AllImagesPage() {
     []
   );
 
+  // Filter popover (kept inside the sticky header container so it stays accessible while scrolling)
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const filterButtonRef = useRef<HTMLButtonElement | null>(null);
+  const filtersPanelRef = useRef<HTMLDivElement | null>(null);
+
   // Keep latest values for scroll saver without reattaching listeners.
   const scrollSaveRef = useRef<{
     searchParams: URLSearchParams;
@@ -110,6 +115,32 @@ export default function AllImagesPage() {
   // Note: getScrollContainer() always returns the same element (the app's main scroll container)
   // after mount, so we don't need to depend on it. If the implementation changes such that the
   // scroll container can change during the component's lifetime, add a dependency on the container ref.
+
+  // Close filters on outside click / ESC.
+  useEffect(() => {
+    if (!filtersOpen) return;
+
+    const onPointerDown = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (filtersPanelRef.current?.contains(target)) return;
+      if (filterButtonRef.current?.contains(target)) return;
+      setFiltersOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFiltersOpen(false);
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown, { passive: true });
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [filtersOpen]);
 
   // Check for scroll restoration on mount or when returning from ImageView
   useEffect(() => {
@@ -407,149 +438,162 @@ export default function AllImagesPage() {
 
   return (
     <div ref={containerRef} className="p-4 space-y-3">
-      <div className="sticky top-0 z-10 -mt-4 -mx-4 px-4 pt-4 pb-3 bg-neutral-900/85 backdrop-blur border-b border-neutral-800 flex items-center gap-2">
-        <button
-          className={
-            "p-2 rounded border inline-flex items-center justify-center " +
-            (filtersOpen
-              ? "bg-purple-700 border-purple-600 text-white"
-              : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200")
-          }
-          onClick={() => setFiltersOpen((v) => !v)}
-          aria-label={filtersOpen ? "Hide filters" : "Show filters"}
-          title={filtersOpen ? "Hide filters" : "Show filters"}
-        >
-          <Filter size={18} />
-        </button>
-        <form onSubmit={onSubmitSearch} className="flex-1">
-          <input
-            className="px-3 py-2 rounded bg-neutral-950/70 border border-neutral-800 w-full"
-            placeholder="Search tags… (comma separated)"
-            value={filters.q}
-            onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
-            ref={searchInputRef}
-          />
-        </form>
-        <button
-          className={
-            "p-2 rounded border inline-flex items-center justify-center " +
-            (selectionMode
-              ? "bg-purple-700 border-purple-600 text-white"
-              : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200")
-          }
-          onClick={() => setSelectionMode((v) => !v)}
-          aria-label={
-            selectionMode ? "Exit selection mode" : "Enter selection mode"
-          }
-          title={selectionMode ? "Done selecting" : "Select"}
-        >
-          {selectionMode ? <CheckSquare size={18} /> : <Square size={18} />}
-        </button>
-        {selectionMode && selectionActive && (
+      <div
+        ref={headerRef}
+        className="sticky top-0 z-10 -mt-4 -mx-4 px-4 pt-4 bg-neutral-900/85 backdrop-blur border-b border-neutral-800"
+      >
+        <div className="flex items-center gap-2 pb-3">
           <button
-            className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500"
-            onClick={() =>
-              alert(`Batch actions coming soon: ${selection.size} selected`)
+            ref={filterButtonRef}
+            className={
+              "p-2 rounded border inline-flex items-center justify-center " +
+              (filtersOpen
+                ? "bg-purple-700 border-purple-600 text-white"
+                : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200")
             }
+            onClick={() => setFiltersOpen((v) => !v)}
+            aria-label={filtersOpen ? "Hide filters" : "Show filters"}
+            title={filtersOpen ? "Hide filters" : "Show filters"}
           >
-            Batch actions
+            <Filter size={18} />
           </button>
+          <form onSubmit={onSubmitSearch} className="flex-1">
+            <input
+              className="px-3 py-2 rounded bg-neutral-950/70 border border-neutral-800 w-full"
+              placeholder="Search tags… (comma separated)"
+              value={filters.q}
+              onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+              ref={searchInputRef}
+            />
+          </form>
+          <button
+            className={
+              "p-2 rounded border inline-flex items-center justify-center " +
+              (selectionMode
+                ? "bg-purple-700 border-purple-600 text-white"
+                : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200")
+            }
+            onClick={() => setSelectionMode((v) => !v)}
+            aria-label={
+              selectionMode ? "Exit selection mode" : "Enter selection mode"
+            }
+            title={selectionMode ? "Done selecting" : "Select"}
+          >
+            {selectionMode ? <CheckSquare size={18} /> : <Square size={18} />}
+          </button>
+          {selectionMode && selectionActive && (
+            <button
+              className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500"
+              onClick={() =>
+                alert(`Batch actions coming soon: ${selection.size} selected`)
+              }
+            >
+              Batch actions
+            </button>
+          )}
+        </div>
+
+        {filtersOpen && (
+          <div
+            ref={filtersPanelRef}
+            className="pb-3"
+            role="dialog"
+            aria-label="Filters"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-sm mb-1">Tag logic</label>
+                <select
+                  aria-label="Tag logic"
+                  className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
+                  value={filters.logic}
+                  onChange={(e) =>
+                    setFilters((f) => ({
+                      ...f,
+                      logic: e.target.value as Filters["logic"],
+                    }))
+                  }
+                >
+                  <option value="and">Match all tags (AND)</option>
+                  <option value="or">Match any tag (OR)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Library</label>
+                <select
+                  aria-label="Library filter"
+                  className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
+                  value={filters.libraryId || ""}
+                  onChange={(e) =>
+                    setFilters((f) => ({
+                      ...f,
+                      libraryId: e.target.value || undefined,
+                    }))
+                  }
+                >
+                  <option value="">All libraries</option>
+                  {libs.map((l) => (
+                    <option key={l._id} value={l._id}>
+                      {l.name || l.path}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  className={
+                    "p-2 rounded border inline-flex items-center justify-center transition-colors " +
+                    (filters.noTags
+                      ? "bg-purple-700/30 border-purple-600 text-purple-200"
+                      : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
+                  }
+                  onClick={() => {
+                    setFilters((f) => ({ ...f, noTags: !f.noTags }));
+                    setItems([]);
+                    setCursor(null);
+                    setNextCursor(null);
+                  }}
+                  aria-label={filters.noTags ? "No tags on" : "No tags off"}
+                  title="No tags"
+                >
+                  <span className="relative inline-flex items-center justify-center w-5 h-5">
+                    <TagIcon size={16} />
+                    {filters.noTags && (
+                      <Slash
+                        size={16}
+                        className="absolute inset-0 text-purple-300 opacity-90"
+                      />
+                    )}
+                  </span>
+                </button>
+              </div>
+              <div className="flex items-end gap-2">
+                <button
+                  className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
+                  onClick={() =>
+                    setFilters({
+                      q: "",
+                      tags: [],
+                      logic: "and",
+                      libraryId: undefined,
+                      noTags: false,
+                    })
+                  }
+                >
+                  Clear filters
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
+                  onClick={clearSelection}
+                >
+                  Clear selection
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
-
-      {filtersOpen && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-sm mb-1">Tag logic</label>
-            <select
-              aria-label="Tag logic"
-              className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
-              value={filters.logic}
-              onChange={(e) =>
-                setFilters((f) => ({
-                  ...f,
-                  logic: e.target.value as Filters["logic"],
-                }))
-              }
-            >
-              <option value="and">Match all tags (AND)</option>
-              <option value="or">Match any tag (OR)</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Library</label>
-            <select
-              aria-label="Library filter"
-              className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
-              value={filters.libraryId || ""}
-              onChange={(e) =>
-                setFilters((f) => ({
-                  ...f,
-                  libraryId: e.target.value || undefined,
-                }))
-              }
-            >
-              <option value="">All libraries</option>
-              {libs.map((l) => (
-                <option key={l._id} value={l._id}>
-                  {l.name || l.path}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-end">
-            <button
-              type="button"
-              className={
-                "p-2 rounded border inline-flex items-center justify-center transition-colors " +
-                (filters.noTags
-                  ? "bg-purple-700/30 border-purple-600 text-purple-200"
-                  : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
-              }
-              onClick={() => {
-                setFilters((f) => ({ ...f, noTags: !f.noTags }));
-                setItems([]);
-                setCursor(null);
-                setNextCursor(null);
-              }}
-              aria-label={filters.noTags ? "No tags on" : "No tags off"}
-              title="No tags"
-            >
-              <span className="relative inline-flex items-center justify-center w-5 h-5">
-                <TagIcon size={16} />
-                {filters.noTags && (
-                  <Slash
-                    size={16}
-                    className="absolute inset-0 text-purple-300 opacity-90"
-                  />
-                )}
-              </span>
-            </button>
-          </div>
-          <div className="flex items-end gap-2">
-            <button
-              className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
-              onClick={() =>
-                setFilters({
-                  q: "",
-                  tags: [],
-                  logic: "and",
-                  libraryId: undefined,
-                  noTags: false,
-                })
-              }
-            >
-              Clear filters
-            </button>
-            <button
-              className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
-              onClick={clearSelection}
-            >
-              Clear selection
-            </button>
-          </div>
-        </div>
-      )}
 
       <GalleryGrid
         items={items}
