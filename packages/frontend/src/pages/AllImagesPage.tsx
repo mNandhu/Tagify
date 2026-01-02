@@ -107,6 +107,9 @@ export default function AllImagesPage() {
     container.addEventListener("scroll", handleScroll, { passive: true });
     return () => container.removeEventListener("scroll", handleScroll);
   }, [debouncedScrollSaver]);
+  // Note: getScrollContainer() always returns the same element (the app's main scroll container)
+  // after mount, so we don't need to depend on it. If the implementation changes such that the
+  // scroll container can change during the component's lifetime, add a dependency on the container ref.
 
   // Check for scroll restoration on mount or when returning from ImageView
   useEffect(() => {
