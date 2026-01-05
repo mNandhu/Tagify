@@ -2,10 +2,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from .api import libraries, images, tags
+from .api import libraries, images, tags, ai
 from .database.motor import ensure_indexes_async
 from .core import config
 from .services.storage_minio import ensure_buckets
+from .services.ai_jobs import get_ai_job_manager, get_ai_settings
+from .services.ai_tagger import get_tagger_manager
 
 import logging
 import time
@@ -42,6 +44,16 @@ async def _on_startup():
     await ensure_indexes_async()
     # Ensure MinIO buckets exist (run off the event loop)
     await anyio.to_thread.run_sync(ensure_buckets)
+
+    # Start internal AI job worker
+    jm = get_ai_job_manager()
+    jm.start()
+    try:
+        s = await get_ai_settings()
+        get_tagger_manager().set_idle_unload_s(int(s.get("idle_unload_s", 0) or 0))
+    except Exception:
+        # Best-effort; AI can still run with defaults
+        pass
 
 
 _rl_state: dict[tuple[str, str], tuple[float, int]] = {}
@@ -101,3 +113,4 @@ def health():
 app.include_router(libraries.router, prefix="/libraries", tags=["libraries"])
 app.include_router(images.router, prefix="/images", tags=["images"])
 app.include_router(tags.router, prefix="/tags", tags=["tags"])
+app.include_router(ai.router, prefix="/ai", tags=["ai"])

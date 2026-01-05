@@ -10,11 +10,13 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Info,
   X,
   Sparkles,
 } from "lucide-react";
 import { resolveMediaUrl } from "../lib/media";
+import { useToast } from "../components/Toasts";
 
 type ImageDoc = {
   _id: string;
@@ -24,7 +26,46 @@ type ImageDoc = {
   height?: number;
   size?: number;
   tags?: string[];
+  rating?: string;
+  ai?: {
+    rating?: Record<string, number>;
+  };
 };
+
+function pickRating(doc: ImageDoc | null | undefined): string {
+  const r = (doc?.rating || "").trim();
+  if (r) return r;
+  const m = doc?.ai?.rating;
+  if (m && typeof m === "object") {
+    let bestKey: string | null = null;
+    let bestVal = -Infinity;
+    for (const [k, v] of Object.entries(m)) {
+      const n = typeof v === "number" ? v : Number(v);
+      if (Number.isFinite(n) && n > bestVal) {
+        bestVal = n;
+        bestKey = k;
+      }
+    }
+    if (bestKey) return bestKey;
+  }
+  return "-";
+}
+
+function ratingBadgeClass(rating: string): string {
+  switch (rating) {
+    case "general":
+    case "safe":
+      return "bg-emerald-900/30 border-emerald-800 text-emerald-100";
+    case "sensitive":
+      return "bg-amber-900/30 border-amber-800 text-amber-100";
+    case "questionable":
+      return "bg-orange-900/30 border-orange-800 text-orange-100";
+    case "explicit":
+      return "bg-red-900/30 border-red-800 text-red-100";
+    default:
+      return "bg-neutral-800 border-neutral-700 text-neutral-100";
+  }
+}
 
 export default function ImageView() {
   const { id } = useParams<{ id: string }>();
@@ -49,7 +90,14 @@ export default function ImageView() {
 
   // Build base query for list loading (exclude cursor on purpose so ImageView can page seamlessly)
   const baseQuery = useMemo(() => {
-    const allowed = ["tags", "logic", "library_id", "limit", "no_tags"]; // exclude 'cursor'
+    const allowed = [
+      "tags",
+      "logic",
+      "library_id",
+      "limit",
+      "no_tags",
+      "no_ai_tags",
+    ]; // exclude 'cursor'
     const sp = new URLSearchParams(searchParams);
     const out = new URLSearchParams();
     allowed.forEach((k) => {
@@ -61,7 +109,14 @@ export default function ImageView() {
 
   // Build return URL to gallery with filters preserved
   const returnQuery = useMemo(() => {
-    const allowed = ["tags", "logic", "library_id", "cursor"];
+    const allowed = [
+      "tags",
+      "logic",
+      "library_id",
+      "cursor",
+      "no_tags",
+      "no_ai_tags",
+    ];
     const sp = new URLSearchParams(searchParams);
     const out = new URLSearchParams();
     allowed.forEach((k) => sp.getAll(k).forEach((v) => out.append(k, v)));
@@ -333,6 +388,11 @@ export default function ImageView() {
 
   const imageCol = "lg:col-span-12";
   const fileName = data?.path ? data.path.split(/[\\/]/).pop() : "";
+  const aiTags = (data?.tags || []).filter((t) => !t.startsWith("manual:"));
+  const manualTags = (data?.tags || [])
+    .filter((t) => t.startsWith("manual:"))
+    .map((t) => t.slice("manual:".length));
+  const rating = pickRating(data);
 
   return (
     <div
@@ -426,13 +486,42 @@ export default function ImageView() {
               {data.width}×{data.height} · {Math.round((data.size || 0) / 1024)}{" "}
               KB
             </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-semibold">Rating</div>
+              <RatingEditor
+                id={data._id}
+                value={rating}
+                onDone={async () => {
+                  try {
+                    const r = await fetch(
+                      `/api/images/${encodeURIComponent(data._id)}`
+                    );
+                    if (!r.ok) throw new Error(await r.text());
+                    setData(await r.json());
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+              />
+            </div>
+
             <div>
               <div className="font-semibold mb-2">Tags</div>
               <div className="flex flex-wrap gap-2">
-                {(data.tags || []).map((t: string) => (
+                {aiTags.map((t: string) => (
                   <span
                     key={t}
                     className="px-2 py-1 rounded-full bg-neutral-800 text-xs border border-neutral-700"
+                  >
+                    {t}
+                  </span>
+                ))}
+                {manualTags.map((t: string) => (
+                  <span
+                    key={`manual:${t}`}
+                    className="px-2 py-1 rounded-full bg-emerald-900/30 text-xs border border-emerald-800 text-emerald-100"
+                    title="Manual tag"
                   >
                     {t}
                   </span>
@@ -462,12 +551,25 @@ export default function ImageView() {
 
 function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
   const [val, setVal] = useState("");
+  const [adding, setAdding] = useState(false);
+  const { push } = useToast();
+  const [aiSubmitting, setAiSubmitting] = useState(false);
+  const [aiJobId, setAiJobId] = useState<string | null>(null);
+  const [aiJobStatus, setAiJobStatus] = useState<{
+    status: string;
+    total: number;
+    done: number;
+    failed: number;
+    current?: string | null;
+  } | null>(null);
   const add = async () => {
+    if (adding) return;
     const tags = val
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
     if (!tags.length) return;
+    setAdding(true);
     await fetch(`/api/tags/apply/${encodeURIComponent(id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -475,34 +577,216 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
     });
     setVal("");
     onChange();
+    setAdding(false);
   };
   const ai = async () => {
-    await fetch(`/api/tags/ai/${encodeURIComponent(id)}`, { method: "POST" });
-    onChange();
+    if (aiSubmitting) return;
+    setAiSubmitting(true);
+    try {
+      // If model is loading/downloading, give the user a heads-up.
+      try {
+        const st = await fetch(`/api/ai/status`).then((r) =>
+          r.ok ? r.json() : null
+        );
+        const loadState = st?.model_load?.status;
+        const dlState = st?.model_download?.status;
+        if (dlState === "downloading") {
+          push("Model is downloading… tagging will start when ready", "info");
+        } else if (loadState === "loading") {
+          push("Model is loading… tagging will start when ready", "info");
+        }
+      } catch {
+        // ignore
+      }
+
+      const resp = await fetch(`/api/ai/tag`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [id] }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const r = (await resp.json()) as { job_id: string };
+      setAiJobId(r.job_id);
+      setAiJobStatus({ status: "queued", total: 1, done: 0, failed: 0 });
+      push("AI tagging queued", "success");
+    } catch (e) {
+      push(`Failed to start AI tagging: ${String(e)}`, "error");
+    } finally {
+      setAiSubmitting(false);
+    }
   };
+
+  // Poll job status so user sees progress/errors.
+  useEffect(() => {
+    if (!aiJobId) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const resp = await fetch(`/api/ai/jobs/${encodeURIComponent(aiJobId)}`);
+        if (!resp.ok) return;
+        const j = (await resp.json()) as {
+          status?: string;
+          total?: number;
+          done?: number;
+          failed?: number;
+          current?: string | null;
+        };
+        if (!alive) return;
+        const statusStr = String(j.status || "unknown");
+        const total = Number(j.total || 0);
+        const done = Number(j.done || 0);
+        const failed = Number(j.failed || 0);
+        setAiJobStatus({
+          status: statusStr,
+          total,
+          done,
+          failed,
+          current: j.current,
+        });
+
+        if (statusStr === "done") {
+          push("AI tagging completed", "success");
+          setAiJobId(null);
+          // Refresh tags immediately.
+          onChange();
+        } else if (statusStr === "error") {
+          push("AI tagging finished with errors", "error");
+          setAiJobId(null);
+          onChange();
+        } else if (statusStr === "cancelled") {
+          push("AI tagging was cancelled", "info");
+          setAiJobId(null);
+        }
+      } catch {
+        // ignore transient errors
+      }
+    };
+
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+    };
+  }, [aiJobId, onChange, push]);
   return (
     <div className="mt-2 space-y-2">
       <div className="flex gap-2">
         <input
           value={val}
           onChange={(e) => setVal(e.target.value)}
-          placeholder="Add tags (comma separated)"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void add();
+            }
+          }}
+          placeholder="Add manual tags (comma separated)"
           className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 flex-1"
         />
         <button
           className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 card-hover"
           onClick={add}
+          disabled={adding}
         >
           Add
         </button>
       </div>
       <button
-        className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500 card-hover inline-flex items-center gap-2"
+        className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500 card-hover inline-flex items-center gap-2 disabled:opacity-50"
         onClick={ai}
+        disabled={aiSubmitting || Boolean(aiJobId)}
+        title={
+          aiJobId
+            ? "AI tagging already in progress"
+            : "Run AI tagging for this image"
+        }
       >
         <Sparkles size={16} />
-        AI Tagging
+        {aiSubmitting ? "Starting…" : aiJobId ? "AI Tagging…" : "AI Tagging"}
       </button>
+
+      {aiJobStatus && (
+        <div className="text-xs text-neutral-400">
+          AI status:{" "}
+          <span className="text-neutral-200">{aiJobStatus.status}</span>
+          {aiJobStatus.total ? (
+            <span>
+              {" "}
+              · {aiJobStatus.done + aiJobStatus.failed}/{aiJobStatus.total}
+              {aiJobStatus.failed ? (
+                <span className="text-red-300">
+                  {" "}
+                  · {aiJobStatus.failed} failed
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RatingEditor({
+  id,
+  value,
+  onDone,
+}: {
+  id: string;
+  value: string;
+  onDone: () => void;
+}) {
+  const { push } = useToast();
+  const [saving, setSaving] = useState(false);
+  const v = (value || "-").trim() || "-";
+
+  const setRating = async (next: string) => {
+    if (next === v) return;
+    setSaving(true);
+    try {
+      const resp = await fetch(`/api/images/${encodeURIComponent(id)}/rating`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating: next }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      push("Rating updated", "success");
+      onDone();
+    } catch (e) {
+      push(`Failed to update rating: ${String(e)}`, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="relative inline-block group">
+      <div
+        className={`px-3 py-1 rounded-full text-xs border flex items-center gap-1.5 transition-all duration-200 ${ratingBadgeClass(
+          v
+        )} ${
+          saving
+            ? "opacity-50"
+            : "group-hover:scale-[1.02] group-hover:brightness-110"
+        }`}
+      >
+        <span className="font-medium">{v}</span>
+        <ChevronDown size={12} className="opacity-70" />
+      </div>
+      <select
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-default"
+        value={v}
+        disabled={saving}
+        onChange={(e) => void setRating(e.target.value)}
+        title="Change rating"
+      >
+        <option value="-">-</option>
+        <option value="general">general</option>
+        <option value="sensitive">sensitive</option>
+        <option value="questionable">questionable</option>
+        <option value="explicit">explicit</option>
+      </select>
     </div>
   );
 }

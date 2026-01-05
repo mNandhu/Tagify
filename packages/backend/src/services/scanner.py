@@ -129,7 +129,14 @@ def scan_library(library_id: str, root: str) -> int:
                 }
                 images_col.update_one(
                     {"_id": doc["_id"]},
-                    {"$set": doc, "$setOnInsert": {"tags": [], "has_tags": False}},
+                    {
+                        "$set": doc,
+                        "$setOnInsert": {
+                            "tags": [],
+                            "has_tags": False,
+                            "has_ai_tags": False,
+                        },
+                    },
                     upsert=True,
                 )
                 count += 1
@@ -367,6 +374,7 @@ def scan_library_async(library_id: str, root: str) -> dict:
                                             "$setOnInsert": {
                                                 "tags": [],
                                                 "has_tags": False,
+                                                "has_ai_tags": False,
                                             },
                                         },
                                         upsert=True,

@@ -12,7 +12,9 @@ dependencies = [
   "pillow",
   "python-dotenv",
   "minio",
-  "httpx"
+  "httpx",
+  "numpy",
+  "onnxruntime",
 ]
 
 #[tool.uv]
