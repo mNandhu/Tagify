@@ -62,6 +62,15 @@ def ensure_indexes() -> None:
             [("library_id", ASCENDING), ("tags", ASCENDING), ("_id", DESCENDING)],
             name="lib_id_tags__id",
         ),
+        # Optimize AI tagging progress queries (untagged by AI)
+        IndexModel(
+            [
+                ("library_id", ASCENDING),
+                ("has_ai_tags", ASCENDING),
+                ("_id", DESCENDING),
+            ],
+            name="lib_id_has_ai_tags__id",
+        ),
     ]
     try:
         images.create_indexes(image_indexes)

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Request, Header, Response
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 import mimetypes
 import anyio
 
@@ -36,6 +37,10 @@ async def _find_image_doc(image_id: str, projection: dict | None = None):
 router = APIRouter()
 
 
+class RatingPatch(BaseModel):
+    rating: str
+
+
 @router.get("")
 async def list_images(
     response: Response,
@@ -45,6 +50,7 @@ async def list_images(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=200, ge=1, le=1000),
     no_tags: int | None = Query(default=None, alias="no_tags"),
+    no_ai_tags: int | None = Query(default=None, alias="no_ai_tags"),
     cursor: str | None = Query(default=None),
 ):
     # Lightweight input validation / abuse guards
@@ -62,12 +68,16 @@ async def list_images(
         raise HTTPException(status_code=422, detail="cursor too long")
 
     q: dict = {}
-    if no_tags == 1:
-        # Fast-path: use has_tags boolean set at write time
-        q["has_tags"] = False
-    elif tags:
+    if tags:
         # Tag filters: OR uses $in, AND uses $all
         q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}
+    else:
+        if no_tags == 1:
+            # Fast-path: use has_tags boolean set at write time
+            q["has_tags"] = False
+        if no_ai_tags == 1:
+            # Images without any AI-generated tags (manual tags do not count).
+            q["has_ai_tags"] = False
     if library_id:
         q["library_id"] = library_id
     # Projection keeps payload small for the grid
@@ -215,6 +225,30 @@ async def get_image(image_id: str):
         raise HTTPException(status_code=404, detail="Image not found")
     img["_id"] = str(img["_id"])
     return img
+
+
+@router.post("/{image_id:path}/rating")
+async def set_image_rating(image_id: str, body: RatingPatch):
+    img = await _find_image_doc(image_id, {"_id": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    raw = (body.rating or "").strip().lower()
+    # Accept a few aliases; store canonical values.
+    if raw in ("", "-", "none"):
+        rating = "-"
+    elif raw in ("general", "safe"):
+        rating = "general"
+    elif raw in ("sensitive", "questionable", "explicit"):
+        rating = raw
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="rating must be one of '-', 'general', 'sensitive', 'questionable', 'explicit'",
+        )
+
+    await acol("images").update_one({"_id": img["_id"]}, {"$set": {"rating": rating}})
+    return {"_id": str(img["_id"]), "rating": rating}
 
 
 @router.head("/{image_id:path}/file")

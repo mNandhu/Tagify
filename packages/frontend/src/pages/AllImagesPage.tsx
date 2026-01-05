@@ -26,6 +26,7 @@ type Filters = {
   logic: "and" | "or";
   libraryId?: string;
   noTags?: boolean;
+  noAiTags?: boolean;
 };
 
 async function api<T>(url: string): Promise<T> {
@@ -44,6 +45,7 @@ export default function AllImagesPage() {
     tags: [],
     logic: "and",
     noTags: false,
+    noAiTags: false,
   });
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
@@ -164,6 +166,7 @@ export default function AllImagesPage() {
     if (filters.logic) p.set("logic", filters.logic);
     if (filters.libraryId) p.set("library_id", filters.libraryId);
     if (filters.noTags) p.set("no_tags", "1");
+    if (filters.noAiTags) p.set("no_ai_tags", "1");
     p.set("limit", String(limit));
     if (cursor) p.set("cursor", cursor);
     return p.toString();
@@ -261,6 +264,7 @@ export default function AllImagesPage() {
     filters.logic,
     filters.libraryId,
     filters.noTags,
+    filters.noAiTags,
     shouldRestoreScroll,
   ]);
 
@@ -271,6 +275,7 @@ export default function AllImagesPage() {
     const singleTag = sp.getAll("tag");
     const lib = sp.get("library_id") || undefined;
     const noTags = sp.get("no_tags") === "1";
+    const noAiTags = sp.get("no_ai_tags") === "1";
     const logic = (sp.get("logic") as Filters["logic"]) || undefined;
     const nextTags = urlTags.length ? urlTags : singleTag;
     // Always synchronize filter state from the URL (single source of truth).
@@ -282,6 +287,7 @@ export default function AllImagesPage() {
       libraryId: lib,
       logic: logic || f.logic,
       noTags,
+      noAiTags,
     }));
 
     // Back-compat: migrate legacy ?tag=... to ?tags=... (multi) once.
@@ -299,6 +305,7 @@ export default function AllImagesPage() {
     if (filters.logic) sp.set("logic", filters.logic);
     if (filters.libraryId) sp.set("library_id", filters.libraryId);
     if (filters.noTags) sp.set("no_tags", "1");
+    if (filters.noAiTags) sp.set("no_ai_tags", "1");
     setSearchParams(sp, { replace: true });
   }, [filters, setSearchParams]);
 
@@ -353,6 +360,18 @@ export default function AllImagesPage() {
         setCursor(null);
         setNextCursor(null);
       }
+
+      if (e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        setFilters((f) => {
+          const next = !f.noAiTags;
+          push(next ? "No-AI-tags filter ON" : "No-AI-tags filter OFF", "info");
+          return { ...f, noAiTags: next };
+        });
+        setItems([]);
+        setCursor(null);
+        setNextCursor(null);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -392,6 +411,7 @@ export default function AllImagesPage() {
       if (filters.logic) sp.set("logic", filters.logic);
       if (filters.libraryId) sp.set("library_id", filters.libraryId);
       if (filters.noTags) sp.set("no_tags", "1");
+      if (filters.noAiTags) sp.set("no_ai_tags", "1");
       if (cursor) sp.set("cursor", cursor);
       sp.set("limit", String(limit));
       navigate(`/image/${encodeURIComponent(id)}?${sp.toString()}`);
@@ -401,6 +421,7 @@ export default function AllImagesPage() {
       filters.libraryId,
       filters.logic,
       filters.noTags,
+      filters.noAiTags,
       filters.tags,
       getScrollContainer,
       items.length,
@@ -484,9 +505,26 @@ export default function AllImagesPage() {
           {selectionMode && selectionActive && (
             <button
               className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500"
-              onClick={() =>
-                alert(`Batch actions coming soon: ${selection.size} selected`)
-              }
+              onClick={async () => {
+                const ids = Array.from(selection);
+                if (!ids.length) return;
+                const ok = confirm(
+                  `Run AI tagging for ${ids.length} selected images?`
+                );
+                if (!ok) return;
+                try {
+                  const r = await fetch(`/api/ai/tag`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ids }),
+                  });
+                  if (!r.ok) throw new Error(await r.text());
+                  push(`Queued AI tagging for ${ids.length} images`, "success");
+                  setSelectionMode(false);
+                } catch (e) {
+                  push(`Failed to start AI job: ${String(e)}`, "error");
+                }
+              }}
             >
               Batch actions
             </button>
@@ -540,33 +578,57 @@ export default function AllImagesPage() {
                 </select>
               </div>
               <div className="flex items-end">
-                <button
-                  type="button"
-                  className={
-                    "p-2 rounded border inline-flex items-center justify-center transition-colors " +
-                    (filters.noTags
-                      ? "bg-purple-700/30 border-purple-600 text-purple-200"
-                      : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
-                  }
-                  onClick={() => {
-                    setFilters((f) => ({ ...f, noTags: !f.noTags }));
-                    setItems([]);
-                    setCursor(null);
-                    setNextCursor(null);
-                  }}
-                  aria-label={filters.noTags ? "No tags on" : "No tags off"}
-                  title="No tags"
-                >
-                  <span className="relative inline-flex items-center justify-center w-5 h-5">
-                    <TagIcon size={16} />
-                    {filters.noTags && (
-                      <Slash
-                        size={16}
-                        className="absolute inset-0 text-purple-300 opacity-90"
-                      />
-                    )}
-                  </span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={
+                      "p-2 rounded border inline-flex items-center justify-center transition-colors " +
+                      (filters.noTags
+                        ? "bg-purple-700/30 border-purple-600 text-purple-200"
+                        : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
+                    }
+                    onClick={() => {
+                      setFilters((f) => ({ ...f, noTags: !f.noTags }));
+                      setItems([]);
+                      setCursor(null);
+                      setNextCursor(null);
+                    }}
+                    aria-label={filters.noTags ? "No tags on" : "No tags off"}
+                    title="No tags"
+                  >
+                    <span className="relative inline-flex items-center justify-center w-5 h-5">
+                      <TagIcon size={16} />
+                      {filters.noTags && (
+                        <Slash
+                          size={16}
+                          className="absolute inset-0 text-purple-300 opacity-90"
+                        />
+                      )}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={
+                      "px-3 py-2 rounded border text-sm transition-colors " +
+                      (filters.noAiTags
+                        ? "bg-emerald-700/25 border-emerald-600 text-emerald-200"
+                        : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
+                    }
+                    onClick={() => {
+                      setFilters((f) => ({ ...f, noAiTags: !f.noAiTags }));
+                      setItems([]);
+                      setCursor(null);
+                      setNextCursor(null);
+                    }}
+                    aria-label={
+                      filters.noAiTags ? "No AI tags on" : "No AI tags off"
+                    }
+                    title="No AI tags"
+                  >
+                    No AI
+                  </button>
+                </div>
               </div>
               <div className="flex items-end gap-2">
                 <button
@@ -578,6 +640,7 @@ export default function AllImagesPage() {
                       logic: "and",
                       libraryId: undefined,
                       noTags: false,
+                      noAiTags: false,
                     })
                   }
                 >
