@@ -620,6 +620,16 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
   useEffect(() => {
     if (!aiJobId) return;
     let alive = true;
+    let timer: number | null = null;
+    let delayMs = 1000;
+    let lastStatus: string | null = null;
+
+    const schedule = (ms: number) => {
+      if (!alive) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(tick, ms);
+    };
+
     const tick = async () => {
       try {
         const resp = await fetch(`/api/ai/jobs/${encodeURIComponent(aiJobId)}`);
@@ -644,29 +654,41 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
           current: j.current,
         });
 
+        // Adaptive polling: back off when status is stable.
+        if (lastStatus === statusStr) {
+          delayMs = Math.min(5000, delayMs + 500);
+        } else {
+          delayMs = 1000;
+          lastStatus = statusStr;
+        }
+
         if (statusStr === "done") {
           push("AI tagging completed", "success");
           setAiJobId(null);
           // Refresh tags immediately.
           onChange();
+          return;
         } else if (statusStr === "error") {
           push("AI tagging finished with errors", "error");
           setAiJobId(null);
           onChange();
+          return;
         } else if (statusStr === "cancelled") {
           push("AI tagging was cancelled", "info");
           setAiJobId(null);
+          return;
         }
       } catch {
         // ignore transient errors
       }
+
+      schedule(delayMs);
     };
 
     tick();
-    const t = window.setInterval(tick, 1000);
     return () => {
       alive = false;
-      window.clearInterval(t);
+      if (timer) window.clearTimeout(timer);
     };
   }, [aiJobId, onChange, push]);
   return (
