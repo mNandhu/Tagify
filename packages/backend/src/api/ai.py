@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..database.motor import acol
@@ -190,7 +190,9 @@ async def ai_list_jobs(limit: int = 20):
 async def ai_get_job(job_id: str):
     jm = get_ai_job_manager()
     j = jm.get_job(job_id)
-    return j.__dict__ if j else {"detail": "not found"}
+    if j is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return j.__dict__
 
 
 @router.post("/jobs/{job_id}/cancel")
