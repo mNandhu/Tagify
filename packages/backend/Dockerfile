@@ -1,5 +1,5 @@
 # Tagify backend built with uv (Python + Debian Slim)
-FROM ghcr.io/astral-sh/uv:python3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 # Install curl for health checks and libgomp1 for onnxruntime
 RUN apt-get update && apt-get install -y --no-install-recommends curl libgomp1 && rm -rf /var/lib/apt/lists/*
