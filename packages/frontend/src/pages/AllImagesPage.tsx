@@ -324,6 +324,9 @@ export default function AllImagesPage() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack browser/system shortcuts (Ctrl/Cmd/Alt combos).
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
       // Don't trigger global shortcuts when typing in form fields
       const target = e.target as HTMLElement;
       const isFormField =

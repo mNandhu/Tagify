@@ -42,6 +42,17 @@ KAOMOJIS = {
 
 
 def mcut_threshold(probs: np.ndarray) -> float:
+    """Compute the MCUT threshold.
+
+    MCUT finds the biggest drop between sorted probabilities and returns the
+    midpoint between the two values around that drop.
+
+    This must handle edge cases where the category has 0 or 1 probability.
+    """
+    if probs is None:
+        return 0.0
+    if len(probs) < 2:
+        return float(probs[0]) if len(probs) == 1 else 0.0
     sorted_probs = probs[probs.argsort()[::-1]]
     difs = sorted_probs[:-1] - sorted_probs[1:]
     t = int(difs.argmax())
@@ -279,6 +290,7 @@ class ModelDownloadManager:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
         except Exception:
+            # Best-effort: partial may be locked/removed concurrently.
             pass
 
         f.status = "downloading"
@@ -314,6 +326,7 @@ class ModelDownloadManager:
                 try:
                     f.total = os.path.getsize(f.dst_path)
                 except Exception:
+                    # Best-effort: filesystem stat may fail on some platforms.
                     pass
         except asyncio.CancelledError:
             f.status = "cancelled"
@@ -329,6 +342,7 @@ class ModelDownloadManager:
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
                 except Exception:
+                    # Best-effort: cleanup failure shouldn't crash the download task.
                     pass
 
 
@@ -579,23 +593,42 @@ class TaggerManager:
         self._idle_unload_s = max(0, int(seconds))
 
     async def ensure_loaded(self, *, model_repo: str, cache_dir: str) -> None:
-        # If a background load task is already doing this exact work, await it.
-        task = self._load_task
-        current = asyncio.current_task()
-        if (
-            task is not None
-            and not task.done()
-            and self._loading_for == (model_repo, cache_dir)
-            and task is not current
-        ):
-            await task
-            if self._tagger.loaded and self._tagger.repo == model_repo:
-                return
-            raise RuntimeError(self._load_error or "model load failed")
+        while True:
+            # If a background load task is already doing this exact work, await it.
+            task = self._load_task
+            current = asyncio.current_task()
+            if (
+                task is not None
+                and not task.done()
+                and self._loading_for == (model_repo, cache_dir)
+                and task is not current
+            ):
+                await task
+                if self._tagger.loaded and self._tagger.repo == model_repo:
+                    self._last_used = time.time()
+                    return
+                raise RuntimeError(self._load_error or "model load failed")
 
-        async with self._lock:
-            await self._tagger.load(model_repo, cache_dir=cache_dir)
-            self._last_used = time.time()
+            async with self._lock:
+                # Re-check under the lock to avoid racing with another loader.
+                task2 = self._load_task
+                if (
+                    task2 is not None
+                    and not task2.done()
+                    and self._loading_for == (model_repo, cache_dir)
+                    and task2 is not asyncio.current_task()
+                ):
+                    # Another load started while we waited for the lock.
+                    continue
+
+                # Already loaded -> just bump last_used.
+                if self._tagger.loaded and self._tagger.repo == model_repo:
+                    self._last_used = time.time()
+                    return
+
+                await self._tagger.load(model_repo, cache_dir=cache_dir)
+                self._last_used = time.time()
+                return
 
     async def unload(self) -> None:
         async with self._lock:

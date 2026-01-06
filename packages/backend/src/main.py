@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from .api import libraries, images, tags, ai
-from .database.motor import ensure_indexes_async
+from .database.motor import acol, ensure_indexes_async
 from .core import config
 from .services.storage_minio import ensure_buckets
 from .services.ai_jobs import get_ai_job_manager, get_ai_settings
@@ -45,6 +45,15 @@ async def _on_startup():
     # Ensure MinIO buckets exist (run off the event loop)
     await anyio.to_thread.run_sync(ensure_buckets)
 
+    # Backfill fields introduced after initial releases.
+    # This keeps filters like `no_ai_tags=1` working for older DBs.
+    try:
+        await acol("images").update_many(
+            {"has_ai_tags": {"$exists": False}}, {"$set": {"has_ai_tags": False}}
+        )
+    except Exception:
+        logger.exception("Failed to backfill images.has_ai_tags during startup")
+
     # Start internal AI job worker
     jm = get_ai_job_manager()
     jm.start()
@@ -52,8 +61,8 @@ async def _on_startup():
         s = await get_ai_settings()
         get_tagger_manager().set_idle_unload_s(int(s.get("idle_unload_s", 0) or 0))
     except Exception:
-        # Best-effort; AI can still run with defaults
-        pass
+        # Best-effort; AI can still run with defaults, but log failures for operators.
+        logger.exception("Failed to load AI settings during startup; continuing")
 
 
 _rl_state: dict[tuple[str, str], tuple[float, int]] = {}

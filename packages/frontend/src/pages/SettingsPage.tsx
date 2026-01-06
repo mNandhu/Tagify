@@ -91,6 +91,23 @@ export default function SettingsPage() {
   // Poll status for progress/model state
   useEffect(() => {
     let alive = true;
+    let timer: number | null = null;
+
+    const isBusy = (s: AIStatus) => {
+      const loadBusy = s?.model_load?.status === "loading";
+      const dlBusy = s?.model_download?.status === "downloading";
+      const jobBusy = (s?.jobs?.recent || []).some((j) =>
+        ["queued", "running", "cancelling"].includes(String(j.status))
+      );
+      return loadBusy || dlBusy || jobBusy;
+    };
+
+    const schedule = (ms: number) => {
+      if (!alive) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(tick, ms);
+    };
+
     const tick = async () => {
       try {
         const s = await api<AIStatus>("/api/ai/status");
@@ -98,15 +115,17 @@ export default function SettingsPage() {
         setStatus(s);
         // Keep local settings in sync if user hasn't loaded yet
         setSettings((prev) => prev ?? s.settings);
+
+        schedule(isBusy(s) ? 2000 : 5000);
       } catch {
         // ignore transient errors
+        schedule(5000);
       }
     };
     tick();
-    const t = window.setInterval(tick, 2000);
     return () => {
       alive = false;
-      window.clearInterval(t);
+      if (timer) window.clearTimeout(timer);
     };
   }, []);
 

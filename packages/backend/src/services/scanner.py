@@ -93,6 +93,7 @@ def scan_library(library_id: str, root: str) -> int:
                     with PILImage.open(p) as img:
                         width, height = img.size
                 except Exception:
+                    # Best-effort: keep indexing even if image metadata read fails.
                     pass
                 # relative path within library
                 rel = str(p.relative_to(root_path))
@@ -175,6 +176,7 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
             with PILImage.open(p) as img:
                 width, height = img.size
         except Exception:
+            # Best-effort: keep indexing even if image metadata read fails.
             pass
         rel = str(p.relative_to(root_path))
         image_id = f"{library_id}:{rel}"

@@ -25,6 +25,18 @@ DEFAULT_AI_SETTINGS: dict[str, Any] = {
 }
 
 
+def _normalize_rating_label(raw: str) -> str:
+    """Normalize rating labels to the canonical vocabulary used by the API/UI."""
+    r = (raw or "").strip().lower()
+    if r in ("", "-", "none"):
+        return "-"
+    if r in ("general", "safe"):
+        return "general"
+    if r in ("sensitive", "questionable", "explicit"):
+        return r
+    return "-"
+
+
 async def get_ai_settings() -> dict[str, Any]:
     settings = acol("settings")
     doc = await settings.find_one({"_id": "ai"})
@@ -274,10 +286,12 @@ class AIJobManager:
                 try:
                     obj.close()
                 except Exception:
+                    # Best-effort cleanup: MinIO client may already be closed.
                     pass
                 try:
                     obj.release_conn()
                 except Exception:
+                    # Best-effort cleanup: connection may already be released.
                     pass
 
         return await asyncio.to_thread(_read)
@@ -324,34 +338,61 @@ class AIJobManager:
                 )[0]
             except Exception:
                 rating_label = "-"
+        rating_label = _normalize_rating_label(str(rating_label))
 
-        # Persist AI meta + merge tags (AI tags are primary, unprefixed)
-        update: dict[str, Any] = {
-            "$set": {
-                "ai": {
-                    "model_repo": model_repo,
-                    "caption": result.get("caption") or "",
-                    "rating": result.get("rating") or {},
-                    "general_tags": result.get("general_tags") or [],
-                    "character_tags": result.get("character_tags") or [],
-                    "general_thresh": float(settings.get("general_thresh", 0.35)),
-                    "character_thresh": float(settings.get("character_thresh", 0.85)),
-                    "updated_at": time.time(),
-                },
-                "rating": str(rating_label),
-                "has_ai_tags": bool(ai_tags),
-                "has_tags": True if ai_tags else None,
-            }
+        # Persist AI meta and REPLACE prior AI tags (preserving manual tags).
+        #
+        # `tags` stores both:
+        # - AI tags: primary, unprefixed
+        # - Manual tags: stored as `manual:<tag>`
+        #
+        # When re-running AI tagging, we want to replace the old AI tags with the
+        # new ones (not accumulate indefinitely).
+        now = time.time()
+        ai_meta: dict[str, Any] = {
+            "model_repo": model_repo,
+            "caption": result.get("caption") or "",
+            "rating": result.get("rating") or {},
+            "general_tags": result.get("general_tags") or [],
+            "character_tags": result.get("character_tags") or [],
+            "general_thresh": float(settings.get("general_thresh", 0.35)),
+            "character_thresh": float(settings.get("character_thresh", 0.85)),
+            "updated_at": now,
         }
-        # Avoid writing has_tags=None; build $set cleanly
-        if update["$set"]["has_tags"] is None:
-            del update["$set"]["has_tags"]
 
-        if ai_tags:
-            update["$addToSet"] = {"tags": {"$each": ai_tags}}
-            update["$set"]["has_tags"] = True
+        # Use a pipeline update so we can rebuild tags based on existing manual tags.
+        update_pipeline: list[dict[str, Any]] = [
+            {
+                "$set": {
+                    "ai": ai_meta,
+                    "rating": rating_label,
+                    "__manual_tags": {
+                        "$filter": {
+                            "input": {"$ifNull": ["$tags", []]},
+                            "as": "t",
+                            "cond": {
+                                "$regexMatch": {"input": "$$t", "regex": r"^manual:"}
+                            },
+                        }
+                    },
+                }
+            },
+            {
+                "$set": {
+                    "tags": {"$concatArrays": ["$__manual_tags", ai_tags]},
+                    "has_ai_tags": bool(ai_tags),
+                    "has_tags": {
+                        "$gt": [
+                            {"$size": {"$concatArrays": ["$__manual_tags", ai_tags]}},
+                            0,
+                        ]
+                    },
+                }
+            },
+            {"$unset": "__manual_tags"},
+        ]
 
-        await images.update_one({"_id": image_id}, update)
+        await images.update_one({"_id": image_id}, update_pipeline)
 
 
 _ai_job_manager: AIJobManager | None = None

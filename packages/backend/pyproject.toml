@@ -13,8 +13,8 @@ dependencies = [
   "python-dotenv",
   "minio",
   "httpx",
-  "numpy",
-  "onnxruntime",
+  "numpy>=2.4.0,<3.0",
+  "onnxruntime>=1.23.0,<2.0",
 ]
 
 [tool.uv]

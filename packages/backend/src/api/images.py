@@ -69,8 +69,17 @@ async def list_images(
 
     q: dict = {}
     if tags:
+        if no_tags == 1:
+            # Asking for specific tags and also "no tags" is contradictory.
+            raise HTTPException(
+                status_code=422,
+                detail="no_tags=1 cannot be combined with tags filter",
+            )
         # Tag filters: OR uses $in, AND uses $all
         q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}
+        if no_ai_tags == 1:
+            # Combineable: "images that have these tags" AND "no AI tags".
+            q["has_ai_tags"] = False
     else:
         if no_tags == 1:
             # Fast-path: use has_tags boolean set at write time
@@ -268,5 +277,6 @@ async def head_image_file(image_id: str):
             if isinstance(mt, str) and mt:
                 media_type = mt
         except Exception:
+            # Best-effort: HEAD should still succeed even if stat fails transiently.
             pass
     return Response(status_code=200, headers=headers, media_type=media_type)
