@@ -8,6 +8,7 @@ import {
   Square,
   Tag as TagIcon,
   Slash,
+  ImageOff,
 } from "lucide-react";
 import {
   saveScrollState,
@@ -65,7 +66,7 @@ export default function AllImagesPage() {
     useState<ReturnType<typeof restoreScrollState>>(null);
   const debouncedScrollSaver = useMemo(
     () => createDebouncedScrollSaver(200),
-    []
+    [],
   );
 
   // Filter popover (kept inside the sticky header container so it stays accessible while scrolling)
@@ -107,7 +108,7 @@ export default function AllImagesPage() {
         container.scrollTop,
         searchParams,
         cursor || undefined,
-        itemCount
+        itemCount,
       );
     };
 
@@ -405,7 +406,7 @@ export default function AllImagesPage() {
           scrollTop,
           searchParams,
           cursor || undefined,
-          items.length
+          items.length,
         );
       }
 
@@ -431,7 +432,7 @@ export default function AllImagesPage() {
       limit,
       navigate,
       searchParams,
-    ]
+    ],
   );
 
   const clearSelection = () => setSelection(new Set());
@@ -512,7 +513,7 @@ export default function AllImagesPage() {
                 const ids = Array.from(selection);
                 if (!ids.length) return;
                 const ok = confirm(
-                  `Run AI tagging for ${ids.length} selected images?`
+                  `Run AI tagging for ${ids.length} selected images?`,
                 );
                 if (!ok) return;
                 try {
@@ -661,14 +662,65 @@ export default function AllImagesPage() {
         )}
       </div>
 
-      <GalleryGrid
-        items={items}
-        selection={selection}
-        onToggle={toggleSelection}
-        onOpen={openImage}
-        getScrollContainer={getScrollContainer}
-        selectionMode={selectionMode}
-      />
+      {!loading && items.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-24 px-4">
+          <div className="bg-neutral-800/50 rounded-2xl p-12 border border-neutral-700/50 max-w-md text-center">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-neutral-700/50 mb-6">
+              <ImageOff size={40} className="text-neutral-400" />
+            </div>
+            <h2 className="text-2xl font-semibold text-neutral-100 mb-3">
+              No Images Found
+            </h2>
+            <p className="text-neutral-400 mb-6 leading-relaxed">
+              {filters.tags.length > 0 ||
+              filters.libraryId ||
+              filters.noTags ||
+              filters.noAiTags
+                ? "No images match your current filters. Try adjusting your search criteria."
+                : "You don't have any images yet. Add a library to start importing your images."}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              {(filters.tags.length > 0 ||
+                filters.libraryId ||
+                filters.noTags ||
+                filters.noAiTags) && (
+                <button
+                  onClick={() =>
+                    setFilters({
+                      q: "",
+                      tags: [],
+                      logic: "and",
+                      libraryId: undefined,
+                      noTags: false,
+                      noAiTags: false,
+                    })
+                  }
+                  className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-medium transition-colors"
+                >
+                  Clear Filters
+                </button>
+              )}
+              <button
+                onClick={() => navigate("/libraries")}
+                className="px-4 py-2 rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-100 font-medium transition-colors"
+              >
+                Go to Libraries
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <GalleryGrid
+          items={items}
+          selection={selection}
+          onToggle={toggleSelection}
+          onOpen={openImage}
+          getScrollContainer={getScrollContainer}
+          selectionMode={selectionMode}
+        />
+      )}
 
       <div ref={sentinelRef} className="h-8" />
     </div>
