@@ -75,3 +75,12 @@ async def ensure_indexes_async() -> None:
     except Exception:
         # Best-effort; don't prevent app startup.
         pass
+
+    tag_meta = db["tag_meta"]
+    tag_meta_indexes: list[IndexModel] = [
+        IndexModel([("updated_at", DESCENDING)], name="tag_meta_updated_at"),
+    ]
+    try:
+        await tag_meta.create_indexes(tag_meta_indexes)
+    except Exception:
+        pass

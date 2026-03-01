@@ -14,6 +14,7 @@ import {
   Info,
   X,
   Sparkles,
+  Image as ImageIcon,
 } from "lucide-react";
 import { resolveMediaUrl } from "../lib/media";
 import { useToast } from "../components/Toasts";
@@ -71,6 +72,7 @@ export default function ImageView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { push } = useToast();
   const [data, setData] = useState<ImageDoc | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [list, setList] = useState<ImageDoc[]>([]);
@@ -258,7 +260,7 @@ export default function ImageView() {
       navigate(
         `/image/${encodeURIComponent(list[index - 1]._id)}${
           buildQueryForNav() ? `?${buildQueryForNav()}` : ""
-        }`
+        }`,
       );
     }
   }, [index, list, navigate, buildQueryForNav]);
@@ -268,7 +270,7 @@ export default function ImageView() {
       navigate(
         `/image/${encodeURIComponent(list[index + 1]._id)}${
           buildQueryForNav() ? `?${buildQueryForNav()}` : ""
-        }`
+        }`,
       );
       return;
     }
@@ -289,7 +291,7 @@ export default function ImageView() {
           navigate(
             `/image/${encodeURIComponent(arr[0]._id)}${
               buildQueryForNav() ? `?${buildQueryForNav()}` : ""
-            }`
+            }`,
           );
         }
       } finally {
@@ -377,21 +379,46 @@ export default function ImageView() {
 
       touchStartRef.current = null;
     },
-    [goPrev, goNext]
+    [goPrev, goNext],
   );
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     // Optional: could add visual feedback here for swipe in progress
   }, []);
 
+  const formatTag = useCallback((raw: string) => {
+    return raw.startsWith("manual:") ? raw.slice("manual:".length) : raw;
+  }, []);
+
+  const setTagThumbnail = useCallback(
+    async (tagRaw: string) => {
+      if (!data?._id) return;
+      try {
+        const resp = await fetch(
+          `/api/tags/thumbnail/${encodeURIComponent(tagRaw)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image_id: data._id }),
+          },
+        );
+        if (!resp.ok) throw new Error(await resp.text());
+        push(`Set thumbnail for "${formatTag(tagRaw)}"`, "success");
+      } catch (e) {
+        push(`Failed to set thumbnail: ${String(e)}`, "error");
+      }
+    },
+    [data?._id, formatTag, push],
+  );
+
   if (!id) return null;
 
   const imageCol = "lg:col-span-12";
   const fileName = data?.path ? data.path.split(/[\\/]/).pop() : "";
   const aiTags = (data?.tags || []).filter((t) => !t.startsWith("manual:"));
-  const manualTags = (data?.tags || [])
-    .filter((t) => t.startsWith("manual:"))
-    .map((t) => t.slice("manual:".length));
+  const manualTagsRaw = (data?.tags || []).filter((t) =>
+    t.startsWith("manual:"),
+  );
   const rating = pickRating(data);
 
   return (
@@ -495,7 +522,7 @@ export default function ImageView() {
                 onDone={async () => {
                   try {
                     const r = await fetch(
-                      `/api/images/${encodeURIComponent(data._id)}`
+                      `/api/images/${encodeURIComponent(data._id)}`,
                     );
                     if (!r.ok) throw new Error(await r.text());
                     setData(await r.json());
@@ -512,18 +539,36 @@ export default function ImageView() {
                 {aiTags.map((t: string) => (
                   <span
                     key={t}
-                    className="px-2 py-1 rounded-full bg-neutral-800 text-xs border border-neutral-700"
+                    className="group px-2 py-1 rounded-full bg-neutral-800 text-xs border border-neutral-700 inline-flex items-center gap-1"
                   >
                     {t}
+                    <button
+                      type="button"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-300 hover:text-white"
+                      title="Set as tag thumbnail"
+                      aria-label={`Set thumbnail for ${t}`}
+                      onClick={() => void setTagThumbnail(t)}
+                    >
+                      <ImageIcon size={12} />
+                    </button>
                   </span>
                 ))}
-                {manualTags.map((t: string) => (
+                {manualTagsRaw.map((t: string) => (
                   <span
-                    key={`manual:${t}`}
-                    className="px-2 py-1 rounded-full bg-emerald-900/30 text-xs border border-emerald-800 text-emerald-100"
+                    key={t}
+                    className="group px-2 py-1 rounded-full bg-emerald-900/30 text-xs border border-emerald-800 text-emerald-100 inline-flex items-center gap-1"
                     title="Manual tag"
                   >
-                    {t}
+                    {formatTag(t)}
+                    <button
+                      type="button"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-100/80 hover:text-emerald-100"
+                      title="Set as tag thumbnail"
+                      aria-label={`Set thumbnail for ${formatTag(t)}`}
+                      onClick={() => void setTagThumbnail(t)}
+                    >
+                      <ImageIcon size={12} />
+                    </button>
                   </span>
                 ))}
               </div>
@@ -532,7 +577,7 @@ export default function ImageView() {
                 onChange={async () => {
                   try {
                     const r = await fetch(
-                      `/api/images/${encodeURIComponent(data._id)}`
+                      `/api/images/${encodeURIComponent(data._id)}`,
                     );
                     if (!r.ok) throw new Error(await r.text());
                     setData(await r.json());
@@ -586,7 +631,7 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
       // If model is loading/downloading, give the user a heads-up.
       try {
         const st = await fetch(`/api/ai/status`).then((r) =>
-          r.ok ? r.json() : null
+          r.ok ? r.json() : null,
         );
         const loadState = st?.model_load?.status;
         const dlState = st?.model_download?.status;
@@ -786,7 +831,7 @@ function RatingEditor({
     <div className="relative inline-block group">
       <div
         className={`px-3 py-1 rounded-full text-xs border flex items-center gap-1.5 transition-all duration-200 ${ratingBadgeClass(
-          v
+          v,
         )} ${
           saving
             ? "opacity-50"

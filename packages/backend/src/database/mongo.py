@@ -77,3 +77,12 @@ def ensure_indexes() -> None:
     except Exception:
         # Best-effort; don't prevent app startup. Consider logging in future.
         pass
+
+    tag_meta = db["tag_meta"]
+    tag_meta_indexes: list[IndexModel] = [
+        IndexModel([("updated_at", DESCENDING)], name="tag_meta_updated_at"),
+    ]
+    try:
+        tag_meta.create_indexes(tag_meta_indexes)
+    except Exception:
+        pass

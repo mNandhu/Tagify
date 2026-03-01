@@ -1,4 +1,5 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from ..database.motor import acol
 import time
 import asyncio
@@ -10,6 +11,10 @@ _TAGS_TTL_SECONDS = 30.0
 _CACHE_LOCK = asyncio.Lock()
 
 router = APIRouter()
+
+
+class TagThumbnailSet(BaseModel):
+    image_id: str
 
 
 @router.get("")
@@ -30,13 +35,68 @@ async def list_tags(include_manual: bool = False):
             if include_manual
             else [{"$match": {"tags": {"$not": {"$regex": r"^manual:"}}}}]
         ),
-        {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+        {"$sort": {"_id": -1}},
+        {
+            "$group": {
+                "_id": "$tags",
+                "count": {"$sum": 1},
+                "sample_image_id": {"$first": "$_id"},
+            }
+        },
         {"$sort": {"count": -1}},
     ]
     result = await acol("images").aggregate(pipeline).to_list(length=None)
+
+    tag_ids = [r.get("_id") for r in result if r.get("_id")]
+    overrides: dict[str, str] = {}
+    if tag_ids:
+        override_docs = (
+            await acol("tag_meta")
+            .find({"_id": {"$in": tag_ids}}, {"thumb_image_id": 1})
+            .to_list(length=None)
+        )
+        overrides = {
+            d.get("_id"): d.get("thumb_image_id")
+            for d in override_docs
+            if d.get("thumb_image_id")
+        }
+
+    for r in result:
+        tag = r.get("_id")
+        thumb_id = overrides.get(tag) or r.get("sample_image_id")
+        r["thumb_image_id"] = thumb_id
+        r.pop("sample_image_id", None)
     async with _CACHE_LOCK:
         _TAGS_CACHE[cache_key] = (now, result)
     return result
+
+
+@router.post("/thumbnail/{tag:path}")
+async def set_tag_thumbnail(tag: str, body: TagThumbnailSet):
+    tag = validate_tags([tag])[0]
+    image_id = body.image_id
+
+    img = await acol("images").find_one({"_id": image_id, "tags": tag}, {"_id": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found for tag thumbnail")
+
+    await acol("tag_meta").update_one(
+        {"_id": tag},
+        {"$set": {"thumb_image_id": image_id, "updated_at": time.time()}},
+        upsert=True,
+    )
+    async with _CACHE_LOCK:
+        _TAGS_CACHE.clear()
+    return {"tag": tag, "thumb_image_id": image_id}
+
+
+@router.delete("/thumbnail/{tag:path}")
+async def clear_tag_thumbnail(tag: str):
+    tag = validate_tags([tag])[0]
+    await acol("tag_meta").delete_one({"_id": tag})
+    async with _CACHE_LOCK:
+        _TAGS_CACHE.clear()
+    return {"tag": tag, "cleared": True}
 
 
 @router.post("/apply/{image_id}")
