@@ -213,6 +213,8 @@ export function VirtualizedGrid({
               selectionMode={selectionMode}
               onOpen={onOpen}
               onToggle={onToggle}
+              getRoot={getScrollContainer}
+              eager
             />
           </div>
         ))}

@@ -47,6 +47,7 @@ export function GalleryGrid({
       onToggle={onToggle}
       onOpen={onOpen}
       selectionMode={selectionMode}
+      getScrollContainer={getScrollContainer}
     />
   );
 }
@@ -57,12 +58,14 @@ function StandardGrid({
   onToggle,
   onOpen,
   selectionMode,
+  getScrollContainer,
 }: {
   items: ImageDocWithDims[];
   selection: Set<string>;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
   selectionMode: boolean;
+  getScrollContainer?: () => HTMLElement | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [colWidth, setColWidth] = useState<number>(0);
@@ -111,6 +114,7 @@ function StandardGrid({
           colWidth={colWidth}
           rowUnit={rowUnit}
           rowGap={rowGap}
+          getRoot={getScrollContainer}
         />
       ))}
     </div>
@@ -129,6 +133,7 @@ const SpannedTile = React.memo(function SpannedTile({
   colWidth,
   rowUnit,
   rowGap,
+  getRoot,
 }: {
   it: ImageDocWithDims;
   index: number;
@@ -139,6 +144,7 @@ const SpannedTile = React.memo(function SpannedTile({
   colWidth: number;
   rowUnit: number;
   rowGap: number;
+  getRoot?: () => HTMLElement | null;
 }) {
   const span = useMemo(() => {
     if (colWidth <= 0 || rowUnit <= 0) return 1;
@@ -159,6 +165,7 @@ const SpannedTile = React.memo(function SpannedTile({
         selectionMode={selectionMode}
         onToggle={onToggle}
         onOpen={onOpen}
+        getRoot={getRoot}
       />
     </div>
   );

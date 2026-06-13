@@ -19,6 +19,8 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   selectionMode,
   onToggle,
   onOpen,
+  getRoot,
+  eager = false,
 }: {
   item: ImageDocWithDims;
   index: number;
@@ -26,6 +28,8 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   selectionMode: boolean;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
+  getRoot?: () => HTMLElement | null;
+  eager?: boolean;
 }) {
   // Prefer the ready-to-use URL embedded in the list payload (no per-tile
   // resolve request). Fall back to the endpoint, which ImageThumbnail resolves
@@ -45,6 +49,8 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
         selected={selected}
         onClick={() => (selectionMode ? onToggle(item._id) : onOpen(item._id))}
         priority={index < 12} // First 12 items get high priority
+        getRoot={getRoot}
+        eager={eager}
       />
       {selectionMode && (
         <button

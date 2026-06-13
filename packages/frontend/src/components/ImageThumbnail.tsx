@@ -81,6 +81,8 @@ export function ImageThumbnail({
   priority = false,
   preResolved = false,
   blurhash,
+  getRoot,
+  eager = false,
 }: {
   src: string;
   selected?: boolean;
@@ -91,6 +93,17 @@ export function ImageThumbnail({
   priority?: boolean; // High priority for above-the-fold images
   preResolved?: boolean; // src is already a usable URL; skip resolveMediaUrl
   blurhash?: string; // BlurHash placeholder shown until the image loads
+  // Scroll container to use as the IntersectionObserver root. Must be the actual
+  // scrolling element — rootMargin only expands the root, while intermediate
+  // scroll containers clip at zero margin, killing the preload window.
+  getRoot?: () => HTMLElement | null;
+  // Skip the per-tile IntersectionObserver and load as soon as mounted. Used by
+  // the virtualized grid, which already gates mounting to a near-viewport
+  // overscan window — a second IO gate is redundant and, worse, broken here:
+  // content-visibility:auto skips laying out the <img>, so IO can't measure it
+  // until the browser un-skips the tile (~half a screen away), defeating the
+  // preload. Fetch+decode still run while offscreen (cv only skips paint).
+  eager?: boolean;
 }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -146,8 +159,8 @@ export function ImageThumbnail({
     const img = imgRef.current;
     if (!img) return;
 
-    // High priority images load immediately
-    if (priority) {
+    // High-priority or eager (virtualized) tiles load immediately on mount.
+    if (priority || eager) {
       setShouldLoad(true);
       return;
     }
@@ -162,6 +175,10 @@ export function ImageThumbnail({
         });
       },
       {
+        // Observe against the real scroll container, not the viewport: the gallery
+        // scrolls inside an inner overflow-auto element, which clips offscreen tiles
+        // at zero margin. Anchoring the root here lets rootMargin actually preload.
+        root: getRoot?.() ?? null,
         // Start loading ~1.5 screens early so thumbs are decoded by the time
         // they scroll into view — no skeleton flash on normal scrolling.
         rootMargin: "1200px 0px",
@@ -171,7 +188,7 @@ export function ImageThumbnail({
 
     observer.observe(img);
     return () => observer.disconnect();
-  }, [priority]);
+  }, [priority, eager, getRoot]);
 
   // Acquire a queue slot and only then assign the real <img src>.
   // This avoids double-fetching (preload Image() + <img>) while still limiting concurrency.
@@ -226,7 +243,13 @@ export function ImageThumbnail({
     <button
       className={cn(
         "group relative w-full overflow-hidden rounded bg-neutral-900",
-        "content-visibility-auto contain-intrinsic-thumb", // Improve offscreen performance
+        // content-visibility:auto skips painting offscreen tiles to cut work —
+        // but in the virtualized grid (eager) it withholds paint of mounted,
+        // loaded tiles until the browser's proximity heuristic flips them on
+        // (~half a screen in), leaving black gaps while scrolling. The grid
+        // already virtualizes, so the skip is redundant there; only enable it
+        // for the non-virtualized StandardGrid, where every tile is in the DOM.
+        !eager && "content-visibility-auto contain-intrinsic-thumb",
         selected && "ring-2 ring-purple-500"
       )}
       onClick={onClick}
