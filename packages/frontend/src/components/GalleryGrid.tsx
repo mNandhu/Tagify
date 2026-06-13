@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ImageThumbnail } from "./ImageThumbnail";
-import { resolveMediaUrl } from "../lib/media";
+import { ThumbnailTile } from "./ThumbnailTile";
 import { VirtualizedGrid } from "./VirtualizedGrid";
+import { aspectHeight, rowSpan } from "../lib/masonryLayout";
+import type { ImageDoc } from "../lib/imageFilter";
 
-type ImageDoc = { _id: string; path: string };
-// Upstream items from API contain width/height; extend locally to use for layout stabilization if present
+// Upstream items contain width/height; used for masonry layout stabilization.
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
 
 export function GalleryGrid({
@@ -22,9 +22,9 @@ export function GalleryGrid({
   selectionMode: boolean;
   getScrollContainer?: () => HTMLElement | null;
 }) {
-  // Use virtualization for large datasets (>200 items), but prefer standard grid
-  // when scroll restoration might be needed to avoid complexity
-  const useVirtualization = items.length > 500; // Increased threshold
+  // Use virtualization for large datasets; prefer the standard grid otherwise
+  // to keep scroll restoration simple.
+  const useVirtualization = items.length > 500;
 
   if (useVirtualization) {
     return (
@@ -100,7 +100,7 @@ function StandardGrid({
       className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 auto-rows-[4px] grid-flow-row-dense"
     >
       {items.map((it, index) => (
-        <ThumbnailItem
+        <SpannedTile
           key={it._id}
           it={it}
           index={index}
@@ -117,7 +117,9 @@ function StandardGrid({
   );
 }
 
-const ThumbnailItem = React.memo(function ThumbnailItem({
+// Wraps a ThumbnailTile in a CSS-grid cell, spanning the rows its aspect ratio
+// needs (masonry effect via grid-auto-rows + row span).
+const SpannedTile = React.memo(function SpannedTile({
   it,
   index,
   selected,
@@ -138,74 +140,26 @@ const ThumbnailItem = React.memo(function ThumbnailItem({
   rowUnit: number;
   rowGap: number;
 }) {
-  const [thumbUrl, setThumbUrl] = useState<string>(
-    `/api/images/${encodeURIComponent(it._id)}/thumb`
-  );
-  const [rowSpan, setRowSpan] = useState<number>(1);
-  useEffect(() => {
-    let mounted = true;
-    const ep = `/api/images/${encodeURIComponent(it._id)}/thumb`;
-    resolveMediaUrl(ep)
-      .then((u) => {
-        if (mounted) setThumbUrl(u);
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, [it._id]);
-
-  // Compute grid row span based on known aspect ratio, column width, and row gap
-  useEffect(() => {
-    const w = it.width || 1;
-    const h = it.height || 1;
-    if (colWidth > 0 && rowUnit > 0) {
-      const pxHeight = (h / w) * colWidth;
-      // Compute rows so N*rowUnit + (N-1)*rowGap >= pxHeight
-      const rows = Math.max(
-        1,
-        Math.ceil((pxHeight + rowGap) / (rowUnit + rowGap))
-      );
-      setRowSpan(rows);
-    } else {
-      setRowSpan(1);
-    }
-  }, [it.width, it.height, colWidth, rowUnit, rowGap]);
+  const span = useMemo(() => {
+    if (colWidth <= 0 || rowUnit <= 0) return 1;
+    return rowSpan(aspectHeight(it, colWidth), rowUnit, rowGap);
+  }, [it, colWidth, rowUnit, rowGap]);
 
   const spanClass = useMemo(
-    () => `rs-${Math.max(1, Math.min(rowSpan, 200))}`,
-    [rowSpan]
+    () => `rs-${Math.max(1, Math.min(span, 200))}`,
+    [span],
   );
 
   return (
     <div className={"break-inside-avoid " + spanClass}>
-      <div className="relative group h-full">
-        <ImageThumbnail
-          src={thumbUrl}
-          alt={it.path}
-          width={it.width}
-          height={it.height}
-          selected={selected}
-          onClick={() => (selectionMode ? onToggle(it._id) : onOpen(it._id))}
-          priority={index < 12} // First 12 items get high priority
-        />
-        {selectionMode && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle(it._id);
-            }}
-            aria-label={selected ? "Deselect" : "Select"}
-            className="absolute top-2 right-2 w-6 h-6 rounded border border-white/60 bg-black/40 flex items-center justify-center"
-          >
-            {selected ? (
-              <span className="w-3 h-3 bg-purple-500 block rounded-sm" />
-            ) : (
-              <span className="w-3 h-3 block rounded-sm" />
-            )}
-          </button>
-        )}
-      </div>
+      <ThumbnailTile
+        item={it}
+        index={index}
+        selected={selected}
+        selectionMode={selectionMode}
+        onToggle={onToggle}
+        onOpen={onOpen}
+      />
     </div>
   );
 });

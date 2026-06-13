@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { ImageThumbnail } from "./ImageThumbnail";
-import { resolveMediaUrl } from "../lib/media";
+import { ThumbnailTile } from "./ThumbnailTile";
+import {
+  columnWidth,
+  estimateItemHeight,
+  gridColumns,
+} from "../lib/masonryLayout";
+import type { ImageDoc } from "../lib/imageFilter";
 
-type ImageDoc = { _id: string; path: string };
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
 
 interface VirtualizedGridProps {
@@ -15,13 +19,7 @@ interface VirtualizedGridProps {
   getScrollContainer?: () => HTMLElement | null;
 }
 
-// Estimate item height based on aspect ratio for virtualization
-function estimateItemHeight(item: ImageDocWithDims, colWidth: number): number {
-  const w = item.width || 1;
-  const h = item.height || 1;
-  const aspectRatio = h / w;
-  return Math.max(150, colWidth * aspectRatio); // Minimum 150px height
-}
+const GAP = 12; // gap-3 (0.75rem)
 
 export function VirtualizedGrid({
   items,
@@ -40,25 +38,14 @@ export function VirtualizedGrid({
   const [colWidth, setColWidth] = useState(0);
   const [cols, setCols] = useState(2);
 
-  // Tailwind breakpoints: md=768px, lg=1024px
-  const computeCols = (w: number) => {
-    if (w >= 1024) return 4;
-    if (w >= 768) return 3;
-    return 2;
-  };
-
   const recomputeLayout = (scrollEl: HTMLElement) => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
 
     const w = wrapper.clientWidth;
-    const nextCols = computeCols(w);
+    const nextCols = gridColumns(w);
     setCols(nextCols);
-
-    const gap = 12; // gap-3 (0.75rem)
-    const nextColWidth =
-      nextCols > 0 ? (w - gap * (nextCols - 1)) / nextCols : w;
-    setColWidth(nextColWidth);
+    setColWidth(columnWidth(w, nextCols, GAP));
 
     setViewportHeight(scrollEl.clientHeight || 600);
     // wrapper's top in scroll content coordinates
@@ -115,12 +102,11 @@ export function VirtualizedGrid({
 
       for (let j = 0; j < cols && i + j < items.length; j++) {
         const item = items[i + j];
-        const height = estimateItemHeight(item, colWidth);
-        maxHeight = Math.max(maxHeight, height);
+        maxHeight = Math.max(maxHeight, estimateItemHeight(item, colWidth));
         rowItems.push({ item, index: i + j });
       }
 
-      const rowHeight = maxHeight + 12; // Add gap
+      const rowHeight = maxHeight + GAP;
       rows.push({
         items: rowItems,
         height: rowHeight,
@@ -163,7 +149,7 @@ export function VirtualizedGrid({
     const startIdx = Math.max(0, lowerBoundByY(virtualRows, startY) - 1);
     const endExclusive = Math.min(
       virtualRows.length,
-      lowerBoundByY(virtualRows, endY) + 2
+      lowerBoundByY(virtualRows, endY) + 2,
     );
 
     return virtualRows.slice(startIdx, endExclusive);
@@ -185,11 +171,11 @@ export function VirtualizedGrid({
           <VirtualRow
             key={`row-${row.y}`}
             y={row.y}
-            height={row.height - 12}
+            height={row.height - GAP}
             cols={cols}
           >
             {row.items.map(({ item, index }) => (
-              <VirtualThumbnailItem
+              <ThumbnailTile
                 key={item._id}
                 item={item}
                 index={index}
@@ -228,68 +214,3 @@ function VirtualRow({
     </div>
   );
 }
-
-const VirtualThumbnailItem = React.memo(function VirtualThumbnailItem({
-  item,
-  index,
-  selected,
-  selectionMode,
-  onToggle,
-  onOpen,
-}: {
-  item: ImageDocWithDims;
-  index: number;
-  selected: boolean;
-  selectionMode: boolean;
-  onToggle: (id: string) => void;
-  onOpen: (id: string) => void;
-}) {
-  const [thumbUrl, setThumbUrl] = useState<string>(
-    `/api/images/${encodeURIComponent(item._id)}/thumb`
-  );
-
-  useEffect(() => {
-    let mounted = true;
-    const ep = `/api/images/${encodeURIComponent(item._id)}/thumb`;
-
-    resolveMediaUrl(ep)
-      .then((u) => {
-        if (mounted) setThumbUrl(u);
-      })
-      .catch(() => {});
-
-    return () => {
-      mounted = false;
-    };
-  }, [item._id]);
-
-  return (
-    <div className="relative group h-full">
-      <ImageThumbnail
-        src={thumbUrl}
-        alt={item.path}
-        width={item.width}
-        height={item.height}
-        selected={selected}
-        onClick={() => (selectionMode ? onToggle(item._id) : onOpen(item._id))}
-        priority={index < 12} // First 12 items get high priority
-      />
-      {selectionMode && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle(item._id);
-          }}
-          aria-label={selected ? "Deselect" : "Select"}
-          className="absolute top-2 right-2 w-6 h-6 rounded border border-white/60 bg-black/40 flex items-center justify-center"
-        >
-          {selected ? (
-            <span className="w-3 h-3 bg-purple-500 block rounded-sm" />
-          ) : (
-            <span className="w-3 h-3 block rounded-sm" />
-          )}
-        </button>
-      )}
-    </div>
-  );
-});

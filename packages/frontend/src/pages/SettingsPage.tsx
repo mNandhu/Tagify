@@ -1,56 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "../components/Toasts";
-
-type AISettings = {
-  model_repo: string;
-  general_thresh: number;
-  character_thresh: number;
-  general_mcut: boolean;
-  character_mcut: boolean;
-  max_general: number;
-  max_character: number;
-  idle_unload_s: number;
-  cache_dir: string;
-};
-
-type AIJob = {
-  id: string;
-  created_at: number;
-  status: string;
-  total: number;
-  done: number;
-  failed: number;
-  skipped?: number;
-  current?: string | null;
-};
-
-type AIStatus = {
-  model: {
-    loaded: boolean;
-    repo?: string | null;
-    last_used?: number;
-    idle_unload_s?: number;
-  };
-  model_load?: {
-    status: string;
-    error?: string | null;
-    loading_for?: [string, string] | null;
-  };
-  model_download?: {
-    status: string;
-    cancel_requested?: boolean;
-    error?: string | null;
-    files?: Array<{
-      name: string;
-      status: string;
-      downloaded: number;
-      total?: number | null;
-      error?: string | null;
-    }>;
-  };
-  jobs: { recent: AIJob[]; queue_depth: number };
-  settings: AISettings;
-};
+import { useAiStatus } from "../hooks/useAiStatus";
+import { isActiveJob, type AISettings } from "../lib/ai";
 
 function formatBytes(n: number) {
   if (!Number.isFinite(n) || n <= 0) return "0 B";
@@ -73,10 +24,12 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 export default function SettingsPage() {
   const { push } = useToast();
   const [settings, setSettings] = useState<AISettings | null>(null);
-  const [status, setStatus] = useState<AIStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [untaggedLimit, setUntaggedLimit] = useState(200);
+
+  // AI status is a shared polled query; cadence derives from isStatusBusy.
+  const { data: status } = useAiStatus();
 
   const isModelLoaded = Boolean(status?.model?.loaded);
   const isModelLoading = status?.model_load?.status === "loading";
@@ -88,46 +41,10 @@ export default function SettingsPage() {
       .catch((e) => push(`Failed to load AI settings: ${String(e)}`, "error"));
   }, [push]);
 
-  // Poll status for progress/model state
+  // Seed the editable form from polled status until the user's copy loads.
   useEffect(() => {
-    let alive = true;
-    let timer: number | null = null;
-
-    const isBusy = (s: AIStatus) => {
-      const loadBusy = s?.model_load?.status === "loading";
-      const dlBusy = s?.model_download?.status === "downloading";
-      const jobBusy = (s?.jobs?.recent || []).some((j) =>
-        ["queued", "running", "cancelling"].includes(String(j.status))
-      );
-      return loadBusy || dlBusy || jobBusy;
-    };
-
-    const schedule = (ms: number) => {
-      if (!alive) return;
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(tick, ms);
-    };
-
-    const tick = async () => {
-      try {
-        const s = await api<AIStatus>("/api/ai/status");
-        if (!alive) return;
-        setStatus(s);
-        // Keep local settings in sync if user hasn't loaded yet
-        setSettings((prev) => prev ?? s.settings);
-
-        schedule(isBusy(s) ? 2000 : 5000);
-      } catch {
-        // ignore transient errors
-        schedule(5000);
-      }
-    };
-    tick();
-    return () => {
-      alive = false;
-      if (timer) window.clearTimeout(timer);
-    };
-  }, []);
+    if (status?.settings) setSettings((prev) => prev ?? status.settings);
+  }, [status?.settings]);
 
   const latestJob = useMemo(() => {
     const j = status?.jobs?.recent?.[0];
@@ -644,9 +561,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {(latestJob.status === "queued" ||
-              latestJob.status === "running" ||
-              latestJob.status === "cancelling") && (
+            {isActiveJob(latestJob.status) && (
               <div>
                 <button
                   className="px-3 py-2 rounded bg-red-600 hover:bg-red-500 disabled:opacity-50"
@@ -691,9 +606,7 @@ export default function SettingsPage() {
                     <span className="text-red-300"> · {j.failed} failed</span>
                   ) : null}
                 </div>
-                {(j.status === "queued" ||
-                  j.status === "running" ||
-                  j.status === "cancelling") && (
+                {isActiveJob(j.status) && (
                   <button
                     className="px-2 py-1 rounded bg-red-600/20 hover:bg-red-600/30 border border-red-700 text-red-200 text-xs disabled:opacity-50"
                     onClick={() => cancelJob(j.id)}

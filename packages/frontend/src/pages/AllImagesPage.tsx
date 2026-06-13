@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { GalleryGrid } from "../components/GalleryGrid";
 import { useToast } from "../components/Toasts";
 import {
@@ -11,24 +11,15 @@ import {
   ImageOff,
 } from "lucide-react";
 import {
-  saveScrollState,
-  restoreScrollState,
-  clearScrollState,
-  clearOldScrollStates,
-  createDebouncedScrollSaver,
-} from "../lib/scrollRestoration";
+  DEFAULT_FILTERS,
+  serializeFilters,
+  type Filters,
+} from "../lib/imageFilter";
+import { useFilters } from "../hooks/useFilters";
+import { useImageFeed } from "../hooks/useImageFeed";
+import { useScrollRestoration } from "../hooks/useScrollRestoration";
 
-type ImageDoc = { _id: string; path: string };
 type Library = { _id: string; name?: string; path: string };
-
-type Filters = {
-  q: string;
-  tags: string[];
-  logic: "and" | "or";
-  libraryId?: string;
-  noTags?: boolean;
-  noAiTags?: boolean;
-};
 
 async function api<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -36,93 +27,56 @@ async function api<T>(url: string): Promise<T> {
   return r.json();
 }
 
+const hasActiveFilter = (f: Filters) =>
+  f.tags.length > 0 || !!f.libraryId || f.noTags || f.noAiTags;
+
 export default function AllImagesPage() {
   const { push } = useToast();
-  const [items, setItems] = useState<ImageDoc[]>([]);
+  const navigate = useNavigate();
+
+  // Image filter (URL is the single source of truth) and the Image feed it drives.
+  const [filters, setFilters] = useFilters();
+  const feed = useImageFeed(filters);
+  const items = feed.items;
+
+  // Raw search-box text, split into tags on submit.
+  const [q, setQ] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [libs, setLibs] = useState<Library[]>([]);
-  const [filters, setFilters] = useState<Filters>({
-    q: "",
-    tags: [],
-    logic: "and",
-    noTags: false,
-    noAiTags: false,
-  });
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const limit = 100;
-  const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  // Scroll restoration state
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false);
-  const [restoredScrollState, setRestoredScrollState] =
-    useState<ReturnType<typeof restoreScrollState>>(null);
-  const debouncedScrollSaver = useMemo(
-    () => createDebouncedScrollSaver(200),
-    [],
-  );
-
-  // Filter popover (kept inside the sticky header container so it stays accessible while scrolling)
+  // Filter popover (kept inside the sticky header so it stays accessible while scrolling)
   const headerRef = useRef<HTMLDivElement | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const filtersPanelRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Keep latest values for scroll saver without reattaching listeners.
-  const scrollSaveRef = useRef<{
-    searchParams: URLSearchParams;
-    cursor: string | null;
-    itemCount: number;
-  }>({ searchParams, cursor, itemCount: items.length });
-
-  useEffect(() => {
-    scrollSaveRef.current = {
-      searchParams,
-      cursor,
-      itemCount: items.length,
-    };
-  }, [searchParams, cursor, items.length]);
-
-  // Clean up old scroll states on mount
-  useEffect(() => {
-    clearOldScrollStates();
+  const getScrollContainer = useCallback(() => {
+    return (
+      (containerRef.current?.closest(".overflow-auto") as HTMLElement | null) ||
+      containerRef.current
+    );
   }, []);
 
-  // Track scroll position for restoration (attach once; read latest values from ref)
+  // Scroll restoration keyed by the active filter.
+  const { save: saveScroll } = useScrollRestoration(
+    serializeFilters(filters).toString(),
+    getScrollContainer,
+    items.length > 0,
+  );
+
+  // Load libraries for the filter dropdown.
   useEffect(() => {
-    // Use the parent scroll container (from App.tsx)
-    const container =
-      (containerRef.current?.closest(".overflow-auto") as HTMLElement) ||
-      containerRef.current;
-    if (!container) return;
-
-    const handleScroll = () => {
-      const { searchParams, cursor, itemCount } = scrollSaveRef.current;
-      debouncedScrollSaver(
-        container.scrollTop,
-        searchParams,
-        cursor || undefined,
-        itemCount,
-      );
-    };
-
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => container.removeEventListener("scroll", handleScroll);
-  }, [debouncedScrollSaver]);
-  // Note: getScrollContainer() always returns the same element (the app's main scroll container)
-  // after mount, so we don't need to depend on it. If the implementation changes such that the
-  // scroll container can change during the component's lifetime, add a dependency on the container ref.
+    api<Library[]>(`/api/libraries`).then(setLibs).catch(() => {});
+  }, []);
 
   // Close filters on outside click / ESC.
   useEffect(() => {
     if (!filtersOpen) return;
-
     const onPointerDown = (e: MouseEvent | TouchEvent) => {
       const target = e.target as Node | null;
       if (!target) return;
@@ -133,11 +87,9 @@ export default function AllImagesPage() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setFiltersOpen(false);
     };
-
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("touchstart", onPointerDown, { passive: true });
     document.addEventListener("keydown", onKeyDown);
-
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("touchstart", onPointerDown);
@@ -145,190 +97,19 @@ export default function AllImagesPage() {
     };
   }, [filtersOpen]);
 
-  // Check for scroll restoration on mount or when returning from ImageView
-  useEffect(() => {
-    const restored = restoreScrollState(searchParams);
-    if (restored) {
-      setRestoredScrollState(restored);
-      setShouldRestoreScroll(true);
-    }
-  }, []); // Only run on mount
-
-  // load libraries for filter
-  useEffect(() => {
-    api<Library[]>(`/api/libraries`)
-      .then(setLibs)
-      .catch(() => {});
-  }, []);
-
-  const queryString = useMemo(() => {
-    const p = new URLSearchParams();
-    if (filters.tags.length) filters.tags.forEach((t) => p.append("tags", t));
-    if (filters.logic) p.set("logic", filters.logic);
-    if (filters.libraryId) p.set("library_id", filters.libraryId);
-    if (filters.noTags) p.set("no_tags", "1");
-    if (filters.noAiTags) p.set("no_ai_tags", "1");
-    p.set("limit", String(limit));
-    if (cursor) p.set("cursor", cursor);
-    return p.toString();
-  }, [filters, cursor]);
-
-  // initial load and when filters or pagination change
-  useEffect(() => {
-    const url = `/api/images${queryString ? `?${queryString}` : ""}`;
-    const controller = new AbortController();
-    const isPaging = !!cursor;
-    setLoading(true);
-    fetch(url, { signal: controller.signal })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(await r.text());
-        return (await r.json()) as ImageDoc[];
-      })
-      .then((data) => {
-        setItems((prev) => (isPaging ? [...prev, ...data] : data));
-        setHasMore(data.length === limit);
-        if (data.length) {
-          const last = data[data.length - 1];
-          setNextCursor(last._id);
-        } else {
-          setNextCursor(null);
-        }
-      })
-      .catch((e) => {
-        if (e?.name === "AbortError") return;
-        console.error(e);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [queryString]);
-
-  // Restore scroll position after data loads
-  useEffect(() => {
-    if (
-      !shouldRestoreScroll ||
-      !restoredScrollState ||
-      !containerRef.current ||
-      loading
-    ) {
-      return;
-    }
-
-    const container =
-      (containerRef.current?.closest(".overflow-auto") as HTMLElement) ||
-      containerRef.current;
-    const targetScrollTop = restoredScrollState.scrollTop;
-
-    // If we have fewer items than before, try to load more data
-    if (restoredScrollState.itemCount > items.length && hasMore && !cursor) {
-      // Start loading from the restored cursor position
-      if (
-        restoredScrollState.cursor &&
-        restoredScrollState.cursor !== nextCursor
-      ) {
-        setCursor(restoredScrollState.cursor);
-        return; // Will trigger data load, then retry restoration
-      }
-    }
-
-    // Attempt to restore scroll position
-    setTimeout(() => {
-      if (container.scrollHeight > targetScrollTop) {
-        container.scrollTo({
-          top: targetScrollTop,
-          behavior: "auto", // Instant restore
-        });
-      }
-      setShouldRestoreScroll(false);
-      setRestoredScrollState(null);
-    }, 100); // Small delay to ensure DOM is updated
-  }, [
-    shouldRestoreScroll,
-    restoredScrollState,
-    items.length,
-    loading,
-    hasMore,
-    cursor,
-    nextCursor,
-  ]);
-
-  // Clear scroll state when filters change
-  useEffect(() => {
-    if (!shouldRestoreScroll) {
-      // Only clear if we're not in the middle of restoring
-      clearScrollState(searchParams);
-    }
-  }, [
-    filters.tags,
-    filters.logic,
-    filters.libraryId,
-    filters.noTags,
-    filters.noAiTags,
-    shouldRestoreScroll,
-  ]);
-
-  // sync filters from URL on mount and whenever search params change
-  useEffect(() => {
-    const sp = new URLSearchParams(searchParams);
-    const urlTags = sp.getAll("tags");
-    const singleTag = sp.getAll("tag");
-    const lib = sp.get("library_id") || undefined;
-    const noTags = sp.get("no_tags") === "1";
-    const noAiTags = sp.get("no_ai_tags") === "1";
-    const logic = (sp.get("logic") as Filters["logic"]) || undefined;
-    const nextTags = urlTags.length ? urlTags : singleTag;
-    // Always synchronize filter state from the URL (single source of truth).
-    // This fixes cases like navigating to /?no_tags=1, which previously failed to
-    // update state and then got overwritten by the "push filters to URL" effect.
-    setFilters((f) => ({
-      ...f,
-      tags: nextTags,
-      libraryId: lib,
-      logic: logic || f.logic,
-      noTags,
-      noAiTags,
-    }));
-
-    // Back-compat: migrate legacy ?tag=... to ?tags=... (multi) once.
-    if (singleTag.length) {
-      singleTag.forEach(() => sp.delete("tag"));
-      nextTags.forEach((t) => sp.append("tags", t));
-      setSearchParams(sp, { replace: true });
-    }
-  }, [searchParams, setSearchParams]);
-
-  // push filters to URL when they change (excluding pagination cursor)
-  useEffect(() => {
-    const sp = new URLSearchParams();
-    filters.tags.forEach((t) => sp.append("tags", t));
-    if (filters.logic) sp.set("logic", filters.logic);
-    if (filters.libraryId) sp.set("library_id", filters.libraryId);
-    if (filters.noTags) sp.set("no_tags", "1");
-    if (filters.noAiTags) sp.set("no_ai_tags", "1");
-    setSearchParams(sp, { replace: true });
-  }, [filters, setSearchParams]);
-
   const onSubmitSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    const tags = filters.q
+    const tags = q
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    setFilters((f) => ({ ...f, tags }));
-    setItems([]);
-    setCursor(null);
+    setFilters({ ...filters, tags });
   };
 
-  // Keyboard shortcuts: S toggle selection, F focus search, N toggle no-tags
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  // Keyboard shortcuts: S toggle selection, F focus search, N no-tags, A no-AI-tags.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Don't hijack browser/system shortcuts (Ctrl/Cmd/Alt combos).
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      // Don't trigger global shortcuts when typing in form fields
       const target = e.target as HTMLElement;
       const isFormField =
         target &&
@@ -336,50 +117,34 @@ export default function AllImagesPage() {
           target.tagName.toLowerCase() === "textarea" ||
           target.tagName.toLowerCase() === "select" ||
           target.isContentEditable);
+      if (isFormField) return;
 
-      if (isFormField) {
-        return;
-      }
-
-      if (e.key.toLowerCase() === "s") {
+      const k = e.key.toLowerCase();
+      if (k === "s") {
         e.preventDefault();
         setSelectionMode((v) => {
           const next = !v;
           push(next ? "Selection mode ON" : "Selection mode OFF", "info");
           return next;
         });
-      }
-      if (e.key.toLowerCase() === "f") {
+      } else if (k === "f") {
         e.preventDefault();
         searchInputRef.current?.focus();
-      }
-      if (e.key.toLowerCase() === "n") {
+      } else if (k === "n") {
         e.preventDefault();
-        setFilters((f) => {
-          const next = !f.noTags;
-          push(next ? "No-tags filter ON" : "No-tags filter OFF", "info");
-          return { ...f, noTags: next };
-        });
-        setItems([]);
-        setCursor(null);
-        setNextCursor(null);
-      }
-
-      if (e.key.toLowerCase() === "a") {
+        const next = !filters.noTags;
+        push(next ? "No-tags filter ON" : "No-tags filter OFF", "info");
+        setFilters({ ...filters, noTags: next });
+      } else if (k === "a") {
         e.preventDefault();
-        setFilters((f) => {
-          const next = !f.noAiTags;
-          push(next ? "No-AI-tags filter ON" : "No-AI-tags filter OFF", "info");
-          return { ...f, noAiTags: next };
-        });
-        setItems([]);
-        setCursor(null);
-        setNextCursor(null);
+        const next = !filters.noAiTags;
+        push(next ? "No-AI-tags filter ON" : "No-AI-tags filter OFF", "info");
+        setFilters({ ...filters, noAiTags: next });
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [push]);
+  }, [push, filters, setFilters]);
 
   const toggleSelection = useCallback((id: string) => {
     setSelection((s) => {
@@ -389,77 +154,34 @@ export default function AllImagesPage() {
     });
   }, []);
 
-  const getScrollContainer = useCallback(() => {
-    return (
-      (containerRef.current?.closest(".overflow-auto") as HTMLElement | null) ||
-      containerRef.current
-    );
-  }, []);
-
   const openImage = useCallback(
     (id: string) => {
-      // Save current scroll position before navigating
-      const container = getScrollContainer();
-      if (container) {
-        const scrollTop = container.scrollTop;
-        saveScrollState(
-          scrollTop,
-          searchParams,
-          cursor || undefined,
-          items.length,
-        );
-      }
-
-      const sp = new URLSearchParams();
-      filters.tags.forEach((t) => sp.append("tags", t));
-      if (filters.logic) sp.set("logic", filters.logic);
-      if (filters.libraryId) sp.set("library_id", filters.libraryId);
-      if (filters.noTags) sp.set("no_tags", "1");
-      if (filters.noAiTags) sp.set("no_ai_tags", "1");
-      if (cursor) sp.set("cursor", cursor);
-      sp.set("limit", String(limit));
+      saveScroll();
+      const sp = serializeFilters(filters);
       navigate(`/image/${encodeURIComponent(id)}?${sp.toString()}`);
     },
-    [
-      cursor,
-      filters.libraryId,
-      filters.logic,
-      filters.noTags,
-      filters.noAiTags,
-      filters.tags,
-      getScrollContainer,
-      items.length,
-      limit,
-      navigate,
-      searchParams,
-    ],
+    [filters, navigate, saveScroll],
   );
 
   const clearSelection = () => setSelection(new Set());
   const selectionActive = selection.size > 0;
 
-  // when turning off selection mode, clear current selection
+  // When leaving selection mode, drop the current selection.
   useEffect(() => {
-    if (!selectionMode && selectionActive) {
-      setSelection(new Set());
-    }
+    if (!selectionMode && selectionActive) setSelection(new Set());
   }, [selectionMode, selectionActive]);
 
-  // observe sentinel for infinite scroll
+  // Infinite scroll: fetch the next feed page when the sentinel comes into view.
   useEffect(() => {
-    if (!hasMore || loading) return;
+    if (!feed.hasNextPage || feed.isFetchingNextPage) return;
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) {
-        if (nextCursor && !loading) {
-          setCursor(nextCursor);
-        }
-      }
+      if (entries[0].isIntersecting) feed.fetchNextPage();
     });
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasMore, loading, nextCursor]);
+  }, [feed.hasNextPage, feed.isFetchingNextPage, feed.fetchNextPage]);
 
   return (
     <div ref={containerRef} className="p-4 space-y-3">
@@ -486,8 +208,8 @@ export default function AllImagesPage() {
             <input
               className="px-3 py-2 rounded bg-neutral-950/70 border border-neutral-800 w-full"
               placeholder="Search tags… (comma separated)"
-              value={filters.q}
-              onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
               ref={searchInputRef}
             />
           </form>
@@ -550,10 +272,10 @@ export default function AllImagesPage() {
                   className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
                   value={filters.logic}
                   onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
+                    setFilters({
+                      ...filters,
                       logic: e.target.value as Filters["logic"],
-                    }))
+                    })
                   }
                 >
                   <option value="and">Match all tags (AND)</option>
@@ -567,10 +289,10 @@ export default function AllImagesPage() {
                   className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
                   value={filters.libraryId || ""}
                   onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
+                    setFilters({
+                      ...filters,
                       libraryId: e.target.value || undefined,
-                    }))
+                    })
                   }
                 >
                   <option value="">All libraries</option>
@@ -591,12 +313,9 @@ export default function AllImagesPage() {
                         ? "bg-purple-700/30 border-purple-600 text-purple-200"
                         : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
                     }
-                    onClick={() => {
-                      setFilters((f) => ({ ...f, noTags: !f.noTags }));
-                      setItems([]);
-                      setCursor(null);
-                      setNextCursor(null);
-                    }}
+                    onClick={() =>
+                      setFilters({ ...filters, noTags: !filters.noTags })
+                    }
                     aria-label={filters.noTags ? "No tags on" : "No tags off"}
                     title="No tags"
                   >
@@ -619,12 +338,9 @@ export default function AllImagesPage() {
                         ? "bg-emerald-700/25 border-emerald-600 text-emerald-200"
                         : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
                     }
-                    onClick={() => {
-                      setFilters((f) => ({ ...f, noAiTags: !f.noAiTags }));
-                      setItems([]);
-                      setCursor(null);
-                      setNextCursor(null);
-                    }}
+                    onClick={() =>
+                      setFilters({ ...filters, noAiTags: !filters.noAiTags })
+                    }
                     aria-label={
                       filters.noAiTags ? "No AI tags on" : "No AI tags off"
                     }
@@ -637,16 +353,10 @@ export default function AllImagesPage() {
               <div className="flex items-end gap-2">
                 <button
                   className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
-                  onClick={() =>
-                    setFilters({
-                      q: "",
-                      tags: [],
-                      logic: "and",
-                      libraryId: undefined,
-                      noTags: false,
-                      noAiTags: false,
-                    })
-                  }
+                  onClick={() => {
+                    setQ("");
+                    setFilters(DEFAULT_FILTERS);
+                  }}
                 >
                   Clear filters
                 </button>
@@ -662,7 +372,7 @@ export default function AllImagesPage() {
         )}
       </div>
 
-      {!loading && items.length === 0 && (
+      {!feed.isLoading && items.length === 0 && (
         <div className="flex flex-col items-center justify-center py-24 px-4">
           <div className="bg-neutral-800/50 rounded-2xl p-12 border border-neutral-700/50 max-w-md text-center">
             <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-neutral-700/50 mb-6">
@@ -672,29 +382,17 @@ export default function AllImagesPage() {
               No Images Found
             </h2>
             <p className="text-neutral-400 mb-6 leading-relaxed">
-              {filters.tags.length > 0 ||
-              filters.libraryId ||
-              filters.noTags ||
-              filters.noAiTags
+              {hasActiveFilter(filters)
                 ? "No images match your current filters. Try adjusting your search criteria."
                 : "You don't have any images yet. Add a library to start importing your images."}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              {(filters.tags.length > 0 ||
-                filters.libraryId ||
-                filters.noTags ||
-                filters.noAiTags) && (
+              {hasActiveFilter(filters) && (
                 <button
-                  onClick={() =>
-                    setFilters({
-                      q: "",
-                      tags: [],
-                      logic: "and",
-                      libraryId: undefined,
-                      noTags: false,
-                      noAiTags: false,
-                    })
-                  }
+                  onClick={() => {
+                    setQ("");
+                    setFilters(DEFAULT_FILTERS);
+                  }}
                   className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-medium transition-colors"
                 >
                   Clear Filters

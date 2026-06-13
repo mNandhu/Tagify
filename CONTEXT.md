@@ -28,6 +28,18 @@ belongs in this file.
 - **AI Settings** — persisted tagger knobs; validation is pure
   (`ai_settings.clean_settings_patch`). (`services/ai_settings.py`)
 
+## Frontend
+
+- **Image filter** — the criteria selecting which Images the gallery shows:
+  tags + match logic (`and`/`or`), library, and the `no_tags`/`no_ai_tags`
+  toggles. Its URL round-trip is pure: `parseFilters` / `serializeFilters`
+  (`lib/imageFilter.ts`) are the single source of truth, so the URL and the
+  query never drift.
+- **Image feed** — the cursor-paged stream of Images matching an Image filter.
+  One shared query (`hooks/useImageFeed.ts`, TanStack `useInfiniteQuery` keyed
+  by the filter); the gallery (`AllImagesPage`) and `ImageView` read the same
+  cache, so paging done in one is visible to the other.
+
 ## Persistence
 
 - One Mongo index/connection definition, shared by the sync and async clients:
