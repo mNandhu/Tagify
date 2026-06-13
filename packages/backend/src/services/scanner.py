@@ -24,27 +24,42 @@ from ..core.config import settings
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 
-def _make_thumb_bytes(path: Path) -> tuple[bytes | None, str | None]:
-    """Render thumbnail bytes and a BlurHash placeholder from one decode.
+def _make_thumb_bytes(
+    path: Path,
+) -> tuple[bytes | None, str | None, int, int]:
+    """Render thumbnail bytes, a BlurHash placeholder, and original dimensions
+    from a single image open.
 
-    Returns ``(thumb_bytes, blurhash)``; either may be None on failure.
+    Returns ``(thumb_bytes, blurhash, width, height)``; thumb/blurhash may be
+    None on failure, dimensions 0 if the header couldn't be read.
     """
     try:
         with PILImage.open(path) as img:
-            # BlurHash from the full-res decode (downsamples internally); cheap
-            # and reuses this single open.
-            bh = blurhash_for_image(img)
+            # Original dimensions come from the header (no full decode) — read
+            # them before draft()/thumbnail() shrink the in-memory image.
+            width, height = img.size
+
             size = max(16, settings.thumb_max_size)
+            # draft() lets the JPEG decoder emit a pre-shrunk image (1/2, 1/4,
+            # 1/8 scale), so large sources decode several times faster. No-op
+            # for non-JPEG formats.
+            img.draft("RGB", (size, size))
             img.thumbnail((size, size))
+
             buf = BytesIO()
             fmt = settings.thumb_format.upper()
             if fmt == "WEBP":
                 img.save(buf, format="WEBP", quality=85)
             else:
                 img.convert("RGB").save(buf, format=fmt, quality=85)
-            return buf.getvalue(), bh
+
+            # BlurHash from the already-downsampled thumbnail (it shrinks to
+            # ~64px internally, so the result is identical to encoding the
+            # full-res image but far cheaper).
+            bh = blurhash_for_image(img)
+            return buf.getvalue(), bh, int(width), int(height)
     except Exception:
-        return None, None
+        return None, None, 0, 0
 
 
 def is_image(path: Path) -> bool:
@@ -142,16 +157,10 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
     """
     try:
         stat = p.stat()
-        width = height = 0
-        try:
-            with PILImage.open(p) as img:
-                width, height = img.size
-        except Exception:
-            # Best-effort: keep indexing even if image metadata read fails.
-            pass
         image_id = image_id_for(library_id, root_path, p)
-        # Generate a thumbnail in-memory for MinIO + a BlurHash placeholder.
-        thumb_bytes, blurhash = _make_thumb_bytes(p)
+        # Single decode yields the thumbnail, BlurHash placeholder, and the
+        # original dimensions (read from the header before downscaling).
+        thumb_bytes, blurhash, width, height = _make_thumb_bytes(p)
 
         # Upload thumbnail if generated (optional)
         thumb_key = None
