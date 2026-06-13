@@ -1,66 +1,39 @@
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def env_str(name: str, default: str | None = None) -> str:
-    val = os.getenv(name)
-    return val if val is not None else (default or "")
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    mongo_uri: str = "mongodb://localhost:27017"
+    ai_tagging_url: str = ""
+
+    mongo_max_pool_size: int = 100
+    mongo_min_pool_size: int = 0
+    mongo_server_selection_timeout_ms: int = 5000
+    mongo_connect_timeout_ms: int = 5000
+
+    minio_endpoint: str = "127.0.0.1:9000"
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_secure: bool = False
+    minio_bucket_thumbs: str = "tagify-thumbs"
+    minio_region: str = "us-east-1"
+
+    media_public_minio_endpoint: str = ""
+
+    scanner_max_workers: int = 0
+    scan_progress_update_ms: int = 500
+
+    thumb_max_size: int = 1080
+    thumb_format: str = "webp"
+
+    media_presigned_mode: str = "redirect"
+    media_presigned_expires: int = 3600
+
+    log_slow_requests_ms: int = 1000
+
+    rate_limit_enabled: bool = False
+    rate_limit_rescan_per_minute: int = 1
 
 
-MONGO_URI: str = env_str("MONGO_URI", "mongodb://localhost:27017")
-AI_TAGGING_URL: str = env_str("AI_TAGGING_URL", "")
-
-# Mongo tuning (optional)
-# Keep defaults dev-friendly, but allow larger pools / tighter timeouts in production.
-MONGO_MAX_POOL_SIZE: int = int(env_str("MONGO_MAX_POOL_SIZE", "100") or "100")
-MONGO_MIN_POOL_SIZE: int = int(env_str("MONGO_MIN_POOL_SIZE", "0") or "0")
-MONGO_SERVER_SELECTION_TIMEOUT_MS: int = int(
-    env_str("MONGO_SERVER_SELECTION_TIMEOUT_MS", "5000") or "5000"
-)
-MONGO_CONNECT_TIMEOUT_MS: int = int(
-    env_str("MONGO_CONNECT_TIMEOUT_MS", "5000") or "5000"
-)
-
-
-# Legacy THUMBS_DIR removed; MinIO is now the source of truth
-
-# MinIO / S3-compatible storage settings
-MINIO_ENDPOINT: str = env_str("MINIO_ENDPOINT", "127.0.0.1:9000")
-MINIO_ACCESS_KEY: str = env_str("MINIO_ACCESS_KEY", "")
-MINIO_SECRET_KEY: str = env_str("MINIO_SECRET_KEY", "")
-MINIO_SECURE: bool = env_str("MINIO_SECURE", "false").lower() == "true"
-MINIO_BUCKET_THUMBS: str = env_str("MINIO_BUCKET_THUMBS", "tagify-thumbs")
-MINIO_REGION: str = env_str("MINIO_REGION", "us-east-1")
-
-# Optional: Public endpoint for presigned URLs (e.g., "localhost:9000" or "http://media.example.com")
-# When set, backend will rewrite presigned MinIO URLs to use this origin so browsers outside Docker can reach it.
-MEDIA_PUBLIC_MINIO_ENDPOINT: str = env_str("MEDIA_PUBLIC_MINIO_ENDPOINT", "")
-
-# Scanner concurrency cap
-SCANNER_MAX_WORKERS: int = int(env_str("SCANNER_MAX_WORKERS", "0") or "0")
-
-# Scanner progress update interval (ms)
-# Progress is persisted at most once per interval to keep the UI smooth without excessive DB writes.
-SCAN_PROGRESS_UPDATE_MS: int = int(env_str("SCAN_PROGRESS_UPDATE_MS", "500") or "500")
-
-# Thumbnails: maximum size (pixels) for the longest edge
-# Used by scanner to generate WebP thumbnails via Pillow
-THUMB_MAX_SIZE: int = int(env_str("THUMB_MAX_SIZE", "1080") or "1080")
-THUMB_FORMAT: str = env_str("THUMB_FORMAT", "webp")
-
-# Media delivery mode: 'off' (proxy via API), 'redirect' (302/307 to presigned), 'url' (API returns URL JSON)
-MEDIA_PRESIGNED_MODE: str = env_str("MEDIA_PRESIGNED_MODE", "redirect").lower()
-# Expiration for presigned URLs in seconds
-MEDIA_PRESIGNED_EXPIRES: int = int(env_str("MEDIA_PRESIGNED_EXPIRES", "3600") or "3600")
-
-# Basic observability / safety knobs
-LOG_SLOW_REQUESTS_MS: int = int(env_str("LOG_SLOW_REQUESTS_MS", "1000") or "1000")
-
-# Simple per-process rate limiting (optional). This is not a distributed limiter.
-RATE_LIMIT_ENABLED: bool = env_str("RATE_LIMIT_ENABLED", "false").lower() == "true"
-# Limit rescan requests per IP per minute.
-RATE_LIMIT_RESCAN_PER_MINUTE: int = int(
-    env_str("RATE_LIMIT_RESCAN_PER_MINUTE", "1") or "1"
-)
+settings = Settings()

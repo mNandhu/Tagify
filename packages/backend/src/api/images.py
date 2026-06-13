@@ -12,7 +12,7 @@ from ..services.storage_minio import (
 )
 from ..services import image_tags
 from ..services.image_tags import find_image as _find_image_doc
-from ..core import config
+from ..core.config import settings
 
 
 router = APIRouter()
@@ -153,9 +153,9 @@ async def get_image_thumb(image_id: str):
     # Determine media type from the key extension
     media_type = "image/webp" if thumb_key.endswith(".webp") else "image/jpeg"
 
-    if config.MEDIA_PRESIGNED_MODE in ("redirect", "url"):
+    if settings.media_presigned_mode in ("redirect", "url"):
         url = presign_thumb(thumb_key)
-        if config.MEDIA_PRESIGNED_MODE == "redirect":
+        if settings.media_presigned_mode == "redirect":
             resp = Response(status_code=307)
             resp.headers["Location"] = url
             return resp
@@ -177,7 +177,7 @@ async def head_image_thumb(image_id: str):
     img = await _find_image_doc(image_id, {"thumb_key": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
-    if config.MEDIA_PRESIGNED_MODE == "url":
+    if settings.media_presigned_mode == "url":
         return Response(status_code=200, media_type="application/json")
     thumb_key = img.get("thumb_key", "")
     media_type = "image/webp" if thumb_key.endswith(".webp") else "image/jpeg"

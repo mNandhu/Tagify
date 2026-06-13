@@ -11,25 +11,21 @@ from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
-from ..core import config
+from ..core.config import settings
 
 
 def mongo_uri() -> str:
-    return config.MONGO_URI or os.getenv("MONGO_URI", "mongodb://localhost:27017")
+    return settings.mongo_uri
 
 
 def client_kwargs() -> dict[str, Any]:
     """Connection/pool/timeout kwargs shared by the sync and async clients."""
     return dict(
         appname="tagify",
-        maxPoolSize=max(1, int(getattr(config, "MONGO_MAX_POOL_SIZE", 100))),
-        minPoolSize=max(0, int(getattr(config, "MONGO_MIN_POOL_SIZE", 0))),
-        serverSelectionTimeoutMS=max(
-            1000, int(getattr(config, "MONGO_SERVER_SELECTION_TIMEOUT_MS", 5000))
-        ),
-        connectTimeoutMS=max(
-            1000, int(getattr(config, "MONGO_CONNECT_TIMEOUT_MS", 5000))
-        ),
+        maxPoolSize=max(1, settings.mongo_max_pool_size),
+        minPoolSize=max(0, settings.mongo_min_pool_size),
+        serverSelectionTimeoutMS=max(1000, settings.mongo_server_selection_timeout_ms),
+        connectTimeoutMS=max(1000, settings.mongo_connect_timeout_ms),
         retryReads=True,
         retryWrites=True,
     )

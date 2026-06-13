@@ -5,7 +5,7 @@ from io import BytesIO
 from minio import Minio
 from minio.deleteobjects import DeleteObject
 
-from ..core import config
+from ..core.config import settings
 from urllib.parse import urlparse
 from datetime import timedelta
 
@@ -19,7 +19,7 @@ def ensure_buckets() -> None:
     Run this at startup (preferably), so request paths don't pay bucket_exists costs.
     """
     client = get_minio()
-    for bucket in (config.MINIO_BUCKET_THUMBS,):
+    for bucket in (settings.minio_bucket_thumbs,):
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
 
@@ -28,11 +28,11 @@ def get_minio() -> Minio:
     global _client
     if _client is None:
         _client = Minio(
-            config.MINIO_ENDPOINT,
-            access_key=config.MINIO_ACCESS_KEY,
-            secret_key=config.MINIO_SECRET_KEY,
-            secure=config.MINIO_SECURE,
-            region=config.MINIO_REGION or None,
+            settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            secure=settings.minio_secure,
+            region=settings.minio_region or None,
         )
     return _client
 
@@ -43,7 +43,7 @@ def _get_signing_minio() -> Minio:
     Otherwise, reuse the internal client.
     """
     global _sign_client
-    public = (config.MEDIA_PUBLIC_MINIO_ENDPOINT or "").strip()
+    public = (settings.media_public_minio_endpoint or "").strip()
     if not public:
         return get_minio()
     if _sign_client is not None:
@@ -57,10 +57,10 @@ def _get_signing_minio() -> Minio:
         secure = u.scheme == "https"
     _sign_client = Minio(
         endpoint,
-        access_key=config.MINIO_ACCESS_KEY,
-        secret_key=config.MINIO_SECRET_KEY,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
         secure=secure,
-        region=config.MINIO_REGION or None,
+        region=settings.minio_region or None,
     )
     return _sign_client
 
@@ -79,7 +79,7 @@ def put_thumb(
     }
 
     client.put_object(
-        config.MINIO_BUCKET_THUMBS,
+        settings.minio_bucket_thumbs,
         key,
         data=BytesIO(data),
         length=len(data),
@@ -91,14 +91,14 @@ def put_thumb(
 
 def get_thumb(key: str):
     client = get_minio()
-    return client.get_object(config.MINIO_BUCKET_THUMBS, key)
+    return client.get_object(settings.minio_bucket_thumbs, key)
 
 
 def presign_thumb(key: str, expires: int | None = None) -> str:
     client = _get_signing_minio()
-    ttl = expires or config.MEDIA_PRESIGNED_EXPIRES
+    ttl = expires or settings.media_presigned_expires
     url = client.presigned_get_object(
-        config.MINIO_BUCKET_THUMBS, key, expires=timedelta(seconds=int(ttl))
+        settings.minio_bucket_thumbs, key, expires=timedelta(seconds=int(ttl))
     )
     return url
 
@@ -107,11 +107,11 @@ def delete_by_prefix(prefix: str):
     """Delete objects in the thumbs bucket under a prefix (e.g., library_id/)."""
     client = get_minio()
     objs = list(
-        client.list_objects(config.MINIO_BUCKET_THUMBS, prefix=prefix, recursive=True)
+        client.list_objects(settings.minio_bucket_thumbs, prefix=prefix, recursive=True)
     )
     if not objs:
         return
     delete_list = [DeleteObject(o.object_name) for o in objs if o.object_name]
-    for err in client.remove_objects(config.MINIO_BUCKET_THUMBS, delete_list):
+    for err in client.remove_objects(settings.minio_bucket_thumbs, delete_list):
         # Best-effort; could log err if needed
         _ = err

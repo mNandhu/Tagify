@@ -18,7 +18,7 @@ import time
 
 from pymongo import UpdateOne
 from pymongo.errors import AutoReconnect, NetworkTimeout, PyMongoError
-from ..core import config
+from ..core.config import settings
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
@@ -26,16 +26,10 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 def _make_thumb_bytes(path: Path) -> bytes | None:
     try:
         with PILImage.open(path) as img:
-            # Resize in-place while preserving aspect ratio. Longest edge = config.THUMB_MAX_SIZE
-            size = max(
-                16,
-                int(config.THUMB_MAX_SIZE)
-                if getattr(config, "THUMB_MAX_SIZE", 0)
-                else 1080,
-            )
+            size = max(16, settings.thumb_max_size)
             img.thumbnail((size, size))
             buf = BytesIO()
-            fmt = getattr(config, "THUMB_FORMAT", "webp").upper()
+            fmt = settings.thumb_format.upper()
             if fmt == "WEBP":
                 img.save(buf, format="WEBP", quality=85)
             else:
@@ -256,13 +250,13 @@ def scan_library_async(library_id: str, root: str) -> dict:
             # Scanning is I/O + CPU heavy and competes with API traffic and Mongo/MinIO pools,
             # so keep auto-concurrency conservative.
             default_workers = max(2, min(16, (cpu_count() or 4)))
-            cap = config.SCANNER_MAX_WORKERS
+            cap = settings.scanner_max_workers
             workers = (
                 default_workers if not cap or cap <= 0 else min(default_workers, cap)
             )
             progress_interval_s = max(
                 0.1,
-                float(getattr(config, "SCAN_PROGRESS_UPDATE_MS", 500) or 500) / 1000.0,
+                settings.scan_progress_update_ms / 1000.0,
             )
             last_progress_write = time.monotonic()
             mongo_ops: list[UpdateOne] = []
@@ -396,7 +390,7 @@ def scan_library_async(library_id: str, root: str) -> dict:
                         client = get_minio()
                         delete_list = [DeleteObject(key) for key in stale_thumb_keys]
                         for err in client.remove_objects(
-                            config.MINIO_BUCKET_THUMBS, delete_list
+                            settings.minio_bucket_thumbs, delete_list
                         ):
                             _ = err
 

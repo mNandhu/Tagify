@@ -4,7 +4,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from .api import libraries, images, tags, ai
 from .database.motor import acol, ensure_indexes_async
-from .core import config
+from .core.config import settings
 from .services.storage_minio import ensure_buckets
 from .services.ai_jobs import get_ai_job_manager, get_ai_settings
 from .services.ai_tagger import get_tagger_manager
@@ -73,7 +73,7 @@ async def _timing_and_rate_limit(request: Request, call_next):
     start = time.perf_counter()
 
     # Optional: per-process rate limiting for high-impact endpoints.
-    if config.RATE_LIMIT_ENABLED:
+    if settings.rate_limit_enabled:
         path = request.url.path
         if (
             request.method.upper() == "POST"
@@ -89,7 +89,7 @@ async def _timing_and_rate_limit(request: Request, call_next):
             count += 1
             _rl_state[key] = (window_start, count)
 
-            limit = max(1, int(getattr(config, "RATE_LIMIT_RESCAN_PER_MINUTE", 1)))
+            limit = max(1, settings.rate_limit_rescan_per_minute)
             if count > limit:
                 return JSONResponse(
                     status_code=429,
@@ -102,7 +102,7 @@ async def _timing_and_rate_limit(request: Request, call_next):
         return response
     finally:
         dur_ms = (time.perf_counter() - start) * 1000.0
-        slow_ms = int(getattr(config, "LOG_SLOW_REQUESTS_MS", 1000) or 1000)
+        slow_ms = settings.log_slow_requests_ms
         if dur_ms >= slow_ms:
             # Keep logs lightweight; uvicorn already logs access lines.
             logger.warning(
