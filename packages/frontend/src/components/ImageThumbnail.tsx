@@ -1,4 +1,5 @@
 import { cn } from "../lib/cn";
+import { resolveMediaUrl } from "../lib/media";
 import React, { useState, useEffect, useRef } from "react";
 
 // Global concurrent loading control
@@ -54,6 +55,9 @@ export function ImageThumbnail({
   const mountedRef = useRef(true);
   // Track the current load's slot token to ensure exactly-once cleanup per acquired slot.
   const currentSlotTokenRef = useRef<symbol | null>(null);
+  // Set the moment we enqueue, so a re-render during the async URL-resolve gap
+  // can't enqueue a second slot for the same src (which would leak a slot).
+  const enqueuedRef = useRef(false);
   const latestRef = useRef<{ src: string; shouldLoad: boolean }>({
     src,
     shouldLoad,
@@ -84,6 +88,7 @@ export function ImageThumbnail({
     // Release the old slot if src changed mid-load.
     releaseSlot(currentSlotTokenRef.current);
     currentSlotTokenRef.current = null;
+    enqueuedRef.current = false;
     setLoaded(false);
     setError(false);
     setAssignedSrc(null);
@@ -124,8 +129,9 @@ export function ImageThumbnail({
   // This avoids double-fetching (preload Image() + <img>) while still limiting concurrency.
   useEffect(() => {
     if (!shouldLoad || loaded || error) return;
-    if (assignedSrc) return; // already started
+    if (assignedSrc || enqueuedRef.current) return; // already started
 
+    enqueuedRef.current = true;
     const srcAtEnqueue = src;
     imageLoadQueue.enqueue(() => {
       // If component unmounted or state changed while waiting in the queue, skip.
@@ -144,7 +150,22 @@ export function ImageThumbnail({
       // Acquire a new token for this load attempt.
       const token = Symbol("loadToken");
       currentSlotTokenRef.current = token;
-      setAssignedSrc(srcAtEnqueue);
+      // Resolve the real media URL only now (lazy): in presigned-`url` mode
+      // this is a network call, so deferring it to load-time avoids firing one
+      // request per offscreen tile.
+      resolveMediaUrl(srcAtEnqueue)
+        .then((u) => {
+          if (!mountedRef.current || currentSlotTokenRef.current !== token) {
+            return;
+          }
+          setAssignedSrc(u);
+        })
+        .catch(() => {
+          if (!mountedRef.current || currentSlotTokenRef.current !== token) {
+            return;
+          }
+          setAssignedSrc(srcAtEnqueue);
+        });
     });
   }, [shouldLoad, loaded, error, assignedSrc, src]);
 

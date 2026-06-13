@@ -6,7 +6,6 @@ import from here, so connection kwargs and the index set are defined exactly onc
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
@@ -36,8 +35,10 @@ def image_indexes() -> list[IndexModel]:
     return [
         # Filter by library efficiently and keep sort by _id fast for pagination
         IndexModel([("library_id", ASCENDING), ("_id", DESCENDING)], name="lib_id__id"),
-        # Tag queries ($in / $all) benefit from a multikey index on tags
-        IndexModel([("tags", ASCENDING)], name="tags"),
+        # Tag queries ($in / $all) without a library_id: the multikey tags
+        # prefix serves the match and the trailing _id covers the desc sort,
+        # so pagination doesn't fall back to an in-memory sort.
+        IndexModel([("tags", ASCENDING), ("_id", DESCENDING)], name="tags__id"),
         # Optimize "no tags" filter via has_tags boolean combined with library and sort
         IndexModel(
             [("library_id", ASCENDING), ("has_tags", ASCENDING), ("_id", DESCENDING)],

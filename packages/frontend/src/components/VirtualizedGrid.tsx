@@ -61,8 +61,14 @@ export function VirtualizedGrid({
     const wrapper = wrapperRef.current;
     if (!scrollEl || !wrapper) return;
 
+    // Coalesce scroll events to one state update per animation frame.
+    let rafId = 0;
     const handleScroll = () => {
-      setScrollTop(scrollEl.scrollTop);
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        setScrollTop(scrollEl.scrollTop);
+      });
     };
 
     // Initial
@@ -79,6 +85,7 @@ export function VirtualizedGrid({
 
     scrollEl.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
+      if (rafId) cancelAnimationFrame(rafId);
       ro.disconnect();
       roScroll.disconnect();
       scrollEl.removeEventListener("scroll", handleScroll);

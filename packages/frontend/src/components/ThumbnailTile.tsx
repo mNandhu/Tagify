@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { ImageThumbnail } from "./ImageThumbnail";
-import { resolveMediaUrl } from "../lib/media";
 import type { ImageDoc } from "../lib/imageFilter";
 
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
@@ -28,27 +27,15 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
 }) {
-  const [thumbUrl, setThumbUrl] = useState<string>(
-    `/api/images/${encodeURIComponent(item._id)}/thumb`,
-  );
-
-  useEffect(() => {
-    let mounted = true;
-    const ep = `/api/images/${encodeURIComponent(item._id)}/thumb`;
-    resolveMediaUrl(ep)
-      .then((u) => {
-        if (mounted) setThumbUrl(u);
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, [item._id]);
+  // Endpoint only — ImageThumbnail resolves the real media URL lazily, once it
+  // decides to load (priority or in-viewport), so offscreen tiles don't each
+  // fire a resolve request up-front (matters in presigned-`url` mode).
+  const thumbEndpoint = `/api/images/${encodeURIComponent(item._id)}/thumb`;
 
   return (
     <div className="relative group h-full">
       <ImageThumbnail
-        src={thumbUrl}
+        src={thumbEndpoint}
         alt={item.path}
         width={item.width}
         height={item.height}

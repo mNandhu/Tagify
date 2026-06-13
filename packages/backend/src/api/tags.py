@@ -32,12 +32,13 @@ async def list_tags(include_manual: bool = False):
     pipeline = [
         {"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": False}},
         *([] if include_manual else [{"$match": image_tags.exclude_manual_match()}]),
-        {"$sort": {"_id": -1}},
+        # $max picks the newest image id (ids sort like _id desc) without a
+        # blocking pre-group $sort over every unwound tag occurrence.
         {
             "$group": {
                 "_id": "$tags",
                 "count": {"$sum": 1},
-                "sample_image_id": {"$first": "$_id"},
+                "sample_image_id": {"$max": "$_id"},
             }
         },
         {"$sort": {"count": -1}},

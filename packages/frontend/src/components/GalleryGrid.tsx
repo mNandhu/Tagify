@@ -24,7 +24,7 @@ export function GalleryGrid({
 }) {
   // Use virtualization for large datasets; prefer the standard grid otherwise
   // to keep scroll restoration simple.
-  const useVirtualization = items.length > 500;
+  const useVirtualization = items.length > 150;
 
   if (useVirtualization) {
     return (
