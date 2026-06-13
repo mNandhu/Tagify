@@ -1,6 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+from urllib.parse import quote
 from ..database.motor import acol
+from ..services.storage_minio import presign_thumb
+from ..core.config import settings
 import time
 import asyncio
 
@@ -11,7 +14,75 @@ _TAGS_CACHE: dict[str, tuple[float, list[dict]]] = {}
 _TAGS_TTL_SECONDS = 30.0
 _CACHE_LOCK = asyncio.Lock()
 
+# Per-tag mosaic samples: small, short-lived cache keyed by (tag, per).
+_SAMPLES_CACHE: dict[tuple[str, int], tuple[float, list[dict]]] = {}
+_SAMPLES_TTL_SECONDS = 60.0
+_SAMPLES_LOCK = asyncio.Lock()
+
 router = APIRouter()
+
+
+def _thumb_url(image_id: str, thumb_key: str | None) -> str:
+    """Mirror images.list: a presigned MinIO URL when enabled, else the
+    streaming /thumb route. Lets the grid render <img src> with no extra hop."""
+    presign_mode = settings.media_presigned_mode in ("redirect", "url")
+    if thumb_key and presign_mode:
+        return presign_thumb(thumb_key)
+    return f"/api/images/{quote(image_id, safe='')}/thumb"
+
+
+async def _samples_for_tag(tag: str, per: int) -> list[dict]:
+    now = time.time()
+    cache_key = (tag, per)
+    async with _SAMPLES_LOCK:
+        cached = _SAMPLES_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < _SAMPLES_TTL_SECONDS:
+            return cached[1]
+
+    proj = {"thumb_key": 1, "width": 1, "height": 1, "blurhash": 1}
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    # A pinned thumbnail (tag_meta) leads the mosaic when present.
+    meta = await acol("tag_meta").find_one({"_id": tag}, {"thumb_image_id": 1})
+    pinned = meta.get("thumb_image_id") if meta else None
+    if pinned:
+        doc = await acol("images").find_one({"_id": pinned, "tags": tag}, proj)
+        if doc:
+            seen.add(doc["_id"])
+            out.append(doc)
+
+    # $sample gives varied, non-duplicated images across tags — fixes common
+    # tags all showing the same most-recent image. Over-fetch to backfill any
+    # collision with the pinned image.
+    remaining = per - len(out)
+    if remaining > 0:
+        pipeline = [
+            {"$match": {"tags": tag}},
+            {"$sample": {"size": remaining + (1 if pinned else 0)}},
+            {"$project": proj},
+        ]
+        async for doc in acol("images").aggregate(pipeline):
+            if doc["_id"] in seen:
+                continue
+            seen.add(doc["_id"])
+            out.append(doc)
+            if len(out) >= per:
+                break
+
+    samples = [
+        {
+            "_id": str(d["_id"]),
+            "thumb_url": _thumb_url(str(d["_id"]), d.get("thumb_key")),
+            "width": d.get("width"),
+            "height": d.get("height"),
+            "blurhash": d.get("blurhash"),
+        }
+        for d in out
+    ]
+    async with _SAMPLES_LOCK:
+        _SAMPLES_CACHE[cache_key] = (now, samples)
+    return samples
 
 
 class TagThumbnailSet(BaseModel):
@@ -69,6 +140,22 @@ async def list_tags(include_manual: bool = False):
     return result
 
 
+@router.get("/samples")
+async def tag_samples(
+    tags: list[str] = Query(default=[]),
+    per: int = Query(default=4, ge=1, le=6),
+):
+    """Up to `per` distinct, randomly-sampled images per tag for the mosaic
+    cards. Bounded (caller passes only the visible tags) and cached."""
+    if not tags:
+        return {}
+    if len(tags) > 200:
+        raise HTTPException(status_code=422, detail="too many tags (max 200)")
+    tags = validate_tags(tags, max_count=200)
+    results = await asyncio.gather(*[_samples_for_tag(t, per) for t in tags])
+    return {tag: samples for tag, samples in zip(tags, results)}
+
+
 @router.post("/thumbnail/{tag:path}")
 async def set_tag_thumbnail(tag: str, body: TagThumbnailSet):
     tag = validate_tags([tag])[0]
@@ -85,6 +172,7 @@ async def set_tag_thumbnail(tag: str, body: TagThumbnailSet):
     )
     async with _CACHE_LOCK:
         _TAGS_CACHE.clear()
+        _SAMPLES_CACHE.clear()
     return {"tag": tag, "thumb_image_id": image_id}
 
 
@@ -94,6 +182,7 @@ async def clear_tag_thumbnail(tag: str):
     await acol("tag_meta").delete_one({"_id": tag})
     async with _CACHE_LOCK:
         _TAGS_CACHE.clear()
+        _SAMPLES_CACHE.clear()
     return {"tag": tag, "cleared": True}
 
 
@@ -104,6 +193,7 @@ async def apply_tags(image_id: str, tags: list[str]):
     # Invalidate cache
     async with _CACHE_LOCK:
         _TAGS_CACHE.clear()
+        _SAMPLES_CACHE.clear()
     return {"image_id": image_id, "added": added}
 
 
@@ -113,6 +203,7 @@ async def remove_tags(image_id: str, tags: list[str]):
     await image_tags.remove_tags(image_id, tags)
     async with _CACHE_LOCK:
         _TAGS_CACHE.clear()
+        _SAMPLES_CACHE.clear()
     return {"image_id": image_id, "removed": tags}
 
 
