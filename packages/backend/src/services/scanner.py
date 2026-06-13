@@ -4,6 +4,7 @@ from pathlib import Path
 from io import BytesIO
 from PIL import Image as PILImage
 from ..database.mongo import col
+from . import image_tags
 from .storage_minio import put_thumb
 import hashlib
 import mimetypes
@@ -81,64 +82,37 @@ def _retry(
     raise last
 
 
-def scan_library(library_id: str, root: str) -> int:
-    root_path = Path(root)
-    count = 0
-    images_col = col("images")
-    for dirpath, _, filenames in os.walk(root_path):
-        for fname in filenames:
-            p = Path(dirpath) / fname
-            if not is_image(p):
-                continue
-            try:
-                stat = p.stat()
-                width = height = 0
-                try:
-                    with PILImage.open(p) as img:
-                        width, height = img.size
-                except Exception:
-                    # Best-effort: keep indexing even if image metadata read fails.
-                    pass
-                # relative path within library
-                rel = str(p.relative_to(root_path))
-                # Generate and upload thumbnail to MinIO
-                thumb_bytes = _make_thumb_bytes(p)
-                thumb_key = None
-                if thumb_bytes is not None:
-                    try:
-                        thumb_key = put_thumb(
-                            library_id, f"{library_id}:{rel}", thumb_bytes
-                        )
-                    except Exception:
-                        thumb_key = None
-                doc = {
-                    "_id": f"{library_id}:{rel}",
-                    "library_id": library_id,
-                    "path": str(p),
-                    "size": stat.st_size,
-                    "width": width,
-                    "height": height,
-                    "ctime": stat.st_ctime,
-                    "mtime": stat.st_mtime,
-                    "thumb_key": thumb_key,
-                }
-                images_col.update_one(
-                    {"_id": doc["_id"]},
-                    {
-                        "$set": doc,
-                        "$setOnInsert": {
-                            "tags": [],
-                            "has_tags": False,
-                            "has_ai_tags": False,
-                        },
-                    },
-                    upsert=True,
-                )
-                count += 1
-            except Exception:
-                # continue on corrupt files
-                continue
-    return count
+def image_id_for(library_id: str, root_path: Path, p: Path) -> str:
+    """Stable image id: ``{library_id}:{path-relative-to-library-root}``."""
+    return f"{library_id}:{p.relative_to(root_path)}"
+
+
+def upsert_image_op(doc: dict) -> UpdateOne:
+    """Upsert that refreshes file metadata but seeds tag-state only on insert."""
+    return UpdateOne(
+        {"_id": doc["_id"]},
+        {"$set": doc, "$setOnInsert": image_tags.initial_tag_fields()},
+        upsert=True,
+    )
+
+
+def reconcile_stale(
+    discovered_ids: set[str], existing_docs: list[dict]
+) -> tuple[list[str], list[str]]:
+    """Given the ids seen this scan and the docs already in the DB, return
+    ``(stale_image_ids, stale_thumb_keys)`` — images that no longer exist on disk.
+
+    Pure set math, extracted from the scan loop because it *deletes* images and so
+    is the highest-risk part to get wrong.
+    """
+    stale_ids: list[str] = []
+    stale_thumb_keys: list[str] = []
+    for doc in existing_docs:
+        if doc["_id"] not in discovered_ids:
+            stale_ids.append(doc["_id"])
+            if doc.get("thumb_key"):
+                stale_thumb_keys.append(doc["thumb_key"])
+    return stale_ids, stale_thumb_keys
 
 
 # --- Async scanning with progress tracking ---
@@ -173,8 +147,7 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
         except Exception:
             # Best-effort: keep indexing even if image metadata read fails.
             pass
-        rel = str(p.relative_to(root_path))
-        image_id = f"{library_id}:{rel}"
+        image_id = image_id_for(library_id, root_path, p)
         # Generate a thumbnail in-memory for MinIO
         thumb_bytes: bytes | None = _make_thumb_bytes(p)
 
@@ -263,8 +236,9 @@ def scan_library_async(library_id: str, root: str) -> dict:
                     if is_image(p):
                         files.append(p)
                         try:
-                            rel = str(p.relative_to(root_path))
-                            discovered_image_ids.add(f"{library_id}:{rel}")
+                            discovered_image_ids.add(
+                                image_id_for(library_id, root_path, p)
+                            )
                         except Exception:
                             # Best-effort; path math can fail on unusual inputs
                             pass
@@ -341,20 +315,7 @@ def scan_library_async(library_id: str, root: str) -> dict:
                         try:
                             res = fut.result()
                             if isinstance(res, _ScanResult) and res.ok and res.doc:
-                                mongo_ops.append(
-                                    UpdateOne(
-                                        {"_id": res.doc["_id"]},
-                                        {
-                                            "$set": res.doc,
-                                            "$setOnInsert": {
-                                                "tags": [],
-                                                "has_tags": False,
-                                                "has_ai_tags": False,
-                                            },
-                                        },
-                                        upsert=True,
-                                    )
-                                )
+                                mongo_ops.append(upsert_image_op(res.doc))
 
                                 # Flush periodically to keep memory bounded
                                 if len(mongo_ops) >= batch_size:
@@ -418,15 +379,9 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 )
             )
 
-            stale_image_ids = []
-            stale_thumb_keys = []
-
-            for doc in existing_docs:
-                existing_id = doc["_id"]
-                if existing_id not in discovered_image_ids:
-                    stale_image_ids.append(existing_id)
-                    if doc.get("thumb_key"):
-                        stale_thumb_keys.append(doc["thumb_key"])
+            stale_image_ids, stale_thumb_keys = reconcile_stale(
+                discovered_image_ids, existing_docs
+            )
 
             # Remove stale images from MongoDB
             if stale_image_ids:

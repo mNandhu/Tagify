@@ -102,6 +102,55 @@ def _load_labels_from_csv(csv_path: str) -> LabelIndex:
     )
 
 
+def select_tags(
+    labels: LabelIndex,
+    preds: np.ndarray,
+    *,
+    general_thresh: float,
+    character_thresh: float,
+    general_mcut: bool = False,
+    character_mcut: bool = False,
+    max_general: int = 80,
+    max_character: int = 40,
+) -> dict[str, Any]:
+    """Turn raw model probabilities into rating + thresholded tag lists.
+
+    Pure post-processing (threshold, optional MCUT, sort, cap) split out of the
+    ONNX session so the tagging logic can be unit-tested with a fake ``preds``
+    array and a small :class:`LabelIndex` — no onnxruntime required.
+    """
+    scored = list(zip(labels.names, preds.astype(float)))
+
+    rating = dict(scored[i] for i in labels.rating_idx)
+
+    general = [scored[i] for i in labels.general_idx]
+    if general_mcut and general:
+        general_thresh = mcut_threshold(np.array([p for _, p in general]))
+    general = [(t, p) for (t, p) in general if p > general_thresh]
+    general.sort(key=lambda x: x[1], reverse=True)
+    if max_general > 0:
+        general = general[: int(max_general)]
+
+    character = [scored[i] for i in labels.character_idx]
+    if character_mcut and character:
+        character_thresh = max(
+            0.15, mcut_threshold(np.array([p for _, p in character]))
+        )
+    character = [(t, p) for (t, p) in character if p > character_thresh]
+    character.sort(key=lambda x: x[1], reverse=True)
+    if max_character > 0:
+        character = character[: int(max_character)]
+
+    caption = ", ".join([t for t, _ in general])
+
+    return {
+        "caption": caption,
+        "rating": rating,
+        "general_tags": general,
+        "character_tags": character,
+    }
+
+
 def _get_hf_endpoint() -> str:
     hf_endpoint = os.getenv("HF_ENDPOINT", "https://huggingface.co")
     if not hf_endpoint.startswith("https://"):
@@ -471,36 +520,16 @@ class WDTagger:
 
         preds = self._session.run([output_name], {input_name: input_tensor})[0][0]
 
-        labels = list(zip(self._labels.names, preds.astype(float)))
-
-        rating = dict(labels[i] for i in self._labels.rating_idx)
-
-        general = [labels[i] for i in self._labels.general_idx]
-        if general_mcut and general:
-            general_thresh = mcut_threshold(np.array([p for _, p in general]))
-        general = [(t, p) for (t, p) in general if p > general_thresh]
-        general.sort(key=lambda x: x[1], reverse=True)
-        if max_general > 0:
-            general = general[: int(max_general)]
-
-        character = [labels[i] for i in self._labels.character_idx]
-        if character_mcut and character:
-            character_thresh = max(
-                0.15, mcut_threshold(np.array([p for _, p in character]))
-            )
-        character = [(t, p) for (t, p) in character if p > character_thresh]
-        character.sort(key=lambda x: x[1], reverse=True)
-        if max_character > 0:
-            character = character[: int(max_character)]
-
-        caption = ", ".join([t for t, _ in general])
-
-        return {
-            "caption": caption,
-            "rating": rating,
-            "general_tags": general,
-            "character_tags": character,
-        }
+        return select_tags(
+            self._labels,
+            preds,
+            general_thresh=general_thresh,
+            character_thresh=character_thresh,
+            general_mcut=general_mcut,
+            character_mcut=character_mcut,
+            max_general=max_general,
+            max_character=max_character,
+        )
 
 
 class TaggerManager:

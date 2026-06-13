@@ -8,91 +8,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..database.motor import acol
+from . import image_tags
+from .ai_settings import DEFAULT_AI_SETTINGS, get_ai_settings, update_ai_settings
 from .ai_tagger import get_tagger_manager
 
-
-DEFAULT_AI_SETTINGS: dict[str, Any] = {
-    "model_repo": "SmilingWolf/wd-vit-tagger-v3",
-    "general_thresh": 0.35,
-    "character_thresh": 0.85,
-    "general_mcut": False,
-    "character_mcut": False,
-    "max_general": 80,
-    "max_character": 40,
-    "idle_unload_s": 300,
-    "cache_dir": ".cache/tagify/models",
-}
-
-
-def _normalize_rating_label(raw: str) -> str:
-    """Normalize rating labels to the canonical vocabulary used by the API/UI."""
-    r = (raw or "").strip().lower()
-    if r in ("", "-", "none"):
-        return "-"
-    if r in ("general", "safe"):
-        return "general"
-    if r in ("sensitive", "questionable", "explicit"):
-        return r
-    return "-"
-
-
-async def get_ai_settings() -> dict[str, Any]:
-    settings = acol("settings")
-    doc = await settings.find_one({"_id": "ai"})
-    if not doc:
-        await settings.insert_one({"_id": "ai", **DEFAULT_AI_SETTINGS})
-        return dict(DEFAULT_AI_SETTINGS)
-
-    merged = dict(DEFAULT_AI_SETTINGS)
-    for k, v in doc.items():
-        if k == "_id":
-            continue
-        merged[k] = v
-    return merged
-
-
-async def update_ai_settings(patch: dict[str, Any]) -> dict[str, Any]:
-    allowed = set(DEFAULT_AI_SETTINGS.keys())
-    clean: dict[str, Any] = {k: v for k, v in patch.items() if k in allowed}
-
-    if "idle_unload_s" in clean:
-        try:
-            clean["idle_unload_s"] = max(0, int(clean["idle_unload_s"]))
-        except Exception:
-            clean.pop("idle_unload_s", None)
-
-    if "general_thresh" in clean:
-        clean["general_thresh"] = float(clean["general_thresh"])
-    if "character_thresh" in clean:
-        clean["character_thresh"] = float(clean["character_thresh"])
-
-    if "max_general" in clean:
-        clean["max_general"] = max(0, int(clean["max_general"]))
-    if "max_character" in clean:
-        clean["max_character"] = max(0, int(clean["max_character"]))
-
-    if "model_repo" in clean:
-        clean["model_repo"] = str(clean["model_repo"]).strip()
-
-    settings = acol("settings")
-
-    # IMPORTANT: MongoDB rejects updates that try to modify the same field in
-    # multiple operators (e.g. $set and $setOnInsert). Since DEFAULT_AI_SETTINGS
-    # contains all fields, we must omit any keys present in $set from $setOnInsert.
-    on_insert_defaults = {
-        k: v for k, v in DEFAULT_AI_SETTINGS.items() if k not in clean
-    }
-    update_doc: dict[str, Any] = {"$setOnInsert": {"_id": "ai", **on_insert_defaults}}
-    if clean:
-        update_doc["$set"] = clean
-
-    await settings.update_one({"_id": "ai"}, update_doc, upsert=True)
-
-    # Apply runtime knobs immediately.
-    if "idle_unload_s" in clean:
-        get_tagger_manager().set_idle_unload_s(int(clean["idle_unload_s"]))
-
-    return await get_ai_settings()
+__all__ = [
+    "DEFAULT_AI_SETTINGS",
+    "get_ai_settings",
+    "update_ai_settings",
+    "AIJobManager",
+    "get_ai_job_manager",
+]
 
 
 @dataclass
@@ -284,8 +210,7 @@ class AIJobManager:
         return await asyncio.to_thread(_read)
 
     async def _tag_one(self, *, image_id: str, settings: dict[str, Any]) -> None:
-        images = acol("images")
-        doc = await images.find_one({"_id": image_id}, {"path": 1})
+        doc = await image_tags.find_image(image_id, {"path": 1})
         if not doc:
             raise RuntimeError("image not found")
         path = doc.get("path")
@@ -325,16 +250,8 @@ class AIJobManager:
                 )[0]
             except Exception:
                 rating_label = "-"
-        rating_label = _normalize_rating_label(str(rating_label))
+        rating_label = image_tags.normalize_rating(str(rating_label)) or "-"
 
-        # Persist AI meta and REPLACE prior AI tags (preserving manual tags).
-        #
-        # `tags` stores both:
-        # - AI tags: primary, unprefixed
-        # - Manual tags: stored as `manual:<tag>`
-        #
-        # When re-running AI tagging, we want to replace the old AI tags with the
-        # new ones (not accumulate indefinitely).
         now = time.time()
         ai_meta: dict[str, Any] = {
             "model_repo": model_repo,
@@ -347,39 +264,10 @@ class AIJobManager:
             "updated_at": now,
         }
 
-        # Use a pipeline update so we can rebuild tags based on existing manual tags.
-        update_pipeline: list[dict[str, Any]] = [
-            {
-                "$set": {
-                    "ai": ai_meta,
-                    "rating": rating_label,
-                    "__manual_tags": {
-                        "$filter": {
-                            "input": {"$ifNull": ["$tags", []]},
-                            "as": "t",
-                            "cond": {
-                                "$regexMatch": {"input": "$$t", "regex": r"^manual:"}
-                            },
-                        }
-                    },
-                }
-            },
-            {
-                "$set": {
-                    "tags": {"$concatArrays": ["$__manual_tags", ai_tags]},
-                    "has_ai_tags": bool(ai_tags),
-                    "has_tags": {
-                        "$gt": [
-                            {"$size": {"$concatArrays": ["$__manual_tags", ai_tags]}},
-                            0,
-                        ]
-                    },
-                }
-            },
-            {"$unset": "__manual_tags"},
-        ]
-
-        await images.update_one({"_id": image_id}, update_pipeline)
+        # Replace prior AI tags with the new set, preserving manual tags.
+        await image_tags.replace_ai(
+            image_id, ai_tags=ai_tags, ai_meta=ai_meta, rating=rating_label
+        )
 
 
 _ai_job_manager: AIJobManager | None = None

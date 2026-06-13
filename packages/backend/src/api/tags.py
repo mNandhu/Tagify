@@ -5,6 +5,7 @@ import time
 import asyncio
 
 from ._utils import validate_tags
+from ..services import image_tags
 
 _TAGS_CACHE: dict[str, tuple[float, list[dict]]] = {}
 _TAGS_TTL_SECONDS = 30.0
@@ -30,11 +31,7 @@ async def list_tags(include_manual: bool = False):
     # By default we exclude manual tags from the tag browser; Tags view can opt-in.
     pipeline = [
         {"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": False}},
-        *(
-            []
-            if include_manual
-            else [{"$match": {"tags": {"$not": {"$regex": r"^manual:"}}}}]
-        ),
+        *([] if include_manual else [{"$match": image_tags.exclude_manual_match()}]),
         {"$sort": {"_id": -1}},
         {
             "$group": {
@@ -101,34 +98,18 @@ async def clear_tag_thumbnail(tag: str):
 
 @router.post("/apply/{image_id}")
 async def apply_tags(image_id: str, tags: list[str]):
-    # Manual tags are stored with a `manual:` prefix so they can be distinguished
-    # from AI-generated (primary) tags.
-    tags = [
-        (t if t.startswith("manual:") else f"manual:{t}") for t in validate_tags(tags)
-    ]
-    await acol("images").update_one(
-        {"_id": image_id},
-        {
-            "$addToSet": {"tags": {"$each": tags}},
-            "$set": {"has_tags": True},
-        },
-    )
+    added = [image_tags.to_manual(t) for t in validate_tags(tags)]
+    await image_tags.apply_manual(image_id, validate_tags(tags))
     # Invalidate cache
     async with _CACHE_LOCK:
         _TAGS_CACHE.clear()
-    return {"image_id": image_id, "added": tags}
+    return {"image_id": image_id, "added": added}
 
 
 @router.post("/remove/{image_id}")
 async def remove_tags(image_id: str, tags: list[str]):
     tags = validate_tags(tags)
-    # Pull tags; if array becomes empty, set has_tags False
-    images = acol("images")
-    await images.update_one({"_id": image_id}, {"$pull": {"tags": {"$in": tags}}})
-    doc = await images.find_one({"_id": image_id}, {"tags": 1})
-    if doc is not None:
-        t = doc.get("tags") or []
-        await images.update_one({"_id": image_id}, {"$set": {"has_tags": bool(t)}})
+    await image_tags.remove_tags(image_id, tags)
     async with _CACHE_LOCK:
         _TAGS_CACHE.clear()
     return {"image_id": image_id, "removed": tags}

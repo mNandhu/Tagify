@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..database.motor import acol
+from ..services import image_tags
 
 from ..services.ai_jobs import (
     get_ai_job_manager,
@@ -147,37 +147,8 @@ async def ai_clear_all_ai_tags():
 
     Keeps manual tags (manual: prefix).
     """
-    images = acol("images")
-    # Pipeline update so we can filter tags + recompute has_tags based on remaining manual tags.
-    update_pipeline = [
-        {
-            "$set": {
-                "tags": {
-                    "$filter": {
-                        "input": "$tags",
-                        "as": "t",
-                        "cond": {
-                            "$regexMatch": {
-                                "input": "$$t",
-                                "regex": r"^manual:",
-                            }
-                        },
-                    }
-                }
-            }
-        },
-        {
-            "$set": {
-                "has_ai_tags": False,
-                "has_tags": {"$gt": [{"$size": "$tags"}, 0]},
-                "rating": "-",
-            }
-        },
-        {"$unset": "ai"},
-    ]
-
-    res = await images.update_many({}, update_pipeline)
-    return {"matched": res.matched_count, "modified": res.modified_count}
+    matched, modified = await image_tags.clear_ai_all()
+    return {"matched": matched, "modified": modified}
 
 
 @router.get("/jobs")

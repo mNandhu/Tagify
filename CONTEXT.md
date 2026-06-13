@@ -1,0 +1,35 @@
+# Tagify — Domain Context
+
+Glossary of the core domain concepts and the modules that own them. Keep names
+here in sync with the code; when a module is named after a concept, the concept
+belongs in this file.
+
+## Concepts
+
+- **Library** — a root directory of images registered for indexing. Owns scan
+  progress state. (`api/libraries.py`, `models/library.py`)
+- **Image** — one indexed file. Id is `{library_id}:{path-relative-to-root}`.
+- **Tag** — a label on an image. Two kinds share one `tags` array:
+  - **AI tag** — produced by the tagger, stored unprefixed (`1girl`).
+  - **Manual tag** — user-applied, stored with a `manual:` prefix.
+- **Tag-state** — the invariant binding `tags` to its summary flags:
+  `has_tags` (any tag) and `has_ai_tags` (any non-manual tag), plus `rating`.
+  Owned by `services/image_tags.py` — the single place that mutates tags and
+  recomputes the flags, so they can never drift.
+- **Rating** — one of `-`, `general`, `sensitive`, `questionable`, `explicit`.
+  Normalized in one place (`image_tags.normalize_rating`).
+- **Scan** — discovering a library's files, indexing them, and **reconciling**
+  away images that vanished from disk. (`services/scanner.py`;
+  `reconcile_stale` is the pure deletion-decision step.)
+- **Thumbnail** — a WebP render of an image stored in MinIO. (`storage_minio.py`)
+- **AI Job** — a queued, cancellable batch tagging unit. (`services/ai_jobs.py`)
+- **Tagger / Model** — the WD ONNX model. Lifecycle (download/load/idle-unload)
+  is separate from the pure inference step `select_tags`. (`services/ai_tagger.py`)
+- **AI Settings** — persisted tagger knobs; validation is pure
+  (`ai_settings.clean_settings_patch`). (`services/ai_settings.py`)
+
+## Persistence
+
+- One Mongo index/connection definition, shared by the sync and async clients:
+  `database/schema.py`. The sync (`mongo.py`) and async (`motor.py`) clients are
+  thin wrappers over it.

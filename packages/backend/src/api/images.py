@@ -10,26 +10,9 @@ from ..services.storage_minio import (
     get_thumb,
     presign_thumb,
 )
+from ..services import image_tags
+from ..services.image_tags import find_image as _find_image_doc
 from ..core import config
-
-
-async def _find_image_doc(image_id: str, projection: dict | None = None):
-    images = acol("images")
-    doc = await images.find_one({"_id": image_id}, projection)
-    if doc:
-        return doc
-    # Tolerate Windows backslash vs forward slash mismatches
-    if "/" in image_id:
-        alt = image_id.replace("/", "\\")
-        doc = await images.find_one({"_id": alt}, projection)
-        if doc:
-            return doc
-    if "\\" in image_id:
-        alt = image_id.replace("\\", "/")
-        doc = await images.find_one({"_id": alt}, projection)
-        if doc:
-            return doc
-    return None
 
 
 router = APIRouter()
@@ -217,15 +200,8 @@ async def set_image_rating(image_id: str, body: RatingPatch):
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
 
-    raw = (body.rating or "").strip().lower()
-    # Accept a few aliases; store canonical values.
-    if raw in ("", "-", "none"):
-        rating = "-"
-    elif raw in ("general", "safe"):
-        rating = "general"
-    elif raw in ("sensitive", "questionable", "explicit"):
-        rating = raw
-    else:
+    rating = image_tags.normalize_rating(body.rating)
+    if rating is None:
         raise HTTPException(
             status_code=422,
             detail="rating must be one of '-', 'general', 'sensitive', 'questionable', 'explicit'",
