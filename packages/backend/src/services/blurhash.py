@@ -38,11 +38,12 @@ def _sign_pow(v: float, exp: float) -> float:
     return math.copysign(abs(v) ** exp, v)
 
 
-def encode(rgb: np.ndarray, components_x: int = 4, components_y: int = 3) -> str:
+def encode(rgb: np.ndarray, components_x: int = 6, components_y: int = 4) -> str:
     """Encode an HxWx3 uint8 sRGB array to a BlurHash string.
 
     `components_x`/`components_y` are the number of basis functions per axis
-    (1..9); 4x3 is a good default for typical photos.
+    (1..9); 6x4 gives a noticeably more detailed preview than the 4x3 minimum
+    at a still-tiny (~52 char) payload.
     """
     cx = max(1, min(9, components_x))
     cy = max(1, min(9, components_y))

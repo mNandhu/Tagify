@@ -3,15 +3,17 @@ import { resolveMediaUrl } from "../lib/media";
 import { decode } from "blurhash";
 import React, { useState, useEffect, useRef } from "react";
 
-// Decodes a BlurHash to a small canvas, scaled up by CSS to fill the tile.
-// 32px is plenty — BlurHash is low-frequency, so a larger canvas only costs
-// decode time without looking sharper.
-const BLUR_PX = 32;
+// Decodes a BlurHash to a canvas, scaled up by CSS to fill the tile. Bigger
+// than the bare minimum so the upscaled preview reads as a soft photo rather
+// than a few colour blobs; still cheap since BlurHash decode is O(px * comps).
+const BLUR_PX = 64;
 
 const BlurhashCanvas = React.memo(function BlurhashCanvas({
   hash,
+  loaded,
 }: {
   hash: string;
+  loaded: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -34,7 +36,10 @@ const BlurhashCanvas = React.memo(function BlurhashCanvas({
       width={BLUR_PX}
       height={BLUR_PX}
       aria-hidden="true"
-      className="absolute inset-0 h-full w-full rounded"
+      className={cn(
+        "absolute inset-0 h-full w-full rounded transition-opacity duration-500 ease-out",
+        loaded ? "opacity-0" : "opacity-100"
+      )}
     />
   );
 });
@@ -226,20 +231,20 @@ export function ImageThumbnail({
       )}
       onClick={onClick}
     >
-      {/* Placeholder while loading: a decoded BlurHash preview when we have
-          one (so there's no grey "loading" state), else a shimmer skeleton. */}
-      {!loaded && !error &&
-        (blurhash ? (
-          <BlurhashCanvas hash={blurhash} />
-        ) : (
-          <div
-            className={cn(
-              "absolute inset-0 rounded bg-neutral-800/60 animate-pulse",
-              "motion-reduce:animate-none"
-            )}
-            aria-hidden="true"
-          />
-        ))}
+      {/* Placeholder: a decoded BlurHash preview when we have one (no grey
+          "loading" state), else a shimmer skeleton. The BlurHash stays mounted
+          across load so it can cross-fade out as the image fades in, instead of
+          popping. */}
+      {!error && blurhash && <BlurhashCanvas hash={blurhash} loaded={loaded} />}
+      {!loaded && !error && !blurhash && (
+        <div
+          className={cn(
+            "absolute inset-0 rounded bg-neutral-800/60 animate-pulse",
+            "motion-reduce:animate-none"
+          )}
+          aria-hidden="true"
+        />
+      )}
 
       {/* Error state */}
       {error && (
@@ -267,8 +272,10 @@ export function ImageThumbnail({
           releaseSlot(currentSlotTokenRef.current);
         }}
         className={cn(
-          "h-auto w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]",
-          "transition-opacity duration-300",
+          "h-auto w-full object-cover group-hover:scale-[1.02]",
+          // Animate both the load-in fade and the hover zoom; 500ms fade
+          // matches the BlurHash cross-fade so they dissolve together.
+          "transition-[opacity,transform] duration-500 ease-out",
           loaded && !error ? "opacity-100" : "opacity-0"
         )}
         loading="lazy"
