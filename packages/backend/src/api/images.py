@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import mimetypes
 import anyio
 import os
+from urllib.parse import quote
 
 from ..database.motor import acol
 from ..services.storage_minio import (
@@ -70,8 +71,10 @@ async def list_images(
             q["has_ai_tags"] = False
     if library_id:
         q["library_id"] = library_id
-    # Projection keeps payload small for the grid
-    projection = {"_id": 1, "path": 1, "width": 1, "height": 1}
+    # Projection keeps payload small for the grid. thumb_key is included so we
+    # can hand the grid a ready-to-use thumb_url and skip the per-tile round
+    # trip through /thumb (a 307 redirect or a resolve request).
+    projection = {"_id": 1, "path": 1, "width": 1, "height": 1, "thumb_key": 1}
     # Cursor-based pagination: when cursor is provided, fetch items with _id < cursor (descending order)
     if cursor:
         q["_id"] = {"$lt": cursor}
@@ -82,8 +85,17 @@ async def list_images(
         )
         cur = cur.skip(offset)
     items = await cur.to_list(length=limit)
+    presign_mode = settings.media_presigned_mode in ("redirect", "url")
     for it in items:
         it["_id"] = str(it["_id"])  # string id
+        # Embed a directly-usable thumbnail URL so the grid renders <img src>
+        # without a second request. In presigned modes this is the MinIO URL
+        # (presign is local HMAC, no I/O); otherwise it's the streaming route.
+        thumb_key = it.pop("thumb_key", None)
+        if thumb_key and presign_mode:
+            it["thumb_url"] = presign_thumb(thumb_key)
+        else:
+            it["thumb_url"] = f"/api/images/{quote(it['_id'], safe='')}/thumb"
     return items
 
 

@@ -10,6 +10,10 @@ export type ImageDoc = {
   width?: number;
   height?: number;
   size?: number;
+  // Ready-to-use thumbnail URL from the list payload: a presigned MinIO URL
+  // (presigned modes) or the streaming route. Lets the grid render <img src>
+  // with no per-tile resolve request. See api/images.list_images.
+  thumb_url?: string;
   tags?: string[];
   rating?: string;
   ai?: {

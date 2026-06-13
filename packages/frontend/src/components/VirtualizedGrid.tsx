@@ -145,8 +145,10 @@ export function VirtualizedGrid({
     const viewportTop = Math.max(0, scrollTop - wrapperTop);
     const viewportBottom = viewportTop + viewportHeight;
 
-    // Overscan to reduce pop-in while scrolling.
-    const overscanPx = 800;
+    // Overscan to reduce pop-in while scrolling. Must exceed the tile's
+    // load-ahead rootMargin (~1200px) so rows mount before they start loading,
+    // letting thumbs decode before they scroll into view.
+    const overscanPx = 1600;
     const startY = Math.max(0, viewportTop - overscanPx);
     const endY = viewportBottom + overscanPx;
 

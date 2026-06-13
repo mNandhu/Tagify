@@ -27,15 +27,17 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
 }) {
-  // Endpoint only — ImageThumbnail resolves the real media URL lazily, once it
-  // decides to load (priority or in-viewport), so offscreen tiles don't each
-  // fire a resolve request up-front (matters in presigned-`url` mode).
-  const thumbEndpoint = `/api/images/${encodeURIComponent(item._id)}/thumb`;
+  // Prefer the ready-to-use URL embedded in the list payload (no per-tile
+  // resolve request). Fall back to the endpoint, which ImageThumbnail resolves
+  // lazily once it decides to load.
+  const embedded = item.thumb_url;
+  const src = embedded ?? `/api/images/${encodeURIComponent(item._id)}/thumb`;
 
   return (
     <div className="relative group h-full">
       <ImageThumbnail
-        src={thumbEndpoint}
+        src={src}
+        preResolved={!!embedded}
         alt={item.path}
         width={item.width}
         height={item.height}

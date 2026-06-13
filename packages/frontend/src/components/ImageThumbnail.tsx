@@ -6,7 +6,7 @@ import React, { useState, useEffect, useRef } from "react";
 class ImageLoadQueue {
   private queue: Array<() => void> = [];
   private loading = 0;
-  private readonly maxConcurrent = 8; // Limit concurrent loads
+  private readonly maxConcurrent = 12; // Limit concurrent loads
 
   enqueue(loadFn: () => void) {
     if (this.loading < this.maxConcurrent) {
@@ -37,6 +37,7 @@ export function ImageThumbnail({
   width,
   height,
   priority = false,
+  preResolved = false,
 }: {
   src: string;
   selected?: boolean;
@@ -45,6 +46,7 @@ export function ImageThumbnail({
   width?: number;
   height?: number;
   priority?: boolean; // High priority for above-the-fold images
+  preResolved?: boolean; // src is already a usable URL; skip resolveMediaUrl
 }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -116,8 +118,10 @@ export function ImageThumbnail({
         });
       },
       {
-        rootMargin: "50px", // Start loading when within 50px of viewport
-        threshold: 0.1,
+        // Start loading ~1.5 screens early so thumbs are decoded by the time
+        // they scroll into view — no skeleton flash on normal scrolling.
+        rootMargin: "1200px 0px",
+        threshold: 0.01,
       }
     );
 
@@ -150,6 +154,11 @@ export function ImageThumbnail({
       // Acquire a new token for this load attempt.
       const token = Symbol("loadToken");
       currentSlotTokenRef.current = token;
+      // src already usable (embedded in the list payload) — assign directly.
+      if (preResolved) {
+        setAssignedSrc(srcAtEnqueue);
+        return;
+      }
       // Resolve the real media URL only now (lazy): in presigned-`url` mode
       // this is a network call, so deferring it to load-time avoids firing one
       // request per offscreen tile.
@@ -167,7 +176,7 @@ export function ImageThumbnail({
           setAssignedSrc(srcAtEnqueue);
         });
     });
-  }, [shouldLoad, loaded, error, assignedSrc, src]);
+  }, [shouldLoad, loaded, error, assignedSrc, src, preResolved]);
 
   return (
     <button

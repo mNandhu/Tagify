@@ -12,7 +12,7 @@ def test_image_indexes_have_expected_names():
     assert _names(schema.image_indexes()) == sorted(
         [
             "lib_id__id",
-            "tags",
+            "tags__id",
             "lib_id_has_tags__id",
             "lib_id_tags__id",
             "lib_id_has_ai_tags__id",
