@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { ThumbnailTile } from "./ThumbnailTile";
 import {
   columnWidth,
@@ -8,6 +8,16 @@ import {
 import type { ImageDoc } from "../lib/imageFilter";
 
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
+
+// One positioned tile in the masonry layout (pixel coords within the wrapper).
+type Tile = {
+  item: ImageDocWithDims;
+  index: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
 
 interface VirtualizedGridProps {
   items: ImageDocWithDims[];
@@ -92,77 +102,87 @@ export function VirtualizedGrid({
     };
   }, [getScrollContainer]);
 
-  // Create virtual rows from items
-  const { virtualRows, totalHeight } = useMemo(() => {
-    if (!colWidth || cols === 0) return { virtualRows: [], totalHeight: 0 };
-
-    const rows: Array<{
-      items: Array<{ item: ImageDocWithDims; index: number }>;
-      height: number;
-      y: number;
-    }> = [];
-    let currentY = 0;
-
-    for (let i = 0; i < items.length; i += cols) {
-      const rowItems: Array<{ item: ImageDocWithDims; index: number }> = [];
-      let maxHeight = 150; // Minimum row height
-
-      for (let j = 0; j < cols && i + j < items.length; j++) {
-        const item = items[i + j];
-        maxHeight = Math.max(maxHeight, estimateItemHeight(item, colWidth));
-        rowItems.push({ item, index: i + j });
-      }
-
-      const rowHeight = maxHeight + GAP;
-      rows.push({
-        items: rowItems,
-        height: rowHeight,
-        y: currentY,
-      });
-
-      currentY += rowHeight;
+  // Column-masonry layout: place each item in the currently-shortest column so
+  // shorter items pack up and tiles below rise to fill gaps (Pinterest-style),
+  // matching the CSS-grid StandardGrid. A fixed-row layout would leave empty
+  // space under the short items in a tall row.
+  const { tiles, columns, totalHeight } = useMemo(() => {
+    if (!colWidth || cols === 0) {
+      return {
+        tiles: [] as Tile[],
+        columns: [] as Tile[][],
+        totalHeight: 0,
+      };
     }
 
-    return { virtualRows: rows, totalHeight: currentY };
+    const colHeights = new Array(cols).fill(0);
+    const colTiles: Tile[][] = Array.from({ length: cols }, () => []);
+    const allTiles: Tile[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      // Shortest column wins (ties go left).
+      let col = 0;
+      for (let c = 1; c < cols; c++) {
+        if (colHeights[c] < colHeights[col]) col = c;
+      }
+      const h = estimateItemHeight(items[i], colWidth);
+      const tile: Tile = {
+        item: items[i],
+        index: i,
+        x: col * (colWidth + GAP),
+        y: colHeights[col],
+        w: colWidth,
+        h,
+      };
+      colHeights[col] += h + GAP;
+      colTiles[col].push(tile);
+      allTiles.push(tile);
+    }
+
+    return {
+      tiles: allTiles,
+      columns: colTiles,
+      totalHeight: Math.max(0, ...colHeights),
+    };
   }, [items, colWidth, cols]);
 
-  // Binary search to find the first row with y >= targetY.
-  // Precondition: rows array is sorted by y in ascending order (guaranteed by row construction loop above).
-  const lowerBoundByY = (rows: Array<{ y: number }>, y: number) => {
+  // First index in a column whose tile *bottom* is >= y (column is sorted by y
+  // ascending and tiles don't overlap, so this is monotonic).
+  const lowerBoundByBottom = (column: Tile[], y: number) => {
     let lo = 0;
-    let hi = rows.length;
+    let hi = column.length;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (rows[mid].y < y) lo = mid + 1;
+      if (column[mid].y + column[mid].h < y) lo = mid + 1;
       else hi = mid;
     }
     return lo;
   };
 
-  // Calculate visible rows
-  const visibleRows = useMemo(() => {
-    // Translate scroll container viewport to wrapper-local coordinates.
+  // Visible tiles: per-column binary-search slice of the viewport window.
+  const visibleTiles = useMemo(() => {
+    if (!tiles.length) return [];
     const viewportTop = Math.max(0, scrollTop - wrapperTop);
     const viewportBottom = viewportTop + viewportHeight;
 
-    // Overscan to reduce pop-in while scrolling. Must exceed the tile's
-    // load-ahead rootMargin (~1200px) so rows mount before they start loading,
-    // letting thumbs decode before they scroll into view.
+    // Overscan to reduce pop-in. Must exceed the tile's load-ahead rootMargin
+    // (~1200px) so tiles mount before they start loading, letting thumbs decode
+    // before they scroll into view.
     const overscanPx = 1600;
     const startY = Math.max(0, viewportTop - overscanPx);
     const endY = viewportBottom + overscanPx;
 
-    if (!virtualRows.length) return [];
-
-    // Slice rows using binary search on row.y (monotonic)
-    const startIdx = Math.max(0, lowerBoundByY(virtualRows, startY) - 1);
-    const endExclusive = Math.min(
-      virtualRows.length,
-      lowerBoundByY(virtualRows, endY) + 2,
-    );
-
-    return virtualRows.slice(startIdx, endExclusive);
-  }, [virtualRows, scrollTop, viewportHeight, wrapperTop]);
+    const out: Tile[] = [];
+    for (const column of columns) {
+      // Start at the first tile reaching into the window…
+      for (let i = lowerBoundByBottom(column, startY); i < column.length; i++) {
+        // …and stop once a tile starts past the window (rest are lower still).
+        if (column[i].y > endY) break;
+        out.push(column[i]);
+      }
+    }
+    return out;
+  }, [tiles, columns, scrollTop, viewportHeight, wrapperTop]);
 
   // Apply total height without using inline styles
   useEffect(() => {
@@ -175,51 +195,28 @@ export function VirtualizedGrid({
     <div ref={wrapperRef} className={`relative ${className || ""}`}>
       {/* Virtual container with total height */}
       <div ref={virtualContainerRef} className="relative">
-        {/* Render only visible rows */}
-        {visibleRows.map((row) => (
-          <VirtualRow
-            key={`row-${row.y}`}
-            y={row.y}
-            height={row.height - GAP}
-            cols={cols}
+        {/* Render only visible tiles, absolutely positioned. */}
+        {visibleTiles.map((tile) => (
+          <div
+            key={tile.item._id}
+            className="absolute will-change-transform"
+            style={{
+              transform: `translate(${tile.x}px, ${tile.y}px)`,
+              width: `${tile.w}px`,
+              height: `${tile.h}px`,
+            }}
           >
-            {row.items.map(({ item, index }) => (
-              <ThumbnailTile
-                key={item._id}
-                item={item}
-                index={index}
-                selected={selectionMode && selection.has(item._id)}
-                selectionMode={selectionMode}
-                onOpen={onOpen}
-                onToggle={onToggle}
-              />
-            ))}
-          </VirtualRow>
+            <ThumbnailTile
+              item={tile.item}
+              index={tile.index}
+              selected={selectionMode && selection.has(tile.item._id)}
+              selectionMode={selectionMode}
+              onOpen={onOpen}
+              onToggle={onToggle}
+            />
+          </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function VirtualRow({
-  y,
-  height,
-  cols,
-  children,
-}: {
-  y: number;
-  height: number;
-  cols: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className={`absolute left-0 right-0 grid gap-3 will-change-transform ${
-        cols === 2 ? "grid-cols-2" : cols === 3 ? "grid-cols-3" : "grid-cols-4"
-      }`}
-      style={{ transform: `translateY(${y}px)`, height: `${height}px` }}
-    >
-      {children}
     </div>
   );
 }
