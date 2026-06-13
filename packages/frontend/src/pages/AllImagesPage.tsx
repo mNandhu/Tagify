@@ -19,8 +19,12 @@ import {
 } from "../lib/imageFilter";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
-import { Input, Select } from "../components/ui/Input";
+import { Select } from "../components/ui/Input";
 import { EmptyState } from "../components/ui/EmptyState";
+import {
+  TagSearchInput,
+  type TagSuggestion,
+} from "../components/TagSearchInput";
 import { useFilters } from "../hooks/useFilters";
 import { useImageFeed } from "../hooks/useImageFeed";
 import { useScrollRestoration } from "../hooks/useScrollRestoration";
@@ -45,10 +49,10 @@ export default function AllImagesPage() {
   const feed = useImageFeed(filters);
   const items = feed.items;
 
-  // Raw search-box text, split into tags on submit.
-  const [q, setQ] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [libs, setLibs] = useState<Library[]>([]);
+  // Known tags (with image counts) powering the search autocomplete.
+  const [tagOptions, setTagOptions] = useState<TagSuggestion[]>([]);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
 
@@ -144,14 +148,13 @@ export default function AllImagesPage() {
     };
   }, [filtersOpen]);
 
-  const onSubmitSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const tags = q
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    setFilters({ ...filters, tags });
-  };
+  // Load the tag list once for autocomplete; counts come straight from the
+  // same aggregate the Tags page uses (manual tags included).
+  useEffect(() => {
+    api<TagSuggestion[]>(`/api/tags?include_manual=1`)
+      .then(setTagOptions)
+      .catch(() => setTagOptions([]));
+  }, []);
 
   // Keyboard shortcuts: S toggle selection, F focus search, N no-tags, A no-AI-tags.
   useEffect(() => {
@@ -258,14 +261,15 @@ export default function AllImagesPage() {
           >
             <Filter size={18} />
           </Button>
-          <form onSubmit={onSubmitSearch} className="flex-1">
-            <Input
-              placeholder="Search tags… (comma separated)"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
+          <div className="flex-1">
+            <TagSearchInput
               ref={searchInputRef}
+              value={filters.tags}
+              onChange={(tags) => setFilters({ ...filters, tags })}
+              suggestions={tagOptions}
+              placeholder="Search tags…"
             />
-          </form>
+          </div>
           <Button
             size="icon"
             variant="secondary"
@@ -396,12 +400,7 @@ export default function AllImagesPage() {
                 </div>
               </div>
               <div className="flex items-end gap-2">
-                <Button
-                  onClick={() => {
-                    setQ("");
-                    setFilters(DEFAULT_FILTERS);
-                  }}
-                >
+                <Button onClick={() => setFilters(DEFAULT_FILTERS)}>
                   Clear filters
                 </Button>
                 <Button onClick={clearSelection}>Clear selection</Button>
@@ -425,10 +424,7 @@ export default function AllImagesPage() {
               {hasActiveFilter(filters) && (
                 <Button
                   variant="primary"
-                  onClick={() => {
-                    setQ("");
-                    setFilters(DEFAULT_FILTERS);
-                  }}
+                  onClick={() => setFilters(DEFAULT_FILTERS)}
                 >
                   Clear filters
                 </Button>
