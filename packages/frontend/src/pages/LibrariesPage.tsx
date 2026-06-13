@@ -6,6 +6,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Card, Section } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input, Field } from "../components/ui/Input";
+import { Checkbox } from "../components/ui/Checkbox";
 import { Badge } from "../components/ui/Badge";
 import { Skeleton, Spinner } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -370,14 +371,11 @@ export default function LibrariesPage() {
                   onChange={(e) => setEditPath(e.target.value)}
                 />
               </Field>
-              <label className="flex items-center gap-2 text-sm text-neutral-300">
-                <input
-                  type="checkbox"
-                  checked={editRescan}
-                  onChange={(e) => setEditRescan(e.target.checked)}
-                />
-                Rescan after saving
-              </label>
+              <Checkbox
+                checked={editRescan}
+                onChange={setEditRescan}
+                label="Rescan after saving"
+              />
               <div className="flex justify-end gap-2 pt-2">
                 <Button onClick={() => setEditId(null)}>Cancel</Button>
                 <Button

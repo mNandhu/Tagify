@@ -2,6 +2,7 @@ export { Button } from "./Button";
 export type { ButtonProps } from "./Button";
 export { Card, Section } from "./Card";
 export { Input, Select, Field } from "./Input";
+export { Checkbox } from "./Checkbox";
 export { Badge } from "./Badge";
 export { Skeleton, Spinner } from "./Skeleton";
 export { PageHeader } from "./PageHeader";
