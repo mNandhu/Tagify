@@ -69,9 +69,50 @@ export default function AllImagesPage() {
     items.length > 0,
   );
 
-  // Load libraries for the filter dropdown.
+  // Load libraries for the filter dropdown, and keep them polled while any
+  // library is scanning. Indexing runs as an async background scan, so images
+  // land after a library is added/rescanned. The scan-progress poll that
+  // triggers a feed refresh lives on the Libraries page, which is unmounted
+  // once the user is here — so the gallery must watch scan state itself and
+  // refetch the feed as images arrive, instead of needing a full reload.
+  const refetchFeedRef = useRef(feed.refetch);
+  refetchFeedRef.current = feed.refetch;
+  // Seed true so the first poll tick always does one fresh pull on mount —
+  // covers a scan that finishes in the race window between the feed's
+  // mount-refetch and tick 1, and sidesteps the 30s stale-cache window.
+  const wasScanningRef = useRef(true);
   useEffect(() => {
-    api<Library[]>(`/api/libraries`).then(setLibs).catch(() => {});
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      let anyScanning = false;
+      try {
+        const data = await api<Library[]>(`/api/libraries`);
+        if (cancelled) return;
+        setLibs(data);
+        anyScanning = data.some((l) => (l as { scanning?: boolean }).scanning);
+        // Refetch while a scan runs AND once more on the scanning -> done
+        // transition. The trailing pull matters: cursor pages are keyed by
+        // ascending _id and the scan appends higher _ids, so the final batch
+        // (and a page-1 that was still short mid-scan, which left hasNextPage
+        // false and killed paging) is only picked up by refetching after the
+        // scan finishes. Refetch re-derives getNextPageParam, reviving paging.
+        if (anyScanning || wasScanningRef.current) refetchFeedRef.current();
+        wasScanningRef.current = anyScanning;
+      } catch {
+        // Ignore transient errors; retry on the next tick.
+      }
+      if (!cancelled) {
+        // Poll briskly during a scan, lazily otherwise to catch scans that
+        // start from another page while the gallery stays open.
+        timer = setTimeout(tick, anyScanning ? 1500 : 8000);
+      }
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // Close filters on outside click / ESC.

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "../components/Toasts";
 
 type Library = {
@@ -17,6 +18,14 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 
 export default function LibrariesPage() {
   const { push } = useToast();
+  const queryClient = useQueryClient();
+
+  // Library changes alter which images the gallery should show. The Image feed
+  // (`["images", ...]`) is cached with a 30s staleTime, so without this the
+  // gallery shows stale results until reload. Drop those entries so the feed
+  // refetches next time it mounts.
+  const invalidateImageFeed = () =>
+    queryClient.invalidateQueries({ queryKey: ["images"] });
   const [libs, setLibs] = useState<Library[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -76,7 +85,10 @@ export default function LibrariesPage() {
         prevScanningRef.current = Object.fromEntries(
           Object.entries(updates).map(([id, u]) => [id, u.scanning])
         );
-        if (transitioned) refresh();
+        if (transitioned) {
+          refresh();
+          invalidateImageFeed();
+        }
         if (!cancelled) setProgress((p) => ({ ...p, ...updates }));
       } finally {
         const anyScanning = Object.values(updates).some((u) => u.scanning);
@@ -116,6 +128,7 @@ export default function LibrariesPage() {
       body: JSON.stringify(data),
     });
     refresh();
+    invalidateImageFeed();
   };
 
   const deleteLibrary = async (id: string) => {
@@ -127,6 +140,7 @@ export default function LibrariesPage() {
       return;
     await api(`/api/libraries/${id}`, { method: "DELETE" });
     refresh();
+    invalidateImageFeed();
   };
 
   return (
@@ -166,6 +180,7 @@ export default function LibrariesPage() {
               setPath("");
               setName("");
               await refresh();
+              invalidateImageFeed();
               push("Library added", "success");
             } catch (e: any) {
               push(e?.message || "Failed to add library", "error");
