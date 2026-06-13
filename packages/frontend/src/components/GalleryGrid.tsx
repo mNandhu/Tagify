@@ -3,7 +3,7 @@ import { ImageThumbnail } from "./ImageThumbnail";
 import { resolveMediaUrl } from "../lib/media";
 import { VirtualizedGrid } from "./VirtualizedGrid";
 
-type ImageDoc = { _id: string; thumb_rel?: string; path: string };
+type ImageDoc = { _id: string; path: string };
 // Upstream items from API contain width/height; extend locally to use for layout stabilization if present
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
 

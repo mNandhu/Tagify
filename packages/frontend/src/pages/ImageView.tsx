@@ -22,7 +22,6 @@ import { useToast } from "../components/Toasts";
 type ImageDoc = {
   _id: string;
   path: string;
-  thumb_rel?: string;
   width?: number;
   height?: number;
   size?: number;

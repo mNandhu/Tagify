@@ -18,7 +18,7 @@ import {
   createDebouncedScrollSaver,
 } from "../lib/scrollRestoration";
 
-type ImageDoc = { _id: string; thumb_rel?: string; path: string };
+type ImageDoc = { _id: string; path: string };
 type Library = { _id: string; name?: string; path: string };
 
 type Filters = {

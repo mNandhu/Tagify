@@ -58,7 +58,6 @@ services:
       mc alias set minio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
       echo 'Creating buckets...';
       mc mb minio/tagify-thumbs --ignore-existing || echo 'Bucket tagify-thumbs may already exist';
-      mc mb minio/tagify-originals --ignore-existing || echo 'Bucket tagify-originals may already exist';
       echo 'Buckets created successfully';
       "
     restart: "no"
@@ -86,10 +85,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-password123}
       MINIO_SECURE: "false"
       MINIO_BUCKET_THUMBS: ${MINIO_BUCKET_THUMBS:-tagify-thumbs}
-      MINIO_BUCKET_ORIGINALS: ${MINIO_BUCKET_ORIGINALS:-tagify-originals}
       MEDIA_PRESIGNED_MODE: ${MEDIA_PRESIGNED_MODE:-off}
       MEDIA_PRESIGNED_EXPIRES: ${MEDIA_PRESIGNED_EXPIRES:-3600}
-      THUMB_MAX_SIZE: ${THUMB_MAX_SIZE:-512}
+      THUMB_MAX_SIZE: ${THUMB_MAX_SIZE:-1080}
       SCANNER_MAX_WORKERS: ${SCANNER_MAX_WORKERS:-0}
       AI_TAGGING_URL: ${AI_TAGGING_URL:-}
     ports:

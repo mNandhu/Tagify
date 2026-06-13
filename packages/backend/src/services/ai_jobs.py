@@ -9,7 +9,6 @@ from typing import Any
 
 from ..database.motor import acol
 from .ai_tagger import get_tagger_manager
-from .storage_minio import get_original
 
 
 DEFAULT_AI_SETTINGS: dict[str, Any] = {
@@ -277,35 +276,23 @@ class AIJobManager:
                 for image_id in ids:
                     self._in_flight.discard(image_id)
 
-    async def _read_original_bytes(self, original_key: str) -> bytes:
+    async def _read_image_bytes(self, file_path: str) -> bytes:
         def _read() -> bytes:
-            obj = get_original(original_key)
-            try:
-                return obj.read()
-            finally:
-                try:
-                    obj.close()
-                except Exception:
-                    # Best-effort cleanup: MinIO client may already be closed.
-                    pass
-                try:
-                    obj.release_conn()
-                except Exception:
-                    # Best-effort cleanup: connection may already be released.
-                    pass
+            with open(file_path, "rb") as f:
+                return f.read()
 
         return await asyncio.to_thread(_read)
 
     async def _tag_one(self, *, image_id: str, settings: dict[str, Any]) -> None:
         images = acol("images")
-        doc = await images.find_one({"_id": image_id}, {"original_key": 1})
+        doc = await images.find_one({"_id": image_id}, {"path": 1})
         if not doc:
             raise RuntimeError("image not found")
-        key = doc.get("original_key")
-        if not key:
-            raise RuntimeError("image has no original_key")
+        path = doc.get("path")
+        if not path:
+            raise RuntimeError("image has no file path")
 
-        img_bytes = await self._read_original_bytes(str(key))
+        img_bytes = await self._read_image_bytes(str(path))
 
         model_repo = str(
             settings.get("model_repo") or DEFAULT_AI_SETTINGS["model_repo"]

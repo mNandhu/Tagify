@@ -4,7 +4,7 @@ from pathlib import Path
 from io import BytesIO
 from PIL import Image as PILImage
 from ..database.mongo import col
-from .storage_minio import put_thumb, put_original
+from .storage_minio import put_thumb
 import hashlib
 import mimetypes
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -30,11 +30,15 @@ def _make_thumb_bytes(path: Path) -> bytes | None:
                 16,
                 int(config.THUMB_MAX_SIZE)
                 if getattr(config, "THUMB_MAX_SIZE", 0)
-                else 512,
+                else 1080,
             )
             img.thumbnail((size, size))
             buf = BytesIO()
-            img.convert("RGB").save(buf, format="JPEG", quality=85)
+            fmt = getattr(config, "THUMB_FORMAT", "webp").upper()
+            if fmt == "WEBP":
+                img.save(buf, format="WEBP", quality=85)
+            else:
+                img.convert("RGB").save(buf, format=fmt, quality=85)
             return buf.getvalue()
     except Exception:
         return None
@@ -97,18 +101,9 @@ def scan_library(library_id: str, root: str) -> int:
                     pass
                 # relative path within library
                 rel = str(p.relative_to(root_path))
-                # Upload to MinIO
+                # Generate and upload thumbnail to MinIO
                 thumb_bytes = _make_thumb_bytes(p)
-                original_key = None
                 thumb_key = None
-                try:
-                    mt, _ = mimetypes.guess_type(str(p))
-                    with open(p, "rb") as f:
-                        original_key = put_original(
-                            library_id, f"{library_id}:{rel}", f, stat.st_size, mt
-                        )
-                except Exception:
-                    original_key = None
                 if thumb_bytes is not None:
                     try:
                         thumb_key = put_thumb(
@@ -125,7 +120,6 @@ def scan_library(library_id: str, root: str) -> int:
                     "height": height,
                     "ctime": stat.st_ctime,
                     "mtime": stat.st_mtime,
-                    "original_key": original_key,
                     "thumb_key": thumb_key,
                 }
                 images_col.update_one(
@@ -166,8 +160,9 @@ class _ScanResult:
 def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
     """Process a single image file.
 
-    This function performs file inspection + MinIO uploads only.
+    This function performs file inspection + thumbnail upload to MinIO.
     Mongo writes are performed in batches by the scan coordinator thread.
+    Originals are served directly from the filesystem (Local Mount mode).
     """
     try:
         stat = p.stat()
@@ -183,27 +178,6 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
         # Generate a thumbnail in-memory for MinIO
         thumb_bytes: bytes | None = _make_thumb_bytes(p)
 
-        # Upload original (required)
-        mt, _ = mimetypes.guess_type(str(p))
-
-        def _upload_original():
-            with open(p, "rb") as f:
-                return put_original(library_id, image_id, f, stat.st_size, mt)
-
-        try:
-            original_key = _retry(
-                _upload_original,
-                attempts=3,
-                base_delay_s=0.2,
-            )
-        except Exception as e:
-            return _ScanResult(
-                image_id=image_id,
-                ok=False,
-                error=str(e),
-                stage="upload_original",
-            )
-
         # Upload thumbnail if generated (optional)
         thumb_key = None
         if thumb_bytes is not None:
@@ -218,7 +192,7 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
                     base_delay_s=0.2,
                 )
             except Exception:
-                # Best-effort: keep original indexed even if thumb failed.
+                # Best-effort: keep image indexed even if thumb failed.
                 thumb_key = None
 
         doc = {
@@ -230,7 +204,6 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
             "height": height,
             "ctime": stat.st_ctime,
             "mtime": stat.st_mtime,
-            "original_key": original_key,
             "thumb_key": thumb_key,
         }
         return _ScanResult(image_id=image_id, ok=True, doc=doc)
@@ -441,61 +414,36 @@ def scan_library_async(library_id: str, root: str) -> dict:
             existing_docs = list(
                 images_col.find(
                     {"library_id": library_id},
-                    {"_id": 1, "original_key": 1, "thumb_key": 1},
+                    {"_id": 1, "thumb_key": 1},
                 )
             )
 
             stale_image_ids = []
-            stale_minio_keys = []
+            stale_thumb_keys = []
 
             for doc in existing_docs:
                 existing_id = doc["_id"]
                 if existing_id not in discovered_image_ids:
                     stale_image_ids.append(existing_id)
-                    # Collect MinIO keys for cleanup
-                    if doc.get("original_key"):
-                        stale_minio_keys.append(doc["original_key"])
                     if doc.get("thumb_key"):
-                        stale_minio_keys.append(doc["thumb_key"])
+                        stale_thumb_keys.append(doc["thumb_key"])
 
             # Remove stale images from MongoDB
             if stale_image_ids:
                 images_col.delete_many({"_id": {"$in": stale_image_ids}})
 
-                # Clean up corresponding MinIO objects
-                # Group keys by prefix to optimize deletion
-                if stale_minio_keys:
+                # Clean up corresponding MinIO thumbnail objects
+                if stale_thumb_keys:
                     try:
-                        # For efficiency, we could delete by prefix for each stale image
-                        # but since we have the exact keys, let's delete them individually
                         from minio.deleteobjects import DeleteObject
                         from .storage_minio import get_minio
 
                         client = get_minio()
-
-                        # Separate keys by bucket type (original vs thumb)
-                        original_keys = [
-                            k for k in stale_minio_keys if not k.endswith(".jpg")
-                        ]
-                        thumb_keys = [k for k in stale_minio_keys if k.endswith(".jpg")]
-
-                        # Delete from originals bucket
-                        if original_keys:
-                            delete_list = [DeleteObject(key) for key in original_keys]
-                            for err in client.remove_objects(
-                                config.MINIO_BUCKET_ORIGINALS, delete_list
-                            ):
-                                # Best effort cleanup, ignore errors
-                                _ = err
-
-                        # Delete from thumbs bucket
-                        if thumb_keys:
-                            delete_list = [DeleteObject(key) for key in thumb_keys]
-                            for err in client.remove_objects(
-                                config.MINIO_BUCKET_THUMBS, delete_list
-                            ):
-                                # Best effort cleanup, ignore errors
-                                _ = err
+                        delete_list = [DeleteObject(key) for key in stale_thumb_keys]
+                        for err in client.remove_objects(
+                            config.MINIO_BUCKET_THUMBS, delete_list
+                        ):
+                            _ = err
 
                     except Exception:
                         # Best effort cleanup - don't fail the scan if MinIO cleanup fails

@@ -13,7 +13,6 @@ class Image(BaseModel):
     ctime: float
     mtime: float
     tags: List[str] = []
-    thumb_rel: Optional[str] = None
 
     class Config:
         populate_by_name = True

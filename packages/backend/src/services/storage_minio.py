@@ -8,7 +8,6 @@ from minio.deleteobjects import DeleteObject
 from ..core import config
 from urllib.parse import urlparse
 from datetime import timedelta
-import mimetypes
 
 _client: Optional[Minio] = None
 _sign_client: Optional[Minio] = None
@@ -20,7 +19,7 @@ def ensure_buckets() -> None:
     Run this at startup (preferably), so request paths don't pay bucket_exists costs.
     """
     client = get_minio()
-    for bucket in (config.MINIO_BUCKET_THUMBS, config.MINIO_BUCKET_ORIGINALS):
+    for bucket in (config.MINIO_BUCKET_THUMBS,):
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
 
@@ -67,11 +66,11 @@ def _get_signing_minio() -> Minio:
 
 
 def put_thumb(
-    library_id: str, image_id: str, data: bytes, content_type: str = "image/jpeg"
+    library_id: str, image_id: str, data: bytes, content_type: str = "image/webp"
 ) -> str:
-    """Upload thumbnail bytes as JPEG; returns object key."""
+    """Upload thumbnail bytes as WebP; returns object key."""
     client = get_minio()
-    key = f"{library_id}/{image_id}.jpg"
+    key = f"{library_id}/{image_id}.webp"
 
     # Set Cache-Control metadata for long-lived caching
     metadata: dict[str, Union[str, List[str], Tuple[str]]] = {
@@ -90,67 +89,9 @@ def put_thumb(
     return key
 
 
-def put_original(
-    library_id: str, image_id: str, stream, length: int, content_type: Optional[str]
-) -> str:
-    """Upload original file stream; returns object key."""
-    # Try to infer a safe extension from content type
-    ext = ""
-    if content_type:
-        ct = content_type.split(";", 1)[0].strip().lower()
-        guessed = mimetypes.guess_extension(ct) or ""
-        # Very defensive: only allow short-ish simple extensions.
-        if (
-            guessed
-            and guessed.startswith(".")
-            and guessed[1:].replace("_", "").isalnum()
-        ):
-            if 1 < len(guessed) <= 10:
-                ext = guessed
-    key = f"{library_id}/{image_id}{ext}"
-    client = get_minio()
-    client.put_object(
-        config.MINIO_BUCKET_ORIGINALS,
-        key,
-        data=stream,
-        length=length,
-        content_type=content_type or "application/octet-stream",
-    )
-    return key
-
-
 def get_thumb(key: str):
     client = get_minio()
     return client.get_object(config.MINIO_BUCKET_THUMBS, key)
-
-
-def get_original(key: str, offset: int | None = None, length: int | None = None):
-    """Get original object; supports ranged reads via offset/length (bytes)."""
-    client = get_minio()
-    off = 0 if offset is None else int(offset)
-    # MinIO treats length=0 as 'to end'
-    ln = 0 if length is None else int(length)
-    return client.get_object(
-        config.MINIO_BUCKET_ORIGINALS,
-        key,
-        offset=off,
-        length=ln,
-    )
-
-
-def stat_original(key: str):
-    """Return metadata for original object (size, etag, content-type)."""
-    client = get_minio()
-    return client.stat_object(config.MINIO_BUCKET_ORIGINALS, key)
-
-
-def presign_original(key: str, expires: int | None = None) -> str:
-    client = _get_signing_minio()
-    ttl = expires or config.MEDIA_PRESIGNED_EXPIRES
-    url = client.presigned_get_object(
-        config.MINIO_BUCKET_ORIGINALS, key, expires=timedelta(seconds=int(ttl))
-    )
-    return url
 
 
 def presign_thumb(key: str, expires: int | None = None) -> str:
@@ -163,13 +104,14 @@ def presign_thumb(key: str, expires: int | None = None) -> str:
 
 
 def delete_by_prefix(prefix: str):
-    """Delete objects in both buckets under a prefix (e.g., library_id/)."""
+    """Delete objects in the thumbs bucket under a prefix (e.g., library_id/)."""
     client = get_minio()
-    for bucket in (config.MINIO_BUCKET_THUMBS, config.MINIO_BUCKET_ORIGINALS):
-        objs = list(client.list_objects(bucket, prefix=prefix, recursive=True))
-        if not objs:
-            continue
-        delete_list = [DeleteObject(o.object_name) for o in objs if o.object_name]
-        for err in client.remove_objects(bucket, delete_list):
-            # Best-effort; could log err if needed
-            _ = err
+    objs = list(
+        client.list_objects(config.MINIO_BUCKET_THUMBS, prefix=prefix, recursive=True)
+    )
+    if not objs:
+        return
+    delete_list = [DeleteObject(o.object_name) for o in objs if o.object_name]
+    for err in client.remove_objects(config.MINIO_BUCKET_THUMBS, delete_list):
+        # Best-effort; could log err if needed
+        _ = err

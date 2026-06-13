@@ -3,13 +3,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import mimetypes
 import anyio
+import os
 
 from ..database.motor import acol
 from ..services.storage_minio import (
-    get_original,
     get_thumb,
-    stat_original,
-    presign_original,
     presign_thumb,
 )
 from ..core import config
@@ -112,108 +110,83 @@ async def get_image_file(
     request: Request,
     range: str | None = Header(default=None, alias="Range"),
 ):
-    img = await _find_image_doc(image_id, {"path": 1, "original_key": 1})
+    """Serve the original image file directly from the local filesystem."""
+    img = await _find_image_doc(image_id, {"path": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
-    original_key = img.get("original_key")
-    if original_key:
-        # If presigned mode is enabled and no Range requested, offload via redirect or return URL
-        if not range and config.MEDIA_PRESIGNED_MODE in ("redirect", "url"):
-            url = presign_original(original_key)
-            if config.MEDIA_PRESIGNED_MODE == "redirect":
-                resp = Response(status_code=307)
-                resp.headers["Location"] = url
-                return resp
-            else:
-                return {"url": url}
-        # Support HTTP Range for partial content
-        if range:
-            # Parse bytes=start-end
-            try:
-                unit, rng = range.split("=", 1)
-                if unit.strip().lower() != "bytes":
-                    raise ValueError
-                start_str, end_str = rng.split("-", 1)
-                start = int(start_str) if start_str else 0
-                end = int(end_str) if end_str else None
-            except Exception:
-                raise HTTPException(status_code=416, detail="Invalid Range header")
-
-            # Stat object to get total size and etag
-            st = await anyio.to_thread.run_sync(stat_original, original_key)
-            total_len = getattr(st, "size", None)
-            # Compute readable range
-            if end is None and total_len is not None:
-                end = total_len - 1
-            length = None if end is None else (end - start + 1)
-            # Fetch ranged stream
-            stream_obj = await anyio.to_thread.run_sync(
-                lambda: get_original(original_key, offset=start, length=length)
-            )
-            headers = {"Accept-Ranges": "bytes"}
-            if total_len is not None and end is not None:
-                headers["Content-Range"] = f"bytes {start}-{end}/{int(total_len)}"
-            et = getattr(st, "etag", None)
-            if isinstance(et, str) and et:
-                headers["ETag"] = et
-            headers["Cache-Control"] = "public, max-age=31536000, immutable"
-            return StreamingResponse(
-                stream_obj.stream(32 * 1024),
-                status_code=206,
-                media_type=getattr(st, "content_type", None)
-                or "application/octet-stream",
-                headers=headers,
-            )
-        # Full object
-        obj = await anyio.to_thread.run_sync(lambda: get_original(original_key))
-        headers = {"Accept-Ranges": "bytes"}
-        etag = obj.headers.get("ETag")
-        if etag:
-            headers["ETag"] = etag
-        headers["Cache-Control"] = "public, max-age=31536000, immutable"
-        return StreamingResponse(
-            obj.stream(32 * 1024),
-            media_type=obj.headers.get("Content-Type", "application/octet-stream"),
-            headers=headers,
-        )
-    # Fallback: serve from filesystem for pre-migration records
     path = img.get("path")
     if not path:
         raise HTTPException(status_code=404, detail="File path not available")
+
+    # Verify the file still exists on disk
+    if not await anyio.to_thread.run_sync(lambda: os.path.isfile(path)):
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+
     media_type, _ = mimetypes.guess_type(path)
-    return FileResponse(path, media_type=media_type)
+    # FileResponse handles Range headers, ETag, Content-Length natively
+    return FileResponse(
+        path,
+        media_type=media_type or "application/octet-stream",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "Accept-Ranges": "bytes",
+        },
+    )
+
+
+@router.head("/{image_id:path}/file")
+async def head_image_file(image_id: str):
+    """HEAD for the original image file — stat from the local filesystem."""
+    img = await _find_image_doc(image_id, {"path": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    path = img.get("path")
+    if not path:
+        raise HTTPException(status_code=404, detail="File path not available")
+
+    if not await anyio.to_thread.run_sync(lambda: os.path.isfile(path)):
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+
+    media_type, _ = mimetypes.guess_type(path)
+    st = await anyio.to_thread.run_sync(lambda: os.stat(path))
+    headers: dict[str, str] = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(st.st_size),
+    }
+    return Response(
+        status_code=200, headers=headers, media_type=media_type or "application/octet-stream"
+    )
 
 
 @router.get("/{image_id:path}/thumb")
 async def get_image_thumb(image_id: str):
-    img = await _find_image_doc(image_id, {"thumb_key": 1, "thumb_rel": 1})
+    img = await _find_image_doc(image_id, {"thumb_key": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
     thumb_key = img.get("thumb_key")
-    if thumb_key:
-        if config.MEDIA_PRESIGNED_MODE in ("redirect", "url"):
-            url = presign_thumb(thumb_key)
-            if config.MEDIA_PRESIGNED_MODE == "redirect":
-                resp = Response(status_code=307)
-                resp.headers["Location"] = url
-                return resp
-            else:
-                return {"url": url}
-        obj = await anyio.to_thread.run_sync(lambda: get_thumb(thumb_key))
-        headers = {}
-        etag = obj.headers.get("ETag")
-        if etag:
-            headers["ETag"] = etag
-            headers["Cache-Control"] = "public, max-age=31536000, immutable"
-        return StreamingResponse(
-            obj.stream(32 * 1024), media_type="image/jpeg", headers=headers
-        )
-    # Fallback to filesystem thumbs during migration if rel exists
-    rel = img.get("thumb_rel")
-    if not rel:
+    if not thumb_key:
         raise HTTPException(status_code=404, detail="Thumbnail not available")
-    # Legacy static path under /thumbs is removed in new setup; return 404 if not migrated
-    raise HTTPException(status_code=404, detail="Thumbnail not migrated yet")
+
+    # Determine media type from the key extension
+    media_type = "image/webp" if thumb_key.endswith(".webp") else "image/jpeg"
+
+    if config.MEDIA_PRESIGNED_MODE in ("redirect", "url"):
+        url = presign_thumb(thumb_key)
+        if config.MEDIA_PRESIGNED_MODE == "redirect":
+            resp = Response(status_code=307)
+            resp.headers["Location"] = url
+            return resp
+        else:
+            return {"url": url}
+    obj = await anyio.to_thread.run_sync(lambda: get_thumb(thumb_key))
+    headers = {}
+    etag = obj.headers.get("ETag")
+    if etag:
+        headers["ETag"] = etag
+        headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return StreamingResponse(
+        obj.stream(32 * 1024), media_type=media_type, headers=headers
+    )
 
 
 @router.head("/{image_id:path}/thumb")
@@ -223,8 +196,10 @@ async def head_image_thumb(image_id: str):
         raise HTTPException(status_code=404, detail="Image not found")
     if config.MEDIA_PRESIGNED_MODE == "url":
         return Response(status_code=200, media_type="application/json")
+    thumb_key = img.get("thumb_key", "")
+    media_type = "image/webp" if thumb_key.endswith(".webp") else "image/jpeg"
     headers = {"Accept-Ranges": "bytes"}
-    return Response(status_code=200, headers=headers, media_type="image/jpeg")
+    return Response(status_code=200, headers=headers, media_type=media_type)
 
 
 @router.get("/{image_id:path}")
@@ -258,25 +233,3 @@ async def set_image_rating(image_id: str, body: RatingPatch):
 
     await acol("images").update_one({"_id": img["_id"]}, {"$set": {"rating": rating}})
     return {"_id": str(img["_id"]), "rating": rating}
-
-
-@router.head("/{image_id:path}/file")
-async def head_image_file(image_id: str):
-    img = await _find_image_doc(image_id, {"original_key": 1})
-    if not img:
-        raise HTTPException(status_code=404, detail="Image not found")
-    if config.MEDIA_PRESIGNED_MODE == "url":
-        return Response(status_code=200, media_type="application/json")
-    original_key = img.get("original_key")
-    media_type = "application/octet-stream"
-    headers: dict[str, str] = {"Accept-Ranges": "bytes"}
-    if original_key:
-        try:
-            st = await anyio.to_thread.run_sync(stat_original, original_key)
-            mt = getattr(st, "content_type", None)
-            if isinstance(mt, str) and mt:
-                media_type = mt
-        except Exception:
-            # Best-effort: HEAD should still succeed even if stat fails transiently.
-            pass
-    return Response(status_code=200, headers=headers, media_type=media_type)

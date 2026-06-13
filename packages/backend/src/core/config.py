@@ -32,7 +32,6 @@ MINIO_ACCESS_KEY: str = env_str("MINIO_ACCESS_KEY", "")
 MINIO_SECRET_KEY: str = env_str("MINIO_SECRET_KEY", "")
 MINIO_SECURE: bool = env_str("MINIO_SECURE", "false").lower() == "true"
 MINIO_BUCKET_THUMBS: str = env_str("MINIO_BUCKET_THUMBS", "tagify-thumbs")
-MINIO_BUCKET_ORIGINALS: str = env_str("MINIO_BUCKET_ORIGINALS", "tagify-originals")
 MINIO_REGION: str = env_str("MINIO_REGION", "us-east-1")
 
 # Optional: Public endpoint for presigned URLs (e.g., "localhost:9000" or "http://media.example.com")
@@ -47,8 +46,9 @@ SCANNER_MAX_WORKERS: int = int(env_str("SCANNER_MAX_WORKERS", "0") or "0")
 SCAN_PROGRESS_UPDATE_MS: int = int(env_str("SCAN_PROGRESS_UPDATE_MS", "500") or "500")
 
 # Thumbnails: maximum size (pixels) for the longest edge
-# Used by scanner to generate JPEG thumbnails via Pillow
-THUMB_MAX_SIZE: int = int(env_str("THUMB_MAX_SIZE", "512") or "512")
+# Used by scanner to generate WebP thumbnails via Pillow
+THUMB_MAX_SIZE: int = int(env_str("THUMB_MAX_SIZE", "1080") or "1080")
+THUMB_FORMAT: str = env_str("THUMB_FORMAT", "webp")
 
 # Media delivery mode: 'off' (proxy via API), 'redirect' (302/307 to presigned), 'url' (API returns URL JSON)
 MEDIA_PRESIGNED_MODE: str = env_str("MEDIA_PRESIGNED_MODE", "redirect").lower()

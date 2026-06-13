@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { ImageThumbnail } from "./ImageThumbnail";
 import { resolveMediaUrl } from "../lib/media";
 
-type ImageDoc = { _id: string; thumb_rel?: string; path: string };
+type ImageDoc = { _id: string; path: string };
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
 
 interface VirtualizedGridProps {
