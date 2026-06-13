@@ -1,8 +1,17 @@
+from pathlib import Path
+
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_ROOT = Path(__file__).parent.parent.parent  # packages/backend/
+_REPO_ROOT = _BACKEND_ROOT.parent.parent  # project root
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(_REPO_ROOT / ".env", _BACKEND_ROOT / ".env"),
+        extra="ignore",
+    )
 
     mongo_uri: str = "mongodb://localhost:27017"
     ai_tagging_url: str = ""
@@ -13,8 +22,14 @@ class Settings(BaseSettings):
     mongo_connect_timeout_ms: int = 5000
 
     minio_endpoint: str = "127.0.0.1:9000"
-    minio_access_key: str = ""
-    minio_secret_key: str = ""
+    minio_access_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("MINIO_ACCESS_KEY", "MINIO_ROOT_USER"),
+    )
+    minio_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("MINIO_SECRET_KEY", "MINIO_ROOT_PASSWORD"),
+    )
     minio_secure: bool = False
     minio_bucket_thumbs: str = "tagify-thumbs"
     minio_region: str = "us-east-1"
