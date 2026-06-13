@@ -1,6 +1,43 @@
 import { cn } from "../lib/cn";
 import { resolveMediaUrl } from "../lib/media";
+import { decode } from "blurhash";
 import React, { useState, useEffect, useRef } from "react";
+
+// Decodes a BlurHash to a small canvas, scaled up by CSS to fill the tile.
+// 32px is plenty — BlurHash is low-frequency, so a larger canvas only costs
+// decode time without looking sharper.
+const BLUR_PX = 32;
+
+const BlurhashCanvas = React.memo(function BlurhashCanvas({
+  hash,
+}: {
+  hash: string;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    try {
+      const pixels = decode(hash, BLUR_PX, BLUR_PX);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const imageData = ctx.createImageData(BLUR_PX, BLUR_PX);
+      imageData.data.set(pixels);
+      ctx.putImageData(imageData, 0, 0);
+    } catch {
+      // Invalid hash — leave the canvas transparent; the bg shows through.
+    }
+  }, [hash]);
+  return (
+    <canvas
+      ref={ref}
+      width={BLUR_PX}
+      height={BLUR_PX}
+      aria-hidden="true"
+      className="absolute inset-0 h-full w-full rounded"
+    />
+  );
+});
 
 // Global concurrent loading control
 class ImageLoadQueue {
@@ -38,6 +75,7 @@ export function ImageThumbnail({
   height,
   priority = false,
   preResolved = false,
+  blurhash,
 }: {
   src: string;
   selected?: boolean;
@@ -47,6 +85,7 @@ export function ImageThumbnail({
   height?: number;
   priority?: boolean; // High priority for above-the-fold images
   preResolved?: boolean; // src is already a usable URL; skip resolveMediaUrl
+  blurhash?: string; // BlurHash placeholder shown until the image loads
 }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -187,16 +226,20 @@ export function ImageThumbnail({
       )}
       onClick={onClick}
     >
-      {/* Skeleton shimmer (only while loading) */}
-      {!loaded && !error && (
-        <div
-          className={cn(
-            "absolute inset-0 rounded bg-neutral-800/60 animate-pulse",
-            "motion-reduce:animate-none"
-          )}
-          aria-hidden="true"
-        />
-      )}
+      {/* Placeholder while loading: a decoded BlurHash preview when we have
+          one (so there's no grey "loading" state), else a shimmer skeleton. */}
+      {!loaded && !error &&
+        (blurhash ? (
+          <BlurhashCanvas hash={blurhash} />
+        ) : (
+          <div
+            className={cn(
+              "absolute inset-0 rounded bg-neutral-800/60 animate-pulse",
+              "motion-reduce:animate-none"
+            )}
+            aria-hidden="true"
+          />
+        ))}
 
       {/* Error state */}
       {error && (

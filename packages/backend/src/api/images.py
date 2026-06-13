@@ -74,7 +74,14 @@ async def list_images(
     # Projection keeps payload small for the grid. thumb_key is included so we
     # can hand the grid a ready-to-use thumb_url and skip the per-tile round
     # trip through /thumb (a 307 redirect or a resolve request).
-    projection = {"_id": 1, "path": 1, "width": 1, "height": 1, "thumb_key": 1}
+    projection = {
+        "_id": 1,
+        "path": 1,
+        "width": 1,
+        "height": 1,
+        "thumb_key": 1,
+        "blurhash": 1,
+    }
     # Cursor-based pagination: when cursor is provided, fetch items with _id < cursor (descending order)
     if cursor:
         q["_id"] = {"$lt": cursor}

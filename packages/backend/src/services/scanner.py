@@ -6,6 +6,7 @@ from PIL import Image as PILImage
 from ..database.mongo import col
 from . import image_tags
 from .storage_minio import put_thumb
+from .blurhash import blurhash_for_image
 import hashlib
 import mimetypes
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -23,9 +24,16 @@ from ..core.config import settings
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 
-def _make_thumb_bytes(path: Path) -> bytes | None:
+def _make_thumb_bytes(path: Path) -> tuple[bytes | None, str | None]:
+    """Render thumbnail bytes and a BlurHash placeholder from one decode.
+
+    Returns ``(thumb_bytes, blurhash)``; either may be None on failure.
+    """
     try:
         with PILImage.open(path) as img:
+            # BlurHash from the full-res decode (downsamples internally); cheap
+            # and reuses this single open.
+            bh = blurhash_for_image(img)
             size = max(16, settings.thumb_max_size)
             img.thumbnail((size, size))
             buf = BytesIO()
@@ -34,9 +42,9 @@ def _make_thumb_bytes(path: Path) -> bytes | None:
                 img.save(buf, format="WEBP", quality=85)
             else:
                 img.convert("RGB").save(buf, format=fmt, quality=85)
-            return buf.getvalue()
+            return buf.getvalue(), bh
     except Exception:
-        return None
+        return None, None
 
 
 def is_image(path: Path) -> bool:
@@ -142,8 +150,8 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
             # Best-effort: keep indexing even if image metadata read fails.
             pass
         image_id = image_id_for(library_id, root_path, p)
-        # Generate a thumbnail in-memory for MinIO
-        thumb_bytes: bytes | None = _make_thumb_bytes(p)
+        # Generate a thumbnail in-memory for MinIO + a BlurHash placeholder.
+        thumb_bytes, blurhash = _make_thumb_bytes(p)
 
         # Upload thumbnail if generated (optional)
         thumb_key = None
@@ -172,6 +180,7 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
             "ctime": stat.st_ctime,
             "mtime": stat.st_mtime,
             "thumb_key": thumb_key,
+            "blurhash": blurhash,
         }
         return _ScanResult(image_id=image_id, ok=True, doc=doc)
     except Exception as e:

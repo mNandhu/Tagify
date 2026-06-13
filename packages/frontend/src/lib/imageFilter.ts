@@ -14,6 +14,9 @@ export type ImageDoc = {
   // (presigned modes) or the streaming route. Lets the grid render <img src>
   // with no per-tile resolve request. See api/images.list_images.
   thumb_url?: string;
+  // Compact blurred-preview hash; decoded to an instant placeholder so tiles
+  // never show a grey loading skeleton. See services/blurhash.py.
+  blurhash?: string;
   tags?: string[];
   rating?: string;
   ai?: {
