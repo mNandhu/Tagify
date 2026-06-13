@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { Settings as SettingsIcon } from "lucide-react";
 import { useToast } from "../components/Toasts";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { isActiveJob, type AISettings } from "../lib/ai";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Card } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
 
 function formatBytes(n: number) {
   if (!Number.isFinite(n) || n <= 0) return "0 B";
@@ -202,21 +207,24 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-4 space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold">Settings</h2>
-        <p className="text-neutral-400 text-sm">
-          Internal AI tagging (wd-tagger via ONNX Runtime).
-        </p>
-      </div>
+    <div className="p-6 space-y-6">
+      <PageHeader
+        icon={SettingsIcon}
+        title="Settings"
+        description="Internal AI tagging (wd-tagger via ONNX Runtime)."
+      />
 
-      <section className="rounded border border-neutral-800 bg-neutral-900/40 p-4 space-y-3">
+      <Card className="p-5 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="font-semibold">Model</div>
+            <div className="font-semibold flex items-center gap-2">
+              Model
+              <Badge tone={status?.model?.loaded ? "success" : "neutral"}>
+                {status?.model?.loaded ? "loaded" : "unloaded"}
+              </Badge>
+            </div>
             <div className="text-xs text-neutral-400">
-              Status: {status?.model?.loaded ? "loaded" : "unloaded"}
-              {status?.model?.repo ? ` · ${status.model.repo}` : ""}
+              {status?.model?.repo ? status.model.repo : ""}
             </div>
             {status?.model_load?.status &&
               status.model_load.status !== "idle" && (
@@ -233,34 +241,26 @@ export default function SettingsPage() {
           </div>
           <div className="flex gap-2">
             {!isModelLoaded && !isModelLoading && (
-              <button
-                className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
-                onClick={loadModel}
-                disabled={running}
-              >
+              <Button onClick={loadModel} disabled={running}>
                 Load
-              </button>
+              </Button>
             )}
 
             {isModelLoading && (
-              <button
-                className="px-3 py-2 rounded bg-red-600/20 hover:bg-red-600/30 border border-red-700 text-red-200 disabled:opacity-50"
+              <Button
+                variant="dangerSoft"
                 onClick={cancelModelLoad}
                 disabled={running}
                 title="Stops an in-progress download/load."
               >
                 Stop
-              </button>
+              </Button>
             )}
 
             {isModelLoaded && !isModelLoading && (
-              <button
-                className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-50"
-                onClick={unloadModel}
-                disabled={running}
-              >
+              <Button onClick={unloadModel} disabled={running}>
                 Unload
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -274,14 +274,15 @@ export default function SettingsPage() {
                   <span className="text-neutral-500"> (cancelling)</span>
                 ) : null}
               </div>
-              <button
-                className="px-2 py-1 rounded bg-red-600/20 hover:bg-red-600/30 border border-red-700 text-red-200 text-xs disabled:opacity-50"
+              <Button
+                size="sm"
+                variant="dangerSoft"
                 onClick={cancelModelDownload}
                 disabled={running}
                 title="Cancel the current download (partial files will be removed)."
               >
                 Cancel download
-              </button>
+              </Button>
             </div>
 
             {(status.model_download.files || []).map((f) => {
@@ -480,17 +481,17 @@ export default function SettingsPage() {
         )}
 
         <div className="flex items-center gap-2">
-          <button
-            className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
+          <Button
+            variant="primary"
             onClick={save}
             disabled={!settings || saving}
           >
             {saving ? "Saving…" : "Save settings"}
-          </button>
+          </Button>
         </div>
-      </section>
+      </Card>
 
-      <section className="rounded border border-neutral-800 bg-neutral-900/40 p-4 space-y-3">
+      <Card className="p-5 space-y-3">
         <div className="font-semibold">Run AI Tagging</div>
         <div className="flex flex-wrap items-end gap-2">
           <div>
@@ -507,24 +508,20 @@ export default function SettingsPage() {
               max={5000}
             />
           </div>
-          <button
-            className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
-            onClick={runUntagged}
-            disabled={running}
-          >
+          <Button variant="success" onClick={runUntagged} disabled={running}>
             Tag un-AI-tagged images
-          </button>
+          </Button>
         </div>
 
         <div className="pt-2 border-t border-neutral-800 flex flex-wrap items-center gap-2">
-          <button
-            className="px-3 py-2 rounded bg-red-600/20 hover:bg-red-600/30 border border-red-700 text-red-200 disabled:opacity-50"
+          <Button
+            variant="dangerSoft"
             onClick={clearAllAiTags}
             disabled={running}
             title="Removes AI tags and AI metadata from every image. Keeps manual: tags."
           >
             Clear ALL AI tags (all libraries)
-          </button>
+          </Button>
           <div className="text-xs text-neutral-500">
             Use this if you want to re-run AI tagging from scratch.
           </div>
@@ -563,20 +560,20 @@ export default function SettingsPage() {
 
             {isActiveJob(latestJob.status) && (
               <div>
-                <button
-                  className="px-3 py-2 rounded bg-red-600 hover:bg-red-500 disabled:opacity-50"
+                <Button
+                  variant="danger"
                   onClick={() => cancelJob(latestJob.id)}
                   disabled={running}
                 >
                   Cancel latest job
-                </button>
+                </Button>
               </div>
             )}
           </div>
         )}
-      </section>
+      </Card>
 
-      <section className="rounded border border-neutral-800 bg-neutral-900/40 p-4 space-y-2">
+      <Card className="p-5 space-y-2">
         <div className="font-semibold">Recent jobs</div>
         <div className="space-y-2">
           {(status?.jobs?.recent || []).map((j) => (
@@ -607,14 +604,15 @@ export default function SettingsPage() {
                   ) : null}
                 </div>
                 {isActiveJob(j.status) && (
-                  <button
-                    className="px-2 py-1 rounded bg-red-600/20 hover:bg-red-600/30 border border-red-700 text-red-200 text-xs disabled:opacity-50"
+                  <Button
+                    size="sm"
+                    variant="dangerSoft"
                     onClick={() => cancelJob(j.id)}
                     disabled={running}
                     title="Cancel job"
                   >
                     Cancel
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -623,7 +621,7 @@ export default function SettingsPage() {
             <div className="text-sm text-neutral-500">No jobs yet.</div>
           )}
         </div>
-      </section>
+      </Card>
     </div>
   );
 }

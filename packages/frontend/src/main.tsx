@@ -5,6 +5,7 @@ import "./masonry.css";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
+import OverviewPage from "./pages/OverviewPage";
 import AllImagesPage from "./pages/AllImagesPage";
 import LibrariesPage from "./pages/LibrariesPage";
 import TagsPage from "./pages/TagsPage";
@@ -18,6 +19,7 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <AllImagesPage /> },
+      { path: "overview", element: <OverviewPage /> },
       { path: "libraries", element: <LibrariesPage /> },
       { path: "tags", element: <TagsPage /> },
       { path: "settings", element: <SettingsPage /> },

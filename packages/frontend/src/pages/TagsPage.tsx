@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Tag as TagIcon, Slash } from "lucide-react";
+import { Tag as TagIcon, Slash, Tags as TagsIcon } from "lucide-react";
 import { resolveMediaUrl } from "../lib/media";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Badge } from "../components/ui/Badge";
+import { Skeleton } from "../components/ui/Skeleton";
 
 type TagAgg = { _id: string; count: number; thumb_image_id?: string | null };
 
@@ -12,12 +15,12 @@ async function api<T>(url: string): Promise<T> {
 }
 
 export default function TagsPage() {
-  const [tags, setTags] = useState<TagAgg[]>([]);
+  const [tags, setTags] = useState<TagAgg[] | null>(null);
   const navigate = useNavigate();
   useEffect(() => {
     api<TagAgg[]>(`/api/tags?include_manual=1`)
       .then(setTags)
-      .catch(() => {});
+      .catch(() => setTags([]));
   }, []);
 
   const formatTag = (raw: string) =>
@@ -25,12 +28,17 @@ export default function TagsPage() {
 
   const isManual = (raw: string) => raw.startsWith("manual:");
   return (
-    <div className="p-4">
-      <h2 className="text-lg font-semibold mb-3">Browse by Tag</h2>
+    <div className="p-6">
+      <PageHeader
+        icon={TagsIcon}
+        title="Browse by Tag"
+        count={tags?.length}
+        description="Jump into any tag, or surface what still needs tagging."
+      />
       <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
         {/* Special tile: Untagged images */}
         <button
-          className="rounded overflow-hidden bg-neutral-900 border border-neutral-800 p-4 text-left hover:bg-neutral-800"
+          className="rounded-xl overflow-hidden bg-neutral-900/60 border border-neutral-800 p-4 text-left card-hover"
           onClick={() => navigate(`/?no_tags=1`)}
           aria-label="Browse untagged images"
           title="Untagged"
@@ -50,7 +58,7 @@ export default function TagsPage() {
 
         {/* Special tile: Untagged by AI */}
         <button
-          className="rounded overflow-hidden bg-neutral-900 border border-neutral-800 p-4 text-left hover:bg-neutral-800"
+          className="rounded-xl overflow-hidden bg-neutral-900/60 border border-neutral-800 p-4 text-left card-hover"
           onClick={() => navigate(`/?no_ai_tags=1`)}
           aria-label="Browse images missing AI tags"
           title="AI Untagged"
@@ -70,15 +78,28 @@ export default function TagsPage() {
           </div>
         </button>
 
-        {tags.map((t) => (
-          <TagCard
-            key={t._id}
-            tag={t}
-            onClick={() => navigate(`/?tags=${encodeURIComponent(t._id)}`)}
-            formatTag={formatTag}
-            isManual={isManual}
-          />
-        ))}
+        {tags === null
+          ? Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={i}
+                className="rounded-xl overflow-hidden bg-neutral-900/60 border border-neutral-800"
+              >
+                <Skeleton className="w-full pb-[56.25%] rounded-none" />
+                <div className="p-3 space-y-2">
+                  <Skeleton className="h-5 w-24" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+              </div>
+            ))
+          : tags.map((t) => (
+              <TagCard
+                key={t._id}
+                tag={t}
+                onClick={() => navigate(`/?tags=${encodeURIComponent(t._id)}`)}
+                formatTag={formatTag}
+                isManual={isManual}
+              />
+            ))}
       </div>
     </div>
   );
@@ -119,7 +140,7 @@ function TagCard({
 
   return (
     <button
-      className="rounded overflow-hidden bg-neutral-900 border border-neutral-800 text-left hover:bg-neutral-800"
+      className="rounded-xl overflow-hidden bg-neutral-900/60 border border-neutral-800 text-left card-hover"
       onClick={onClick}
     >
       <div className="relative w-full pb-[56.25%] bg-neutral-800">
@@ -137,15 +158,12 @@ function TagCard({
         )}
       </div>
       <div className="p-3">
-        <div className="text-lg font-semibold flex items-center gap-2">
-          {formatTag(tag._id)}
+        <div className="text-base font-semibold flex items-center gap-2">
+          <span className="truncate">{formatTag(tag._id)}</span>
           {isManual(tag._id) ? (
-            <span
-              className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-900/30 border border-emerald-800 text-emerald-100"
-              title="Manual tag"
-            >
+            <Badge tone="success" className="text-[10px]">
               manual
-            </span>
+            </Badge>
           ) : null}
         </div>
         <div className="text-xs text-neutral-400">{tag.count} images</div>

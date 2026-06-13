@@ -9,12 +9,18 @@ import {
   Tag as TagIcon,
   Slash,
   ImageOff,
+  Images,
+  Sparkles,
 } from "lucide-react";
 import {
   DEFAULT_FILTERS,
   serializeFilters,
   type Filters,
 } from "../lib/imageFilter";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Button } from "../components/ui/Button";
+import { Input, Select } from "../components/ui/Input";
+import { EmptyState } from "../components/ui/EmptyState";
 import { useFilters } from "../hooks/useFilters";
 import { useImageFeed } from "../hooks/useImageFeed";
 import { useScrollRestoration } from "../hooks/useScrollRestoration";
@@ -225,42 +231,45 @@ export default function AllImagesPage() {
   }, [feed.hasNextPage, feed.isFetchingNextPage, feed.fetchNextPage]);
 
   return (
-    <div ref={containerRef} className="p-4 space-y-3">
+    <div ref={containerRef} className="p-6 space-y-3">
+      <PageHeader
+        icon={Images}
+        title="All Images"
+        count={items.length}
+        description={
+          selectionMode
+            ? `${selection.size} selected`
+            : "Browse, filter, and tag your library."
+        }
+      />
       <div
         ref={headerRef}
-        className="sticky top-0 z-10 -mt-4 -mx-4 px-4 pt-4 bg-neutral-900/85 backdrop-blur border-b border-neutral-800"
+        className="sticky top-0 z-10 -mx-6 px-6 py-3 bg-neutral-900/85 backdrop-blur border-b border-neutral-800"
       >
-        <div className="flex items-center gap-2 pb-3">
-          <button
+        <div className="flex items-center gap-2">
+          <Button
             ref={filterButtonRef}
-            className={
-              "p-2 rounded border inline-flex items-center justify-center " +
-              (filtersOpen
-                ? "bg-purple-700 border-purple-600 text-white"
-                : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200")
-            }
+            size="icon"
+            variant="secondary"
+            active={filtersOpen}
             onClick={() => setFiltersOpen((v) => !v)}
             aria-label={filtersOpen ? "Hide filters" : "Show filters"}
             title={filtersOpen ? "Hide filters" : "Show filters"}
           >
             <Filter size={18} />
-          </button>
+          </Button>
           <form onSubmit={onSubmitSearch} className="flex-1">
-            <input
-              className="px-3 py-2 rounded bg-neutral-950/70 border border-neutral-800 w-full"
+            <Input
               placeholder="Search tags… (comma separated)"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               ref={searchInputRef}
             />
           </form>
-          <button
-            className={
-              "p-2 rounded border inline-flex items-center justify-center " +
-              (selectionMode
-                ? "bg-purple-700 border-purple-600 text-white"
-                : "bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-200")
-            }
+          <Button
+            size="icon"
+            variant="secondary"
+            active={selectionMode}
             onClick={() => setSelectionMode((v) => !v)}
             aria-label={
               selectionMode ? "Exit selection mode" : "Enter selection mode"
@@ -268,10 +277,10 @@ export default function AllImagesPage() {
             title={selectionMode ? "Done selecting" : "Select"}
           >
             {selectionMode ? <CheckSquare size={18} /> : <Square size={18} />}
-          </button>
+          </Button>
           {selectionMode && selectionActive && (
-            <button
-              className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500"
+            <Button
+              variant="primary"
               onClick={async () => {
                 const ids = Array.from(selection);
                 if (!ids.length) return;
@@ -293,8 +302,8 @@ export default function AllImagesPage() {
                 }
               }}
             >
-              Batch actions
-            </button>
+              <Sparkles size={16} /> Tag {selection.size}
+            </Button>
           )}
         </div>
 
@@ -307,10 +316,11 @@ export default function AllImagesPage() {
           >
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
-                <label className="block text-sm mb-1">Tag logic</label>
-                <select
+                <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                  Tag logic
+                </label>
+                <Select
                   aria-label="Tag logic"
-                  className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
                   value={filters.logic}
                   onChange={(e) =>
                     setFilters({
@@ -321,13 +331,14 @@ export default function AllImagesPage() {
                 >
                   <option value="and">Match all tags (AND)</option>
                   <option value="or">Match any tag (OR)</option>
-                </select>
+                </Select>
               </div>
               <div>
-                <label className="block text-sm mb-1">Library</label>
-                <select
+                <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                  Library
+                </label>
+                <Select
                   aria-label="Library filter"
-                  className="px-2 py-2 rounded bg-neutral-900 border border-neutral-800 w-full"
                   value={filters.libraryId || ""}
                   onChange={(e) =>
                     setFilters({
@@ -342,18 +353,15 @@ export default function AllImagesPage() {
                       {l.name || l.path}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <div className="flex items-end">
                 <div className="flex items-center gap-2">
-                  <button
+                  <Button
                     type="button"
-                    className={
-                      "p-2 rounded border inline-flex items-center justify-center transition-colors " +
-                      (filters.noTags
-                        ? "bg-purple-700/30 border-purple-600 text-purple-200"
-                        : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
-                    }
+                    size="icon"
+                    variant="secondary"
+                    active={filters.noTags}
                     onClick={() =>
                       setFilters({ ...filters, noTags: !filters.noTags })
                     }
@@ -365,20 +373,16 @@ export default function AllImagesPage() {
                       {filters.noTags && (
                         <Slash
                           size={16}
-                          className="absolute inset-0 text-purple-300 opacity-90"
+                          className="absolute inset-0 text-purple-200 opacity-90"
                         />
                       )}
                     </span>
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
-                    className={
-                      "px-3 py-2 rounded border text-sm transition-colors " +
-                      (filters.noAiTags
-                        ? "bg-emerald-700/25 border-emerald-600 text-emerald-200"
-                        : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:bg-neutral-800")
-                    }
+                    variant="secondary"
+                    active={filters.noAiTags}
                     onClick={() =>
                       setFilters({ ...filters, noAiTags: !filters.noAiTags })
                     }
@@ -388,25 +392,19 @@ export default function AllImagesPage() {
                     title="No AI tags"
                   >
                     No AI
-                  </button>
+                  </Button>
                 </div>
               </div>
               <div className="flex items-end gap-2">
-                <button
-                  className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
+                <Button
                   onClick={() => {
                     setQ("");
                     setFilters(DEFAULT_FILTERS);
                   }}
                 >
                   Clear filters
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
-                  onClick={clearSelection}
-                >
-                  Clear selection
-                </button>
+                </Button>
+                <Button onClick={clearSelection}>Clear selection</Button>
               </div>
             </div>
           </div>
@@ -414,40 +412,33 @@ export default function AllImagesPage() {
       </div>
 
       {!feed.isLoading && items.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-24 px-4">
-          <div className="bg-neutral-800/50 rounded-2xl p-12 border border-neutral-700/50 max-w-md text-center">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-neutral-700/50 mb-6">
-              <ImageOff size={40} className="text-neutral-400" />
-            </div>
-            <h2 className="text-2xl font-semibold text-neutral-100 mb-3">
-              No Images Found
-            </h2>
-            <p className="text-neutral-400 mb-6 leading-relaxed">
-              {hasActiveFilter(filters)
-                ? "No images match your current filters. Try adjusting your search criteria."
-                : "You don't have any images yet. Add a library to start importing your images."}
-            </p>
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <EmptyState
+          icon={ImageOff}
+          title="No images found"
+          description={
+            hasActiveFilter(filters)
+              ? "No images match your current filters. Try adjusting your search criteria."
+              : "You don't have any images yet. Add a library to start importing your images."
+          }
+          actions={
+            <>
               {hasActiveFilter(filters) && (
-                <button
+                <Button
+                  variant="primary"
                   onClick={() => {
                     setQ("");
                     setFilters(DEFAULT_FILTERS);
                   }}
-                  className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-medium transition-colors"
                 >
-                  Clear Filters
-                </button>
+                  Clear filters
+                </Button>
               )}
-              <button
-                onClick={() => navigate("/libraries")}
-                className="px-4 py-2 rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-100 font-medium transition-colors"
-              >
+              <Button onClick={() => navigate("/libraries")}>
                 Go to Libraries
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </>
+          }
+        />
       )}
 
       {items.length > 0 && (

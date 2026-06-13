@@ -1,0 +1,53 @@
+import React from "react";
+import { cn } from "../../lib/cn";
+
+export function Card({
+  className,
+  hover,
+  ...rest
+}: React.HTMLAttributes<HTMLDivElement> & { hover?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border border-neutral-800 bg-neutral-900/60 backdrop-blur-sm",
+        hover && "card-hover",
+        className,
+      )}
+      {...rest}
+    />
+  );
+}
+
+/** A titled content section — used for settings groups and framed panels. */
+export function Section({
+  title,
+  description,
+  actions,
+  className,
+  children,
+}: {
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  actions?: React.ReactNode;
+  className?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Card className={cn("p-5", className)}>
+      {(title || actions) && (
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            {title && (
+              <h3 className="font-semibold text-neutral-100">{title}</h3>
+            )}
+            {description && (
+              <p className="text-xs text-neutral-400 mt-0.5">{description}</p>
+            )}
+          </div>
+          {actions && <div className="flex items-center gap-2">{actions}</div>}
+        </div>
+      )}
+      {children}
+    </Card>
+  );
+}
