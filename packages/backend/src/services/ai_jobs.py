@@ -34,6 +34,12 @@ class AIJob:
     errors: list[dict[str, Any]] = field(default_factory=list)
     cancel_requested: bool = False
 
+    def public(self) -> dict[str, Any]:
+        """Serializable view for the API. Excludes private attributes (e.g. the
+        ``_ids`` work list stashed via ``setattr``), which would otherwise leak
+        hundreds of image ids into every ``/status`` and ``/jobs`` poll."""
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+
 
 class _JobQueue:
     """A tiny cancellable async queue.

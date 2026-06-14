@@ -267,25 +267,58 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {status?.model_download?.status === "downloading" && (
-          <div className="rounded border border-neutral-800 bg-neutral-950/40 p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm">
-                Downloading model files…
-                {status.model_download.cancel_requested ? (
-                  <span className="text-neutral-500"> (cancelling)</span>
-                ) : null}
+        {status?.model_download &&
+          ["downloading", "error", "cancelled"].includes(
+            status.model_download.status
+          ) && (
+            <div
+              className={`rounded border p-3 space-y-2 ${
+                status.model_download.status === "error"
+                  ? "border-red-900/60 bg-red-950/20"
+                  : "border-neutral-800 bg-neutral-950/40"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm">
+                  {status.model_download.status === "downloading" ? (
+                    <>
+                      Downloading model files…
+                      {status.model_download.cancel_requested ? (
+                        <span className="text-neutral-500"> (cancelling)</span>
+                      ) : null}
+                    </>
+                  ) : status.model_download.status === "error" ? (
+                    <span className="text-red-300">
+                      Download failed
+                      {status.model_download.error
+                        ? `: ${status.model_download.error}`
+                        : ""}
+                    </span>
+                  ) : (
+                    <span className="text-neutral-400">Download cancelled</span>
+                  )}
+                </div>
+                {status.model_download.status === "downloading" ? (
+                  <Button
+                    size="sm"
+                    variant="dangerSoft"
+                    onClick={cancelModelDownload}
+                    disabled={running}
+                    title="Cancel the current download (partial files will be removed)."
+                  >
+                    Cancel download
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={loadModel}
+                    disabled={running}
+                    title="Retry downloading and loading the model."
+                  >
+                    Retry
+                  </Button>
+                )}
               </div>
-              <Button
-                size="sm"
-                variant="dangerSoft"
-                onClick={cancelModelDownload}
-                disabled={running}
-                title="Cancel the current download (partial files will be removed)."
-              >
-                Cancel download
-              </Button>
-            </div>
 
             {(status.model_download.files || []).map((f) => {
               const pct =
@@ -474,6 +507,36 @@ export default function SettingsPage() {
             onClick={save}
             disabled={!settings || saving}
           >
+            {saving ? "Saving…" : "Save settings"}
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <div>
+          <div className="font-semibold">Prompt tags</div>
+          <div className="text-xs text-neutral-400">
+            How prompt: tags are extracted from embedded generation metadata
+            (A1111 / ComfyUI). Separate from AI tagging.
+          </div>
+        </div>
+
+        {settings ? (
+          <Checkbox
+            id="prompt_positive_only"
+            checked={settings.prompt_positive_only}
+            onChange={(v) =>
+              setSettings({ ...settings, prompt_positive_only: v })
+            }
+            label="Positive prompt only"
+            hint="Derive prompt: tags from the positive prompt only, so negative-prompt words don't pollute search. Applies on next reprojection."
+          />
+        ) : (
+          <div className="text-sm text-neutral-500">Loading settings…</div>
+        )}
+
+        <div className="flex items-center gap-2 pt-1">
+          <Button variant="primary" onClick={save} disabled={!settings || saving}>
             {saving ? "Saving…" : "Save settings"}
           </Button>
         </div>

@@ -25,6 +25,7 @@ class SettingsPatch(BaseModel):
     max_character: int | None = None
     idle_unload_s: int | None = None
     cache_dir: str | None = None
+    prompt_positive_only: bool | None = None
 
 
 class TagRequest(BaseModel):
@@ -62,7 +63,7 @@ async def ai_status():
         "model_load": get_tagger_manager().load_status(),
         "model_download": dl,
         "jobs": {
-            "recent": [j.__dict__ for j in jm.list_jobs(limit=10)],
+            "recent": [j.public() for j in jm.list_jobs(limit=10)],
             "queue_depth": jm.queue_depth(),
         },
         "settings": s,
@@ -154,7 +155,7 @@ async def ai_clear_all_ai_tags():
 @router.get("/jobs")
 async def ai_list_jobs(limit: int = 20):
     jm = get_ai_job_manager()
-    return [j.__dict__ for j in jm.list_jobs(limit=limit)]
+    return [j.public() for j in jm.list_jobs(limit=limit)]
 
 
 @router.get("/jobs/{job_id}")
@@ -163,14 +164,15 @@ async def ai_get_job(job_id: str):
     j = jm.get_job(job_id)
     if j is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return j.__dict__
+    return j.public()
 
 
 @router.post("/jobs/{job_id}/cancel")
 async def ai_cancel_job(job_id: str):
     jm = get_ai_job_manager()
     ok = await jm.cancel(job_id)
+    j = jm.get_job(job_id)
     return {
         "ok": ok,
-        "job": (jm.get_job(job_id).__dict__ if jm.get_job(job_id) else None),
+        "job": (j.public() if j else None),
     }

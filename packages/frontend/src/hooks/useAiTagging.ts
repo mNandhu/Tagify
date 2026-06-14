@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "../components/Toasts";
-import { fetchAiJob, isTerminalJob, postAiTag } from "../lib/ai";
+import {
+  fetchAiJob,
+  isActiveJob,
+  isTerminalJob,
+  postAiJobCancel,
+  postAiTag,
+} from "../lib/ai";
 
 const JOB_POLL_MS = 1500;
 
@@ -75,5 +81,30 @@ export function useAiTagging(onTagged?: () => void) {
     [submitting, jobId, push],
   );
 
-  return { start, submitting, jobId, job: job ?? null };
+  const [cancelling, setCancelling] = useState(false);
+  const cancel = useCallback(async () => {
+    if (!jobId || cancelling) return;
+    setCancelling(true);
+    try {
+      const { ok } = await postAiJobCancel(jobId);
+      push(
+        ok ? "Cancellation requested" : "Job already finished",
+        ok ? "info" : "info",
+      );
+    } catch (e) {
+      push(`Failed to cancel: ${String(e)}`, "error");
+    } finally {
+      setCancelling(false);
+    }
+  }, [jobId, cancelling, push]);
+
+  return {
+    start,
+    cancel,
+    submitting,
+    cancelling,
+    jobId,
+    job: job ?? null,
+    canCancel: !!jobId && isActiveJob(status),
+  };
 }

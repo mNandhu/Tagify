@@ -21,6 +21,9 @@ DEFAULT_AI_SETTINGS: dict[str, Any] = {
     "max_character": 40,
     "idle_unload_s": 300,
     "cache_dir": ".cache/tagify/models",
+    # When on (default), prompt: tags are derived from the positive prompt only,
+    # so negative-prompt words don't pollute search. Applied at reprojection.
+    "prompt_positive_only": True,
 }
 
 
@@ -51,6 +54,9 @@ def clean_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
 
     if "model_repo" in clean:
         clean["model_repo"] = str(clean["model_repo"]).strip()
+
+    if "prompt_positive_only" in clean:
+        clean["prompt_positive_only"] = bool(clean["prompt_positive_only"])
 
     return clean
 

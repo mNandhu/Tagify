@@ -291,6 +291,30 @@ class ModelDownloadManager:
                 return True
             return False
 
+    def cancel_sync(self, *, model_repo: str, cache_dir: str) -> bool:
+        """Best-effort cancel callable from sync code (e.g. ``start_load``).
+
+        Skips the async lock — used to supersede a stale download when the load
+        target changes, where we can't await. Same task runs on this event loop,
+        so ``task.cancel()`` is honoured on the next tick."""
+        key = (model_repo, cache_dir)
+        st = self._states.get(key)
+        if st is not None:
+            st.cancel_requested = True
+            st.updated_at = time.time()
+        t = self._tasks.get(key)
+        if t is not None and not t.done():
+            t.cancel()
+            return True
+        return False
+
+    def is_available(self, *, model_repo: str, cache_dir: str) -> bool:
+        """Whether both model files already exist at the expected cache paths."""
+        csv_path, onnx_path = _expected_paths(
+            model_repo=model_repo, cache_dir=cache_dir
+        )
+        return os.path.exists(csv_path) and os.path.exists(onnx_path)
+
     async def wait(self, *, model_repo: str, cache_dir: str) -> None:
         key = (model_repo, cache_dir)
         t = self._tasks.get(key)
@@ -557,17 +581,20 @@ class TaggerManager:
         repo = self._loading_for[0] if self._loading_for else self._tagger.repo
         cache_dir = self._loading_for[1] if self._loading_for else None
         dl = None
+        available = False
         if repo and cache_dir:
-            dl = (
-                get_download_manager()
-                .get_state(model_repo=repo, cache_dir=cache_dir)
-                .as_dict()
-            )
+            dm = get_download_manager()
+            dl = dm.get_state(model_repo=repo, cache_dir=cache_dir).as_dict()
+            available = dm.is_available(model_repo=repo, cache_dir=cache_dir)
         return {
             "status": self._load_status,
             "error": self._load_error,
             "loading_for": self._loading_for,
             "download": dl,
+            # Whether the model files already exist at the cache location, so a
+            # cancelled/failed load can be retried as a fast disk load with no
+            # re-download.
+            "available": available,
         }
 
     def start_load(self, *, model_repo: str, cache_dir: str) -> bool:
@@ -578,26 +605,48 @@ class TaggerManager:
             return False
 
         if self._load_task is not None and not self._load_task.done():
-            # Already loading something.
-            return False
+            # A load is already in flight. If it targets exactly this
+            # (repo, cache_dir), let it run. Otherwise the target changed — e.g.
+            # the user corrected a wrong cache dir — so supersede the stale load
+            # and cancel its (possibly large) download instead of refusing to
+            # start. The new load's existence check (see ensure_loaded ->
+            # download_wd_tagger -> ModelDownloadManager.start) then loads from
+            # disk with no download if the model is already present there.
+            if self._loading_for == (model_repo, cache_dir):
+                return False
+            if self._loading_for is not None:
+                prev_repo, prev_cache = self._loading_for
+                get_download_manager().cancel_sync(
+                    model_repo=prev_repo, cache_dir=prev_cache
+                )
+            self._load_task.cancel()
 
         self._loading_for = (model_repo, cache_dir)
         self._load_error = None
         self._load_status = "loading"
 
         async def _runner() -> None:
+            # Status writes are guarded by a task-identity check so a superseded
+            # load (cancelled above) can't clobber the status of the load that
+            # replaced it when its CancelledError finally unwinds.
             try:
                 await self.ensure_loaded(model_repo=model_repo, cache_dir=cache_dir)
-                self._load_status = "loaded"
+                if self._load_task is asyncio.current_task():
+                    self._load_status = "loaded"
             except asyncio.CancelledError:
-                self._load_status = "cancelled"
+                if self._load_task is asyncio.current_task():
+                    self._load_status = "cancelled"
                 raise
             except Exception as e:
-                self._load_status = "error"
-                self._load_error = str(e)
+                if self._load_task is asyncio.current_task():
+                    self._load_status = "error"
+                    self._load_error = str(e)
             finally:
                 # If load succeeded, clear "loading_for".
-                if self._load_status == "loaded":
+                if (
+                    self._load_task is asyncio.current_task()
+                    and self._load_status == "loaded"
+                ):
                     self._loading_for = None
 
         self._load_task = asyncio.create_task(

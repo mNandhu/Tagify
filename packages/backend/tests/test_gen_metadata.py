@@ -127,15 +127,51 @@ def test_signature_none_on_empty():
 # --- Tokenise / group --------------------------------------------------------
 
 
-def test_tokenize_splits_commas_and_whitespace_lowercase_dedup():
+def test_tokenize_splits_on_commas_lowercase_dedup():
+    # Commas are the tag separator; multi-word tags keep their spaces.
     terms = gm.tokenize_prompt("Cyberpunk City, neon, NEON")
-    assert terms == ["city", "cyberpunk", "neon"]
+    assert terms == ["cyberpunk city", "neon"]
+
+
+def test_tokenize_preserves_multiword_tag_with_escaped_parens():
+    # The reported bug: "hu tao \\(genshin impact\\)" is ONE tag, not hu + tao.
+    terms = gm.tokenize_prompt(r"1girl, hu tao \(genshin impact\), smile")
+    assert terms == ["1girl", "hu tao (genshin impact)", "smile"]
 
 
 def test_tokenize_preserves_lora_and_danbooru_tokens():
     terms = gm.tokenize_prompt("1girl, <lora:foo:0.8>")
     assert "1girl" in terms
     assert "<lora:foo:0.8>" in terms
+
+
+def test_tokenize_strips_emphasis_brackets_and_weights():
+    # (tag1:1.1,tag2) -> bracket + trailing :weight stripped
+    assert gm.tokenize_prompt("(tag1:1.1,tag2)") == ["tag1", "tag2"]
+
+
+def test_tokenize_drops_bare_weight_token():
+    # (tag1,tag2,:1.1) -> the orphan :1.1 weight collapses to empty and is dropped
+    assert gm.tokenize_prompt("(tag1,tag2,:1.1)") == ["tag1", "tag2"]
+
+
+def test_tokenize_keeps_numeric_tags():
+    # A weight strip must not eat legitimate numeric tags (year, danbooru counts).
+    assert "1990" in gm.tokenize_prompt("1990, sunset")
+
+
+def test_tokenize_preserves_balanced_danbooru_qualifier():
+    # name_(series) qualifiers are the dominant wd-tagger tag shape: the closing
+    # paren is part of the tag and must survive (regression guard).
+    assert gm.tokenize_prompt("hatsune_miku_(vocaloid)") == [
+        "hatsune_miku_(vocaloid)"
+    ]
+
+
+def test_tokenize_peels_fully_wrapping_emphasis():
+    # (masterpiece) and (masterpiece:1.2) emphasis both reduce to the bare tag.
+    assert gm.tokenize_prompt("(masterpiece)") == ["masterpiece"]
+    assert gm.tokenize_prompt("(masterpiece:1.2)") == ["masterpiece"]
 
 
 def test_group_id_same_for_same_sig_and_prompt():
@@ -160,18 +196,34 @@ def test_extract_comfyui_fills_derived_fields():
     g = gm.extract({"source": "comfyui", "prompt": COMFY})
     assert g["model"] == "sdxl.safetensors"
     assert g["workflow_sig"] is not None
-    assert "fox" in g["prompt_terms"]
+    assert "a fox in snow" in g["prompt_terms"]
     assert g["group_id"] is not None
 
 
 def test_extract_a1111():
     g = gm.extract({"source": "a1111", "parameters": A1111_FULL})
     assert g["seed"] == 12345
-    assert "cyberpunk" in g["prompt_terms"]
+    assert "a cyberpunk city" in g["prompt_terms"]
 
 
 def test_extract_unknown_source_returns_none():
     assert gm.extract({"source": "nope"}) is None
+
+
+def test_extract_positive_only_default_excludes_negative_terms():
+    # A1111_FULL negative is "blurry, lowres"; default (positive-only) drops them.
+    g = gm.extract({"source": "a1111", "parameters": A1111_FULL})
+    assert "a cyberpunk city" in g["prompt_terms"]
+    assert "blurry" not in g["prompt_terms"]
+    assert "lowres" not in g["prompt_terms"]
+
+
+def test_extract_positive_only_false_includes_negative_terms():
+    g = gm.extract(
+        {"source": "a1111", "parameters": A1111_FULL}, prompt_positive_only=False
+    )
+    assert "a cyberpunk city" in g["prompt_terms"]
+    assert "blurry" in g["prompt_terms"]
     assert gm.extract(None) is None
 
 

@@ -1,9 +1,20 @@
 """Unit tests for the pure tagger post-processing: MCUT and tag selection.
 Previously buried inside WDTagger.predict behind an ONNX session."""
 
+import asyncio
+import contextlib
+from pathlib import Path
+
 import numpy as np
 
-from src.services.ai_tagger import LabelIndex, mcut_threshold, select_tags
+from src.services.ai_tagger import (
+    LabelIndex,
+    ModelDownloadManager,
+    TaggerManager,
+    _expected_paths,
+    mcut_threshold,
+    select_tags,
+)
 
 
 def _labels() -> LabelIndex:
@@ -55,3 +66,93 @@ def test_select_tags_general_mcut_overrides_threshold():
         general_mcut=True,  # ...but mcut picks the gap midpoint (0.55)
     )
     assert out["general_tags"] == [("cat", 0.9)]
+
+
+# --- Download availability / load state machine ------------------------------
+
+
+def _place_model(repo: str, cache_dir: str) -> None:
+    csv_path, onnx_path = _expected_paths(model_repo=repo, cache_dir=cache_dir)
+    Path(onnx_path).write_text("onnx")
+    Path(csv_path).write_text("csv")
+
+
+def test_is_available_reflects_files_on_disk(tmp_path):
+    dm = ModelDownloadManager()
+    repo, cache = "Org/Model", str(tmp_path)
+    assert dm.is_available(model_repo=repo, cache_dir=cache) is False
+    _place_model(repo, cache)
+    assert dm.is_available(model_repo=repo, cache_dir=cache) is True
+
+
+async def test_download_start_skips_when_model_present(tmp_path):
+    # The core "model is available -> don't re-download" behaviour: start() must
+    # short-circuit to done and spawn no download task.
+    dm = ModelDownloadManager()
+    repo, cache = "Org/Model", str(tmp_path)
+    _place_model(repo, cache)
+    st = await dm.start(model_repo=repo, cache_dir=cache)
+    assert st.status == "done"
+    assert (repo, cache) not in dm._tasks
+
+
+async def test_start_load_supersedes_stale_target_without_clobbering(monkeypatch):
+    # Changing the cache dir mid-load supersedes the stale load; the cancelled
+    # task must NOT overwrite the new load's status when its CancelledError
+    # unwinds (the task-identity guard in start_load._runner).
+    mgr = TaggerManager()
+    release = asyncio.Event()
+    seen: list[str] = []
+
+    async def fake_ensure_loaded(*, model_repo: str, cache_dir: str) -> None:
+        seen.append(cache_dir)
+        if cache_dir == "/wrong":
+            await asyncio.sleep(3600)  # hang until superseded/cancelled
+        else:
+            await release.wait()  # completes only when we allow it
+
+    monkeypatch.setattr(mgr, "ensure_loaded", fake_ensure_loaded)
+
+    assert mgr.start_load(model_repo="r", cache_dir="/wrong") is True
+    stale = mgr._load_task
+    await asyncio.sleep(0)  # let the first runner reach the hang
+
+    # User corrects the dir: supersede the stale load.
+    assert mgr.start_load(model_repo="r", cache_dir="/correct") is True
+    fresh = mgr._load_task
+    assert fresh is not stale
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await stale  # deterministically unwind the cancelled load
+
+    # Superseded task must not have clobbered status back to "cancelled".
+    assert mgr._load_status == "loading"
+    assert mgr.load_status()["loading_for"] == ("r", "/correct")
+
+    release.set()
+    await fresh
+    assert mgr._load_status == "loaded"
+    assert seen == ["/wrong", "/correct"]
+
+
+def test_start_load_same_target_in_flight_is_noop(monkeypatch):
+    # A second load for the SAME (repo, cache_dir) while one is in flight must
+    # not start a duplicate — it returns False and keeps the existing task.
+    mgr = TaggerManager()
+
+    async def fake_ensure_loaded(*, model_repo: str, cache_dir: str) -> None:
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(mgr, "ensure_loaded", fake_ensure_loaded)
+
+    async def _run() -> None:
+        assert mgr.start_load(model_repo="r", cache_dir="/c") is True
+        first = mgr._load_task
+        await asyncio.sleep(0)
+        assert mgr.start_load(model_repo="r", cache_dir="/c") is False
+        assert mgr._load_task is first
+        first.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await first
+
+    asyncio.run(_run())

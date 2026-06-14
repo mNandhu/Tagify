@@ -131,20 +131,92 @@ def _to_float(v: Any) -> float | None:
 
 # --- Tokenisation & grouping (pure) ------------------------------------------
 
+# Trailing prompt-weight suffix on a token, e.g. ``tag:1.1`` or ``tag:0.8``.
+# Stripped only from non-lora tokens (lora tokens carry their own ``:weight``
+# inside ``<...>`` and must survive intact).
+_WEIGHT_RE = re.compile(r":\d+(?:\.\d+)?$")
+
+_OPEN = "([{"
+_CLOSE = ")]}"
+_CLOSE_FOR = dict(zip(_OPEN, _CLOSE))
+_OPEN_FOR = dict(zip(_CLOSE, _OPEN))
+
+
+def _strip_emphasis_brackets(s: str) -> str:
+    """Remove A1111/ComfyUI emphasis brackets while preserving balanced in-token
+    parens — e.g. danbooru qualifiers like ``hatsune_miku_(vocaloid)``.
+
+    Two moves, repeated until stable:
+      * peel a fully-wrapping balanced pair: ``(masterpiece)`` -> ``masterpiece``;
+      * drop an *unbalanced* edge bracket left over from comma-splitting a weighted
+        group: ``(tag1`` -> ``tag1``, ``tag2)`` -> ``tag2``.
+    A balanced pair already inside the token (``foo_(bar)``) is left untouched, so
+    real tags are never corrupted.
+    """
+    changed = True
+    while changed and s:
+        changed = False
+        # Peel a fully-wrapping balanced pair.
+        if len(s) > 1 and s[0] in _OPEN and s[-1] == _CLOSE_FOR[s[0]]:
+            inner = s[1:-1]
+            if inner.count(s[0]) == inner.count(s[-1]):
+                s = inner
+                changed = True
+                continue
+        # Drop an unbalanced leading opener (more openers than matching closers).
+        if s and s[0] in _OPEN and s.count(s[0]) > s.count(_CLOSE_FOR[s[0]]):
+            s = s[1:]
+            changed = True
+            continue
+        # Drop an unbalanced trailing closer.
+        if s and s[-1] in _CLOSE and s.count(s[-1]) > s.count(_OPEN_FOR[s[-1]]):
+            s = s[:-1]
+            changed = True
+            continue
+    return s
+
+
+# A1111 escapes literal parens in danbooru tags as ``\(`` / ``\)`` (also ``\[`` /
+# ``\]``). Unescape them so the tag reads naturally and the bracket logic sees the
+# real, balanced parens.
+_ESCAPED_BRACKET_RE = re.compile(r"\\([()\[\]])")
+
+
+def _sanitize_term(part: str) -> str:
+    """Sanitize one comma-separated prompt tag into a clean search term.
+
+    Unescapes ``\\(``-style literal parens, collapses internal whitespace, strips
+    emphasis brackets (:func:`_strip_emphasis_brackets`) and any trailing
+    ``:<number>`` weight. So ``(tag1:1.1`` and ``tag2)`` reduce to ``tag1``/``tag2``,
+    a bare ``:1.1)`` collapses to empty (and is dropped), and multi-word danbooru
+    tags keep their spaces and balanced parens (``hu tao (genshin impact)``). Lora
+    tokens (``<lora:foo:0.8>``) start with ``<`` and are left untouched so their
+    internal ``:weight`` survives.
+    """
+    p = _ESCAPED_BRACKET_RE.sub(r"\1", part)
+    p = re.sub(r"\s+", " ", p).strip()
+    p = _strip_emphasis_brackets(p).strip()
+    if not p or p.startswith("<"):
+        return p
+    return _WEIGHT_RE.sub("", p)
+
 
 def tokenize_prompt(*texts: str | None) -> list[str]:
     """Split prompt text into lowercased search terms.
 
-    Splits on commas and whitespace so danbooru tags (``1girl``) and lora tokens
-    (``<lora:foo:0.8>``, which contain no internal spaces) survive intact.
-    Returns a sorted, de-duplicated list for stable storage + ``$in`` matching.
+    Splits on **commas only** — the tag separator in danbooru/wd-tagger and A1111
+    prompts — so multi-word tags survive intact (``hu tao (genshin impact)`` is one
+    term, not ``hu`` + ``tao``). Each tag is sanitized of prompt-weight syntax
+    (emphasis brackets, escaped parens, trailing ``:weight``) via
+    :func:`_sanitize_term`. Returns a sorted, de-duplicated list for stable storage
+    + ``$in`` matching.
     """
     terms: set[str] = set()
     for text in texts:
         if not text:
             continue
-        for part in re.split(r"[,\s]+", text.lower()):
-            p = part.strip()
+        for part in text.lower().split(","):
+            p = _sanitize_term(part)
             if p:
                 terms.add(p)
     return sorted(terms)
@@ -447,7 +519,10 @@ def _apply_ruleset(
 
 
 def extract(
-    raw: dict[str, Any] | None, ruleset: dict[str, Any] | None = None
+    raw: dict[str, Any] | None,
+    ruleset: dict[str, Any] | None = None,
+    *,
+    prompt_positive_only: bool = True,
 ) -> dict[str, Any] | None:
     """Derive structured ``gen.*`` from a stored raw doc.
 
@@ -459,6 +534,10 @@ def extract(
     structural/class baseline. Returns ``None`` for an unrecognised/empty source.
     ``workflow_sig``, ``prompt_terms`` and ``group_id`` are always derived here
     (the single place), never by the scanner.
+
+    ``prompt_positive_only`` (default ``True``) restricts ``prompt_terms`` to the
+    positive prompt, so negative-prompt words (``blurry``, ``lowres``) don't leak
+    into searchable ``prompt:`` tags. Set ``False`` to index both.
     """
     if not isinstance(raw, dict):
         return None
@@ -476,6 +555,9 @@ def extract(
     if ruleset:
         _apply_ruleset(g, raw, ruleset)
 
-    g["prompt_terms"] = tokenize_prompt(g.get("prompt"), g.get("negative"))
+    if prompt_positive_only:
+        g["prompt_terms"] = tokenize_prompt(g.get("prompt"))
+    else:
+        g["prompt_terms"] = tokenize_prompt(g.get("prompt"), g.get("negative"))
     g["group_id"] = group_id(g.get("workflow_sig"), g.get("prompt"))
     return g

@@ -578,7 +578,8 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
   const [val, setVal] = useState("");
   const [adding, setAdding] = useState(false);
   const { push } = useToast();
-  const { start, submitting, jobId, job } = useAiTagging(onChange);
+  const { start, cancel, submitting, cancelling, jobId, job, canCancel } =
+    useAiTagging(onChange);
 
   const add = async () => {
     if (adding) return;
@@ -622,19 +623,31 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
           Add
         </button>
       </div>
-      <button
-        className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500 card-hover inline-flex items-center gap-2 disabled:opacity-50"
-        onClick={ai}
-        disabled={submitting || Boolean(jobId)}
-        title={
-          jobId
-            ? "AI tagging already in progress"
-            : "Run AI tagging for this image"
-        }
-      >
-        <Sparkles size={16} />
-        {submitting ? "Starting…" : jobId ? "AI Tagging…" : "AI Tagging"}
-      </button>
+      <div className="flex gap-2">
+        <button
+          className="px-3 py-2 rounded bg-purple-600 hover:bg-purple-500 card-hover inline-flex items-center gap-2 disabled:opacity-50"
+          onClick={ai}
+          disabled={submitting || Boolean(jobId)}
+          title={
+            jobId
+              ? "AI tagging already in progress"
+              : "Run AI tagging for this image"
+          }
+        >
+          <Sparkles size={16} />
+          {submitting ? "Starting…" : jobId ? "AI Tagging…" : "AI Tagging"}
+        </button>
+        {canCancel && (
+          <button
+            className="px-3 py-2 rounded bg-red-600/80 hover:bg-red-500 card-hover inline-flex items-center gap-2 disabled:opacity-50"
+            onClick={() => void cancel()}
+            disabled={cancelling}
+            title="Cancel the in-progress AI tagging job"
+          >
+            {cancelling ? "Cancelling…" : "Cancel"}
+          </button>
+        )}
+      </div>
 
       {job && (
         <div className="text-xs text-neutral-400">

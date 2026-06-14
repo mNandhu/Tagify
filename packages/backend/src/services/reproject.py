@@ -29,6 +29,14 @@ def _load_rulesets() -> dict[str, dict]:
     return {doc["_id"]: doc for doc in col("gen_rulesets").find({})}
 
 
+def _prompt_positive_only() -> bool:
+    """Read the ``prompt_positive_only`` AI setting (sync). Defaults to ``True``
+    so an older settings doc that predates the flag keeps the on-by-default
+    behaviour rather than silently indexing negative-prompt terms."""
+    doc = col("settings").find_one({"_id": "ai"}) or {}
+    return bool(doc.get("prompt_positive_only", True))
+
+
 def _reproject_query(query: dict) -> int:
     """Recompute ``gen.*`` for every raw doc matching ``query``, applying the
     user ruleset bound to each doc's signature, and mirror the extracted prompt
@@ -39,6 +47,7 @@ def _reproject_query(query: dict) -> int:
     separate pipeline update that replaces the doc's ``prompt:`` tags. They touch
     disjoint fields, so ``ordered=False`` batching is order-independent."""
     rulesets = _load_rulesets()
+    positive_only = _prompt_positive_only()
     images = col("images")
     ops: list[UpdateOne] = []
     updated = 0
@@ -59,7 +68,7 @@ def _reproject_query(query: dict) -> int:
 
     for raw in col("image_gen_raw").find(query):
         ruleset = rulesets.get(raw.get("workflow_sig"))
-        g = gen_metadata.extract(raw, ruleset)
+        g = gen_metadata.extract(raw, ruleset, prompt_positive_only=positive_only)
         if g is None:
             continue
         prompt_tags = [to_prompt(t) for t in g.get("prompt_terms", [])]

@@ -13,6 +13,7 @@ export type AISettings = {
   max_character: number;
   idle_unload_s: number;
   cache_dir: string;
+  prompt_positive_only: boolean;
 };
 
 export type AiJob = {
@@ -37,6 +38,7 @@ export type AIStatus = {
     status: string;
     error?: string | null;
     loading_for?: [string, string] | null;
+    available?: boolean;
   };
   model_download?: {
     status: string;
@@ -103,4 +105,14 @@ export async function postAiTag(ids: string[]): Promise<{ job_id: string }> {
   });
   if (!r.ok) throw new Error(await r.text());
   return r.json() as Promise<{ job_id: string }>;
+}
+
+/** Request cancellation of an AI tagging job. Returns whether the backend
+ * accepted the request (false if the job already finished). */
+export async function postAiJobCancel(id: string): Promise<{ ok: boolean }> {
+  const r = await fetch(`/api/ai/jobs/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json() as Promise<{ ok: boolean }>;
 }
