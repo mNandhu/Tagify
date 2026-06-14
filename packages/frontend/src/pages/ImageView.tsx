@@ -6,7 +6,7 @@ import React, {
   useState,
 } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -77,6 +77,7 @@ export default function ImageView() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { push } = useToast();
+  const queryClient = useQueryClient();
   const [infoOpen, setInfoOpen] = useState(true);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
@@ -128,10 +129,21 @@ export default function ImageView() {
       await apiSetQuarantine(id, next);
       push(next ? "Quarantined" : "Restored", "info");
       refreshImage();
+      // Remove this image from all gallery feed caches so the gallery doesn't
+      // require a refresh to reflect the quarantine change.
+      queryClient.setQueriesData<InfiniteData<ImageDoc[]>>(
+        { queryKey: ["images"] },
+        (old) =>
+          old
+            ? { ...old, pages: old.pages.map((pg) => pg.filter((x) => x._id !== id)) }
+            : old,
+      );
+      queryClient.invalidateQueries({ queryKey: ["images"] });
+      queryClient.invalidateQueries({ queryKey: ["image-groups"] });
     } catch (e) {
       push(`Failed to update quarantine: ${String(e)}`, "error");
     }
-  }, [id, quarantined, push, refreshImage]);
+  }, [id, quarantined, push, refreshImage, queryClient]);
 
   const copyWorkflow = useCallback(async () => {
     if (!id) return;
