@@ -99,6 +99,53 @@ def expand_search_tag(tag: str) -> list[str]:
     return any_variants(tag) if is_any(tag) else [tag]
 
 
+def merged_tag_counts_pipeline() -> list[dict[str, Any]]:
+    """Aggregation that counts *distinct images* per cross-source base tag.
+
+    Strips the manual:/prompt: prefix so the three sources of "cat" collapse to
+    one ``base``, then dedupes (base, image) before counting — so an image
+    carrying both ``manual:cat`` and ``prompt:cat`` counts once, not twice (the
+    naive per-occurrence sum the gallery used before over-counted). Emits
+    ``{_id: "<base>", count: <distinct images>}`` sorted by count; the caller
+    re-prefixes ``any:`` to match the search-tag expansion."""
+    strip_prefix = {
+        "$switch": {
+            "branches": [
+                {
+                    "case": {"$eq": [{"$indexOfBytes": ["$tags", MANUAL_PREFIX]}, 0]},
+                    "then": {
+                        "$substrBytes": [
+                            "$tags",
+                            len(MANUAL_PREFIX),
+                            {"$strLenBytes": "$tags"},
+                        ]
+                    },
+                },
+                {
+                    "case": {"$eq": [{"$indexOfBytes": ["$tags", PROMPT_PREFIX]}, 0]},
+                    "then": {
+                        "$substrBytes": [
+                            "$tags",
+                            len(PROMPT_PREFIX),
+                            {"$strLenBytes": "$tags"},
+                        ]
+                    },
+                },
+            ],
+            "default": "$tags",
+        }
+    }
+    return [
+        {"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": False}},
+        {"$project": {"base": strip_prefix}},
+        # Dedupe each image within a base before counting, so multi-source
+        # duplicates collapse to one distinct image.
+        {"$group": {"_id": {"base": "$base", "img": "$_id"}}},
+        {"$group": {"_id": "$_id.base", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+
+
 def build_tags_match(tags: list[str], logic: str) -> dict:
     """Mongo predicate for a list of selected search entries.
 

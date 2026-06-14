@@ -85,6 +85,22 @@ def test_build_tags_match_or_logic_unions_and_dedupes():
     }
 
 
+def test_merged_tag_counts_pipeline_dedupes_per_image():
+    # The merge count must be distinct images, not tag occurrences: a per-image
+    # dedupe group ({base, img}) must precede the per-base count group. Without
+    # it an image tagged manual:cat + prompt:cat would count twice.
+    p = it.merged_tag_counts_pipeline()
+    group_keys = [s["$group"]["_id"] for s in p if "$group" in s]
+    assert {"base": "$base", "img": "$_id"} in group_keys
+    assert "$_id.base" in group_keys
+    # dedupe-by-image precedes count-by-base.
+    assert group_keys.index({"base": "$base", "img": "$_id"}) < group_keys.index(
+        "$_id.base"
+    )
+    # Sorted by count so the dropdown leads with the most-used tags.
+    assert p[-1] == {"$sort": {"count": -1}}
+
+
 # --- rating normalization ----------------------------------------------------
 
 

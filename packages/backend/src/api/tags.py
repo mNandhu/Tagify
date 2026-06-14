@@ -90,13 +90,36 @@ class TagThumbnailSet(BaseModel):
 
 
 @router.get("")
-async def list_tags(include_manual: bool = False, include_prompt: bool = False):
+async def list_tags(
+    include_manual: bool = False,
+    include_prompt: bool = False,
+    merge_sources: bool = False,
+):
     now = time.time()
-    cache_key = f"m{int(include_manual)}:p{int(include_prompt)}"
+    cache_key = f"m{int(include_manual)}:p{int(include_prompt)}:s{int(merge_sources)}"
     async with _CACHE_LOCK:
         cached = _TAGS_CACHE.get(cache_key)
         if cached and (now - cached[0]) < _TAGS_TTL_SECONDS:
             return cached[1]
+
+    # Merge mode (gallery search): collapse the three sources of each tag into
+    # one cross-source `any:<base>` entry counting *distinct images*, so a tag
+    # the user both prompt- and manual-tagged isn't double-counted. No thumbs —
+    # the autocomplete only needs id + count.
+    if merge_sources:
+        rows = (
+            await acol("images")
+            .aggregate(image_tags.merged_tag_counts_pipeline())
+            .to_list(length=None)
+        )
+        merged = [
+            {"_id": f"{image_tags.ANY_PREFIX}{r['_id']}", "count": r["count"]}
+            for r in rows
+            if r.get("_id")
+        ]
+        async with _CACHE_LOCK:
+            _TAGS_CACHE[cache_key] = (now, merged)
+        return merged
 
     # AI tags are primary (no prefix). Manual tags are `manual:<tag>`, prompt-
     # extracted tags are `prompt:<term>`. By default the browser is AI-only; the
