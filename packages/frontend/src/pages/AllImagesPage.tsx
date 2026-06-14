@@ -413,7 +413,19 @@ export default function AllImagesPage() {
     <div ref={containerRef} className="p-6 space-y-3">
       <PageHeader
         icon={Images}
-        title="All Images"
+        title={
+          filters.quarantined
+            ? "Quarantined Images"
+            : filters.groupId
+              ? "Batch Images"
+              : filters.libraryId
+                ? (libs.find((l) => l._id === filters.libraryId)?.name ??
+                  libs.find((l) => l._id === filters.libraryId)?.path ??
+                  "Library Images")
+                : hasActiveFilter(filters)
+                  ? "Filtered Images"
+                  : "All Images"
+        }
         count={items.length}
         description={
           selectionMode
