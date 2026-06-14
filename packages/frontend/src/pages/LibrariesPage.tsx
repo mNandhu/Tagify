@@ -6,7 +6,6 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Card, Section } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input, Field } from "../components/ui/Input";
-import { Checkbox } from "../components/ui/Checkbox";
 import { Badge } from "../components/ui/Badge";
 import { Skeleton, Spinner } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -46,7 +45,6 @@ export default function LibrariesPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editPath, setEditPath] = useState("");
-  const [editRescan, setEditRescan] = useState(false);
 
   // Polling progress map
   const [progress, setProgress] = useState<
@@ -331,7 +329,6 @@ export default function LibrariesPage() {
                     setEditId(l._id);
                     setEditName(l.name || "");
                     setEditPath(l.path);
-                    setEditRescan(false);
                   }}
                 >
                   <Pencil size={14} />
@@ -371,11 +368,11 @@ export default function LibrariesPage() {
                   onChange={(e) => setEditPath(e.target.value)}
                 />
               </Field>
-              <Checkbox
-                checked={editRescan}
-                onChange={setEditRescan}
-                label="Rescan after saving"
-              />
+              {editPath !== libs.find((l) => l._id === editId)?.path && (
+                <p className="text-xs text-amber-400">
+                  Path changed — rescan will start automatically.
+                </p>
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <Button onClick={() => setEditId(null)}>Cancel</Button>
                 <Button
@@ -386,21 +383,6 @@ export default function LibrariesPage() {
                       payload.name = editName || undefined;
                     if (editPath) payload.path = editPath;
                     await updateLibrary(editId, payload);
-                    if (editRescan) {
-                      setRescanning((s) => new Set(s).add(editId));
-                      try {
-                        await api(`/api/libraries/${editId}/rescan`, {
-                          method: "POST",
-                        });
-                        push("Rescan started", "info");
-                      } finally {
-                        setRescanning((s) => {
-                          const n = new Set(s);
-                          n.delete(editId);
-                          return n;
-                        });
-                      }
-                    }
                     setEditId(null);
                     refresh();
                     push("Library saved", "success");

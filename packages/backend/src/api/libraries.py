@@ -114,9 +114,12 @@ async def update_library(library_id: str, body: LibraryUpdate):
     if not update_doc:
         raise HTTPException(status_code=400, detail="No fields to update")
     libraries = acol("libraries")
+    old_doc = await libraries.find_one({"_id": oid})
+    if not old_doc:
+        raise HTTPException(status_code=404, detail="Library not found")
     await libraries.update_one({"_id": oid}, {"$set": update_doc})
     doc = await libraries.find_one({"_id": oid})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Library not found")
     doc["_id"] = str(doc["_id"])  # stringify
+    if "path" in update_doc and update_doc["path"] != old_doc.get("path"):
+        scan_library_async(library_id, update_doc["path"])
     return doc
