@@ -29,8 +29,18 @@ RATINGS = ("-", "general", "sensitive", "questionable", "explicit")
 
 
 def initial_tag_fields() -> dict[str, Any]:
-    """Tag-state fields for a freshly indexed image (``$setOnInsert`` payload)."""
-    return {"tags": [], "has_tags": False, "has_ai_tags": False}
+    """Tag-state fields for a freshly indexed image (``$setOnInsert`` payload).
+
+    Seeds ``quarantined``/``score`` so the curation filters never have to cope
+    with a missing field (``{"$ne": True}`` still guards pre-existing docs).
+    """
+    return {
+        "tags": [],
+        "has_tags": False,
+        "has_ai_tags": False,
+        "quarantined": False,
+        "score": 0,
+    }
 
 
 # --- Tag prefix helpers (pure) ------------------------------------------------

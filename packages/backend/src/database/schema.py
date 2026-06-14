@@ -54,6 +54,32 @@ def image_indexes() -> list[IndexModel]:
             [("library_id", ASCENDING), ("has_ai_tags", ASCENDING), ("_id", DESCENDING)],
             name="lib_id_has_ai_tags__id",
         ),
+        # Prompt term search: multikey prefix serves $in/$all, trailing _id covers
+        # the desc pagination sort (mirrors tags__id).
+        IndexModel(
+            [("gen.prompt_terms", ASCENDING), ("_id", DESCENDING)],
+            name="gen_prompt_terms__id",
+        ),
+        # Checkpoint/model equality + $in filters, paginated.
+        IndexModel(
+            [("gen.model", ASCENDING), ("_id", DESCENDING)],
+            name="gen_model__id",
+        ),
+        # Scoped reprojection + "needs mapping" queries by workflow signature.
+        IndexModel([("gen.workflow_sig", ASCENDING)], name="gen_workflow_sig"),
+        # Batch-variation grouping/collapse.
+        IndexModel([("gen.group_id", ASCENDING)], name="gen_group_id"),
+    ]
+
+
+def gen_raw_indexes() -> list[IndexModel]:
+    """Indexes for the cold ``image_gen_raw`` collection (``_id`` is implicit)."""
+    return [
+        IndexModel([("library_id", ASCENDING)], name="gen_raw_library_id"),
+        IndexModel(
+            [("library_id", ASCENDING), ("workflow_sig", ASCENDING)],
+            name="gen_raw_lib_sig",
+        ),
     ]
 
 

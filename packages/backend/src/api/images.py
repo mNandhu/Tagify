@@ -23,6 +23,18 @@ class RatingPatch(BaseModel):
     rating: str
 
 
+class ScorePatch(BaseModel):
+    score: int
+
+
+class QuarantinePatch(BaseModel):
+    quarantined: bool
+
+
+class PurgeBody(BaseModel):
+    confirm: bool = False
+
+
 @router.get("")
 async def list_images(
     response: Response,
@@ -33,6 +45,7 @@ async def list_images(
     limit: int = Query(default=200, ge=1, le=1000),
     no_tags: int | None = Query(default=None, alias="no_tags"),
     no_ai_tags: int | None = Query(default=None, alias="no_ai_tags"),
+    quarantined: int | None = Query(default=None),
     cursor: str | None = Query(default=None),
 ):
     # Lightweight input validation / abuse guards
@@ -71,6 +84,12 @@ async def list_images(
             q["has_ai_tags"] = False
     if library_id:
         q["library_id"] = library_id
+    # Curation: quarantined images leave the default feed. `$ne True` (not
+    # `== False`) so pre-existing docs without the field still appear.
+    if quarantined == 1:
+        q["quarantined"] = True
+    else:
+        q["quarantined"] = {"$ne": True}
     # Projection keeps payload small for the grid. thumb_key is included so we
     # can hand the grid a ready-to-use thumb_url and skip the per-tile round
     # trip through /thumb (a 307 redirect or a resolve request).
@@ -81,6 +100,7 @@ async def list_images(
         "height": 1,
         "thumb_key": 1,
         "blurhash": 1,
+        "score": 1,
     }
     # Cursor-based pagination: when cursor is provided, fetch items with _id < cursor (descending order)
     if cursor:
@@ -204,6 +224,37 @@ async def head_image_thumb(image_id: str):
     return Response(status_code=200, headers=headers, media_type=media_type)
 
 
+@router.get("/{image_id:path}/workflow")
+async def get_image_workflow(image_id: str):
+    """Generation data for copy-workflow / remix.
+
+    Format-aware: ComfyUI returns the `workflow` (UI graph, drops onto canvas)
+    plus the `prompt` (API graph); A1111 returns the `parameters` string.
+    """
+    raw = await acol("image_gen_raw").find_one({"_id": image_id})
+    if not raw:
+        # Tolerate slash/backslash id variants like find_image does.
+        from ..services.image_tags import id_variants
+
+        for alt in id_variants(image_id):
+            raw = await acol("image_gen_raw").find_one({"_id": alt})
+            if raw:
+                break
+    if not raw:
+        raise HTTPException(status_code=404, detail="No generation data for image")
+
+    source = raw.get("source")
+    if source == "comfyui":
+        return {
+            "source": "comfyui",
+            "workflow": raw.get("workflow"),
+            "prompt": raw.get("prompt"),
+        }
+    if source == "a1111":
+        return {"source": "a1111", "parameters": raw.get("parameters")}
+    return {"source": source}
+
+
 @router.get("/{image_id:path}")
 async def get_image(image_id: str):
     img = await _find_image_doc(image_id)
@@ -228,3 +279,70 @@ async def set_image_rating(image_id: str, body: RatingPatch):
 
     await acol("images").update_one({"_id": img["_id"]}, {"$set": {"rating": rating}})
     return {"_id": str(img["_id"]), "rating": rating}
+
+
+@router.post("/{image_id:path}/score")
+async def set_image_score(image_id: str, body: ScorePatch):
+    """Set the 0-5 quality score (distinct from the content-safety `rating`)."""
+    if not (0 <= body.score <= 5):
+        raise HTTPException(status_code=422, detail="score must be 0-5")
+    img = await _find_image_doc(image_id, {"_id": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    await acol("images").update_one(
+        {"_id": img["_id"]}, {"$set": {"score": body.score}}
+    )
+    return {"_id": str(img["_id"]), "score": body.score}
+
+
+@router.post("/{image_id:path}/quarantine")
+async def set_image_quarantine(image_id: str, body: QuarantinePatch):
+    """Toggle the DB-only quarantine flag (hides from default feed; no disk I/O)."""
+    img = await _find_image_doc(image_id, {"_id": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    await acol("images").update_one(
+        {"_id": img["_id"]}, {"$set": {"quarantined": bool(body.quarantined)}}
+    )
+    return {"_id": str(img["_id"]), "quarantined": bool(body.quarantined)}
+
+
+@router.post("/{image_id:path}/purge")
+async def purge_image(image_id: str, body: PurgeBody):
+    """Permanently delete the original file from disk + all DB/thumb records.
+
+    Irreversible. A DB-only delete would resurrect on the next scan (the file is
+    rediscovered), so purge must remove the file itself. Guarded by `confirm`.
+    """
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="purge requires confirm=true")
+    img = await _find_image_doc(image_id, {"path": 1, "thumb_key": 1})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    path = img.get("path")
+    if path:
+        def _unlink():
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+        await anyio.to_thread.run_sync(_unlink)
+
+    await acol("images").delete_one({"_id": img["_id"]})
+    await acol("image_gen_raw").delete_one({"_id": img["_id"]})
+
+    thumb_key = img.get("thumb_key")
+    if thumb_key:
+        try:
+            from ..services.storage_minio import get_minio
+
+            client = get_minio()
+            await anyio.to_thread.run_sync(
+                lambda: client.remove_object(settings.minio_bucket_thumbs, thumb_key)
+            )
+        except Exception:
+            pass
+
+    return {"_id": str(img["_id"]), "purged": True}

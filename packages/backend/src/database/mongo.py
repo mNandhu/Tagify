@@ -32,6 +32,7 @@ def ensure_indexes() -> None:
     for name, indexes in (
         ("images", schema.image_indexes()),
         ("tag_meta", schema.tag_meta_indexes()),
+        ("image_gen_raw", schema.gen_raw_indexes()),
     ):
         try:
             db[name].create_indexes(indexes)

@@ -24,6 +24,7 @@ describe("Image filter URL round-trip", () => {
       libraryId: "lib123",
       noTags: false,
       noAiTags: true,
+      quarantined: true,
     };
     expect(roundTrip(f)).toEqual(f);
   });

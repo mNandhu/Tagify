@@ -2,9 +2,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from io import BytesIO
+import json
 from PIL import Image as PILImage
 from ..database.mongo import col
 from . import image_tags
+from . import gen_metadata
 from .storage_minio import put_thumb
 from .blurhash import blurhash_for_image
 import hashlib
@@ -24,20 +26,73 @@ from ..core.config import settings
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 
+def _read_gen_raw(img: PILImage.Image) -> dict | None:
+    """Extract embedded generation metadata from an open PIL image.
+
+    Returns the ``image_gen_raw`` doc shape (``{"source", ...}``) or ``None`` when
+    the image carries no recognised generation data. Must be called on a freshly
+    opened image (before ``thumbnail()``), reading from ``img.info`` text chunks
+    (PNG) or EXIF ``UserComment`` (JPEG/WebP A1111 output).
+    """
+    info = img.info or {}
+
+    # ComfyUI embeds the API-format `prompt` graph and the UI `workflow` graph as
+    # PNG text chunks (JSON strings). Keep both: `prompt` drives extraction, and
+    # `workflow` is needed for canvas-paste in copy-workflow.
+    if info.get("prompt") or info.get("workflow"):
+        def _loads(key: str):
+            try:
+                return json.loads(info[key]) if info.get(key) else None
+            except (ValueError, TypeError):
+                return None
+
+        return {"source": "comfyui", "prompt": _loads("prompt"), "workflow": _loads("workflow")}
+
+    # Automatic1111 PNG: a single `parameters` text chunk.
+    params = info.get("parameters")
+    if isinstance(params, str) and params.strip():
+        return {"source": "a1111", "parameters": params}
+
+    # Automatic1111 JPEG/WebP: the parameter string lives in EXIF UserComment.
+    try:
+        exif = img.getexif()
+        uc = exif.get(0x9286)  # UserComment
+        if isinstance(uc, bytes):
+            # EXIF UserComment is an 8-byte charset prefix + payload.
+            if uc[:8] == b"UNICODE\x00":
+                text = uc[8:].decode("utf-16-be", errors="ignore")
+            elif uc[:8] == b"ASCII\x00\x00\x00":
+                text = uc[8:].decode("ascii", errors="ignore")
+            else:
+                text = uc.decode("utf-8", errors="ignore")
+        else:
+            text = uc if isinstance(uc, str) else ""
+        if text and "Steps:" in text:
+            return {"source": "a1111", "parameters": text}
+    except Exception:
+        pass
+    return None
+
+
 def _make_thumb_bytes(
     path: Path,
-) -> tuple[bytes | None, str | None, int, int]:
-    """Render thumbnail bytes, a BlurHash placeholder, and original dimensions
-    from a single image open.
+) -> tuple[bytes | None, str | None, int, int, dict | None]:
+    """Render thumbnail bytes, a BlurHash placeholder, original dimensions, and
+    embedded generation metadata from a single image open.
 
-    Returns ``(thumb_bytes, blurhash, width, height)``; thumb/blurhash may be
-    None on failure, dimensions 0 if the header couldn't be read.
+    Returns ``(thumb_bytes, blurhash, width, height, gen_raw)``; thumb/blurhash
+    may be None on failure, dimensions 0 if the header couldn't be read, gen_raw
+    None when the image carries no generation data.
     """
     try:
         with PILImage.open(path) as img:
             # Original dimensions come from the header (no full decode) — read
             # them before draft()/thumbnail() shrink the in-memory image.
             width, height = img.size
+
+            # Read embedded generation metadata from the same open, before
+            # thumbnail() mutates the image object.
+            gen_raw = _read_gen_raw(img)
 
             size = max(16, settings.thumb_max_size)
             # draft() lets the JPEG decoder emit a pre-shrunk image (1/2, 1/4,
@@ -57,9 +112,9 @@ def _make_thumb_bytes(
             # ~64px internally, so the result is identical to encoding the
             # full-res image but far cheaper).
             bh = blurhash_for_image(img)
-            return buf.getvalue(), bh, int(width), int(height)
+            return buf.getvalue(), bh, int(width), int(height), gen_raw
     except Exception:
-        return None, None, 0, 0
+        return None, None, 0, 0, None
 
 
 def is_image(path: Path) -> bool:
@@ -144,6 +199,7 @@ class _ScanResult:
     image_id: str
     ok: bool
     doc: dict | None = None
+    gen_raw_doc: dict | None = None
     error: str | None = None
     stage: str | None = None
 
@@ -158,9 +214,10 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
     try:
         stat = p.stat()
         image_id = image_id_for(library_id, root_path, p)
-        # Single decode yields the thumbnail, BlurHash placeholder, and the
-        # original dimensions (read from the header before downscaling).
-        thumb_bytes, blurhash, width, height = _make_thumb_bytes(p)
+        # Single decode yields the thumbnail, BlurHash placeholder, the original
+        # dimensions (read from the header before downscaling), and any embedded
+        # generation metadata.
+        thumb_bytes, blurhash, width, height, gen_raw = _make_thumb_bytes(p)
 
         # Upload thumbnail if generated (optional)
         thumb_key = None
@@ -191,7 +248,23 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
             "thumb_key": thumb_key,
             "blurhash": blurhash,
         }
-        return _ScanResult(image_id=image_id, ok=True, doc=doc)
+        # Store embedded generation data verbatim in the cold collection (keyed
+        # by image id). Structured `gen.*` is derived later by reprojection — the
+        # scan never parses, only captures + computes the workflow signature.
+        gen_raw_doc = None
+        if gen_raw is not None:
+            sig = (
+                gen_metadata.workflow_sig(gen_raw.get("prompt"))
+                if gen_raw.get("source") == "comfyui"
+                else None
+            )
+            gen_raw_doc = {
+                "_id": image_id,
+                "library_id": library_id,
+                "workflow_sig": sig,
+                **gen_raw,
+            }
+        return _ScanResult(image_id=image_id, ok=True, doc=doc, gen_raw_doc=gen_raw_doc)
     except Exception as e:
         # Includes stat/path errors
         return _ScanResult(
@@ -278,10 +351,36 @@ def scan_library_async(library_id: str, root: str) -> dict:
             )
             last_progress_write = time.monotonic()
             mongo_ops: list[UpdateOne] = []
+            gen_raw_ops: list[UpdateOne] = []
             batch_size = 200
 
             def _flush_ops():
                 nonlocal indexed
+                # Flush raw generation docs alongside image docs (same batching;
+                # per-image writes would be 100k round trips on a big library).
+                if gen_raw_ops:
+                    raw_ops = list(gen_raw_ops)
+                    gen_raw_ops.clear()
+
+                    def _do_raw_bulk():
+                        return col("image_gen_raw").bulk_write(raw_ops, ordered=False)
+
+                    try:
+                        _retry(
+                            _do_raw_bulk,
+                            attempts=3,
+                            base_delay_s=0.2,
+                            retry_exceptions=(
+                                AutoReconnect,
+                                NetworkTimeout,
+                                PyMongoError,
+                            ),
+                        )
+                    except Exception:
+                        # Best-effort: raw metadata is re-derivable on rescan;
+                        # never fail the scan over it.
+                        pass
+
                 if not mongo_ops:
                     return
 
@@ -328,6 +427,14 @@ def scan_library_async(library_id: str, root: str) -> dict:
                             res = fut.result()
                             if isinstance(res, _ScanResult) and res.ok and res.doc:
                                 mongo_ops.append(upsert_image_op(res.doc))
+                                if res.gen_raw_doc is not None:
+                                    gen_raw_ops.append(
+                                        UpdateOne(
+                                            {"_id": res.gen_raw_doc["_id"]},
+                                            {"$set": res.gen_raw_doc},
+                                            upsert=True,
+                                        )
+                                    )
 
                                 # Flush periodically to keep memory bounded
                                 if len(mongo_ops) >= batch_size:
@@ -398,6 +505,11 @@ def scan_library_async(library_id: str, root: str) -> dict:
             # Remove stale images from MongoDB
             if stale_image_ids:
                 images_col.delete_many({"_id": {"$in": stale_image_ids}})
+                # Drop their raw generation docs too, else they orphan forever.
+                try:
+                    col("image_gen_raw").delete_many({"_id": {"$in": stale_image_ids}})
+                except Exception:
+                    pass
 
                 # Clean up corresponding MinIO thumbnail objects
                 if stale_thumb_keys:
@@ -430,6 +542,18 @@ def scan_library_async(library_id: str, root: str) -> dict:
                     }
                 },
             )
+
+            # Derive structured gen.* from the raw we just captured. Spawned in
+            # its own thread so the scan slot frees immediately (a long reproject
+            # must not make the library look "still scanning" / block a rescan).
+            try:
+                from .reproject import reproject_library_async
+
+                reproject_library_async(library_id)
+            except Exception:
+                # Reprojection is re-runnable via the manual endpoint; never let
+                # it fail the scan.
+                pass
         except Exception as e:
             libraries.update_one(
                 {"_id": ObjectId_or_str(library_id)},

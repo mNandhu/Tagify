@@ -69,6 +69,8 @@ async def remove_library(library_id: str):
     images = acol("images")
     await libraries.delete_one({"_id": oid})
     await images.delete_many({"library_id": library_id})
+    # Drop the library's raw generation docs too (else they orphan).
+    await acol("image_gen_raw").delete_many({"library_id": library_id})
     # remove MinIO objects for this library
     try:
         await anyio.to_thread.run_sync(delete_by_prefix, f"{library_id}/")
@@ -87,6 +89,19 @@ async def rescan_library(library_id: str):
         raise HTTPException(status_code=404, detail="Library not found")
     scan_library_async(library_id, lib["path"])
     return {"rescan": library_id, "started": True}
+
+
+@router.post("/{library_id}/reproject")
+async def reproject_library_endpoint(library_id: str):
+    """Re-derive structured gen.* for a library from stored raw (no disk rescan)."""
+    oid = parse_object_id(library_id)
+    lib = await acol("libraries").find_one({"_id": oid}, {"_id": 1})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Library not found")
+    from ..services.reproject import reproject_library_async
+
+    reproject_library_async(library_id)
+    return {"reproject": library_id, "started": True}
 
 
 @router.get("/{library_id}/progress")

@@ -19,6 +19,12 @@ export type ImageDoc = {
   blurhash?: string;
   tags?: string[];
   rating?: string;
+  // 0-5 quality score (distinct from `rating`, the content-safety axis).
+  score?: number;
+  // DB-only curation flag; quarantined images leave the default feed.
+  quarantined?: boolean;
+  // Structured generation metadata (extracted from embedded AI-art data).
+  gen?: import("./gen").GenMeta;
   ai?: {
     rating?: Record<string, number>;
   };
@@ -32,6 +38,9 @@ export type Filters = {
   libraryId?: string;
   noTags: boolean;
   noAiTags: boolean;
+  // View only quarantined images instead of the default (quarantine-excluded)
+  // feed. Off = default feed (quarantined hidden).
+  quarantined: boolean;
 };
 
 export const DEFAULT_FILTERS: Filters = {
@@ -40,6 +49,7 @@ export const DEFAULT_FILTERS: Filters = {
   libraryId: undefined,
   noTags: false,
   noAiTags: false,
+  quarantined: false,
 };
 
 /** Default page size for the Image feed. */
@@ -62,6 +72,7 @@ export function parseFilters(sp: URLSearchParams): Filters {
     libraryId: sp.get("library_id") || undefined,
     noTags: sp.get("no_tags") === "1",
     noAiTags: sp.get("no_ai_tags") === "1",
+    quarantined: sp.get("quarantined") === "1",
   };
 }
 
@@ -77,6 +88,7 @@ export function serializeFilters(filters: Filters): URLSearchParams {
   if (filters.libraryId) sp.set("library_id", filters.libraryId);
   if (filters.noTags) sp.set("no_tags", "1");
   if (filters.noAiTags) sp.set("no_ai_tags", "1");
+  if (filters.quarantined) sp.set("quarantined", "1");
   return sp;
 }
 

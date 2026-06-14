@@ -38,7 +38,7 @@ async function api<T>(url: string): Promise<T> {
 }
 
 const hasActiveFilter = (f: Filters) =>
-  f.tags.length > 0 || !!f.libraryId || f.noTags || f.noAiTags;
+  f.tags.length > 0 || !!f.libraryId || f.noTags || f.noAiTags || f.quarantined;
 
 export default function AllImagesPage() {
   const { push } = useToast();
@@ -190,6 +190,11 @@ export default function AllImagesPage() {
         const next = !filters.noAiTags;
         push(next ? "No-AI-tags filter ON" : "No-AI-tags filter OFF", "info");
         setFilters({ ...filters, noAiTags: next });
+      } else if (k === "q") {
+        e.preventDefault();
+        const next = !filters.quarantined;
+        push(next ? "Showing quarantined" : "Showing active feed", "info");
+        setFilters({ ...filters, quarantined: next });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -396,6 +401,26 @@ export default function AllImagesPage() {
                     title="No AI tags"
                   >
                     No AI
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    active={filters.quarantined}
+                    onClick={() =>
+                      setFilters({
+                        ...filters,
+                        quarantined: !filters.quarantined,
+                      })
+                    }
+                    aria-label={
+                      filters.quarantined
+                        ? "Showing quarantined"
+                        : "Show quarantined"
+                    }
+                    title="Quarantined images"
+                  >
+                    Quarantined
                   </Button>
                 </div>
               </div>

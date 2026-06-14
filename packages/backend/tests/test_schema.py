@@ -16,7 +16,17 @@ def test_image_indexes_have_expected_names():
             "lib_id_has_tags__id",
             "lib_id_tags__id",
             "lib_id_has_ai_tags__id",
+            "gen_prompt_terms__id",
+            "gen_model__id",
+            "gen_workflow_sig",
+            "gen_group_id",
         ]
+    )
+
+
+def test_gen_raw_indexes_have_expected_names():
+    assert _names(schema.gen_raw_indexes()) == sorted(
+        ["gen_raw_library_id", "gen_raw_lib_sig"]
     )
 
 

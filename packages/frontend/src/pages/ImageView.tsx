@@ -15,6 +15,9 @@ import {
   Info,
   X,
   Sparkles,
+  Star,
+  Copy,
+  Ban,
   Image as ImageIcon,
 } from "lucide-react";
 import { resolveMediaUrl } from "../lib/media";
@@ -27,6 +30,12 @@ import {
 } from "../lib/imageFilter";
 import { useImageFeed } from "../hooks/useImageFeed";
 import { useAiTagging } from "../hooks/useAiTagging";
+import {
+  setScore as apiSetScore,
+  setQuarantine as apiSetQuarantine,
+  fetchWorkflow,
+  workflowClipboardText,
+} from "../lib/gen";
 
 function pickRating(doc: ImageDoc | null | undefined): string {
   const r = (doc?.rating || "").trim();
@@ -95,6 +104,51 @@ export default function ImageView() {
   const refreshImage = useCallback(() => {
     void refetch();
   }, [refetch]);
+
+  const score = data?.score ?? 0;
+  const quarantined = !!data?.quarantined;
+
+  const applyScore = useCallback(
+    async (n: number) => {
+      if (!id) return;
+      try {
+        await apiSetScore(id, n);
+        push(n ? `Score ${n}★` : "Score cleared", "success");
+        refreshImage();
+      } catch (e) {
+        push(`Failed to set score: ${String(e)}`, "error");
+      }
+    },
+    [id, push, refreshImage],
+  );
+
+  const toggleQuarantine = useCallback(async () => {
+    if (!id) return;
+    const next = !quarantined;
+    try {
+      await apiSetQuarantine(id, next);
+      push(next ? "Quarantined" : "Restored", "info");
+      refreshImage();
+    } catch (e) {
+      push(`Failed to update quarantine: ${String(e)}`, "error");
+    }
+  }, [id, quarantined, push, refreshImage]);
+
+  const copyWorkflow = useCallback(async () => {
+    if (!id) return;
+    try {
+      const wf = await fetchWorkflow(id);
+      const text = workflowClipboardText(wf);
+      if (!text) {
+        push("No workflow data to copy", "info");
+        return;
+      }
+      await navigator.clipboard.writeText(text);
+      push("Workflow copied to clipboard", "success");
+    } catch (e) {
+      push(`Copy failed: ${String(e)}`, "error");
+    }
+  }, [id, push]);
 
   const feed = useImageFeed(filters);
   const list = feed.items;
@@ -188,10 +242,19 @@ export default function ImageView() {
         e.preventDefault();
         navigate(`/${filterQuery ? `?${filterQuery}` : ""}`);
       }
+      // Curation: 1-5 set score, 0 clears, X quarantines/restores.
+      if (e.key >= "0" && e.key <= "5") {
+        e.preventDefault();
+        void applyScore(Number(e.key));
+      }
+      if (e.key === "x" || e.key === "X" || e.key === "Delete") {
+        e.preventDefault();
+        void toggleQuarantine();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [goPrev, goNext, navigate, filterQuery]);
+  }, [goPrev, goNext, navigate, filterQuery, applyScore, toggleQuarantine]);
 
   // Touch/swipe navigation
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -371,6 +434,34 @@ export default function ImageView() {
               <RatingEditor id={data._id} value={rating} onDone={refreshImage} />
             </div>
 
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-semibold">Score</div>
+              <ScoreStars value={score} onSet={applyScore} />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void copyWorkflow()}
+                className="flex-1 px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 inline-flex items-center justify-center gap-2 text-sm"
+                title="Copy generation workflow / parameters to clipboard"
+              >
+                <Copy size={14} /> Copy workflow
+              </button>
+              <button
+                onClick={() => void toggleQuarantine()}
+                className={`px-3 py-2 rounded border inline-flex items-center justify-center gap-2 text-sm ${
+                  quarantined
+                    ? "bg-amber-900/40 border-amber-800 text-amber-100 hover:bg-amber-900/60"
+                    : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
+                }`}
+                title={quarantined ? "Restore (X)" : "Quarantine (X)"}
+              >
+                <Ban size={14} /> {quarantined ? "Restore" : "Quarantine"}
+              </button>
+            </div>
+
+            <GenPanel gen={data.gen} />
+
             <div>
               <div className="font-semibold mb-2">Tags</div>
               <div className="flex flex-wrap gap-2">
@@ -495,6 +586,64 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+function ScoreStars({
+  value,
+  onSet,
+}: {
+  value: number;
+  onSet: (n: number) => void;
+}) {
+  return (
+    <div className="inline-flex items-center gap-0.5" title="Quality score (1-5, 0 to clear)">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          aria-label={`Set score ${n}`}
+          onClick={() => onSet(n === value ? 0 : n)}
+          className="p-0.5 text-amber-300 hover:scale-110 transition-transform"
+        >
+          <Star
+            size={16}
+            className={n <= value ? "fill-amber-300" : "fill-none opacity-40"}
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function GenField({ label, value }: { label: string; value: React.ReactNode }) {
+  if (value == null || value === "") return null;
+  return (
+    <div className="flex gap-2 text-xs">
+      <span className="text-neutral-400 shrink-0 w-16">{label}</span>
+      <span className="text-neutral-100 break-words min-w-0">{value}</span>
+    </div>
+  );
+}
+
+function GenPanel({ gen }: { gen?: import("../lib/gen").GenMeta }) {
+  if (!gen || !gen.source) return null;
+  return (
+    <div className="space-y-2 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+      <div className="flex items-center justify-between">
+        <div className="font-semibold">Generation</div>
+        <span className="text-[10px] uppercase tracking-wide text-neutral-400 px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700">
+          {gen.source}
+        </span>
+      </div>
+      <GenField label="Prompt" value={gen.prompt} />
+      <GenField label="Negative" value={gen.negative} />
+      <GenField label="Model" value={gen.model} />
+      <GenField label="Seed" value={gen.seed} />
+      <GenField label="Sampler" value={gen.sampler} />
+      <GenField label="Steps" value={gen.steps} />
+      <GenField label="CFG" value={gen.cfg} />
     </div>
   );
 }
