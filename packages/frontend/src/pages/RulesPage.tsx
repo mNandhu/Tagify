@@ -29,7 +29,9 @@ const FIELD_LABEL: Record<RuleField, string> = {
 };
 
 // A clickable JSON tree: leaves pin their dot-path into the active field.
-function JsonTree({
+// Exported for unit testing the path construction (the load-bearing, silent-on-
+// failure interaction: click leaf -> correct dot-path).
+export function JsonTree({
   value,
   path,
   onPin,
