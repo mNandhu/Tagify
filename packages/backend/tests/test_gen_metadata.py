@@ -283,21 +283,38 @@ def test_loads_lenient_empty_and_non_str():
     assert gm.loads_lenient(123) is None
 
 
-# --- raw_matches_term (rules-page search source) -----------------------------
+# --- Non-finite-float sanitization (strict-JSON serialization guard) ---------
 
 
-def test_raw_matches_term_finds_keyword_in_comfy_graph():
-    raw = {"source": "comfyui", "prompt": COMFY, "workflow": None}
-    assert gm.raw_matches_term(raw, "fox") is True       # buried in inputs.text
-    assert gm.raw_matches_term(raw, "FOX") is True        # case-insensitive
-    assert gm.raw_matches_term(raw, "KSampler") is True    # class_type
-    assert gm.raw_matches_term(raw, "no-such-token") is False
+def test_sanitize_json_replaces_non_finite_with_none():
+    nan = float("nan")
+    inf = float("inf")
+    src = {
+        "prompt": {"34": {"is_changed": nan, "cfg": inf, "steps": 20}},
+        "list": [1, nan, "ok"],
+        "fine": 7.5,
+    }
+    out = gm.sanitize_json(src)
+    assert out["prompt"]["34"]["is_changed"] is None
+    assert out["prompt"]["34"]["cfg"] is None
+    assert out["prompt"]["34"]["steps"] == 20
+    assert out["list"] == [1, None, "ok"]
+    assert out["fine"] == 7.5
+    # Result must round-trip through strict JSON (what Starlette does).
+    import json
+
+    json.dumps(out, allow_nan=False)
 
 
-def test_raw_matches_term_finds_in_a1111_parameters():
-    raw = {"source": "a1111", "parameters": A1111_FULL}
-    assert gm.raw_matches_term(raw, "masterpiece") is True
+def test_to_float_rejects_non_finite():
+    # NaN/Infinity must never enter gen.* (they would 500 the feed on render).
+    assert gm._to_float(float("nan")) is None
+    assert gm._to_float(float("inf")) is None
+    assert gm._to_float("NaN") is None
+    assert gm._to_float(7.5) == 7.5
 
 
-def test_raw_matches_term_empty_term_is_false():
-    assert gm.raw_matches_term({"prompt": COMFY}, "") is False
+def test_to_int_rejects_non_finite():
+    assert gm._to_int(float("nan")) is None
+    assert gm._to_int(float("inf")) is None
+    assert gm._to_int(20) == 20

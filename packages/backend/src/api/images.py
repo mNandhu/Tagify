@@ -11,7 +11,7 @@ from ..services.storage_minio import (
     get_thumb,
     presign_thumb,
 )
-from ..services import image_tags
+from ..services import gen_metadata, image_tags
 from ..services.image_tags import find_image as _find_image_doc
 from ..core.config import settings
 
@@ -389,13 +389,17 @@ async def get_image_workflow(image_id: str):
     if not raw:
         raise HTTPException(status_code=404, detail="No generation data for image")
 
+    # Sanitize on the way out: the stored graph can carry NaN/Infinity (ComfyUI's
+    # `is_changed`) which Starlette's strict JSON renderer 500s on.
     source = raw.get("source")
     if source == "comfyui":
-        return {
-            "source": "comfyui",
-            "workflow": raw.get("workflow"),
-            "prompt": raw.get("prompt"),
-        }
+        return gen_metadata.sanitize_json(
+            {
+                "source": "comfyui",
+                "workflow": raw.get("workflow"),
+                "prompt": raw.get("prompt"),
+            }
+        )
     if source == "a1111":
         return {"source": "a1111", "parameters": raw.get("parameters")}
     return {"source": source}

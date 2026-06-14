@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
@@ -63,22 +64,22 @@ def loads_lenient(text: Any) -> Any | None:
         return None
 
 
-def raw_matches_term(raw: Any, term: str) -> bool:
-    """Does the lowercased ``term`` appear anywhere in a raw embedded-metadata doc?
+def sanitize_json(obj: Any) -> Any:
+    """Recursively replace non-finite floats (NaN/Infinity) with ``None``.
 
-    Searches the whole stored raw (ComfyUI ``prompt``/``workflow`` graphs or the
-    A1111 ``parameters`` string) by stringifying it. This is the search source the
-    rules page needs: a custom workflow whose prompt the structural parser can't
-    reach has ``gen.prompt = None`` and empty ``prompt_terms``, so the only place
-    a remembered keyword like ``masterpiece`` survives is the raw text itself.
+    ComfyUI commonly stores ``is_changed: NaN`` in the embedded graph, which
+    ``json.loads`` parses into ``float('nan')``. That value is fine in BSON but
+    poisons strict JSON serialization (Starlette renders with ``allow_nan=False``
+    and raises), so any endpoint returning a raw graph must sanitize on the way
+    out. Pure and total — leaves all finite/non-float values untouched.
     """
-    if not term:
-        return False
-    try:
-        blob = json.dumps(raw, ensure_ascii=False, default=str)
-    except (TypeError, ValueError):
-        return False
-    return term.lower() in blob.lower()
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_json(v) for v in obj]
+    return obj
 
 
 # Canonical empty structured result. Callers fill what they can; nulls mean the
@@ -109,7 +110,8 @@ def _to_int(v: Any) -> int | None:
     try:
         if v is None or isinstance(v, bool):
             return None
-        return int(float(str(v).strip()))
+        f = float(str(v).strip())
+        return int(f) if math.isfinite(f) else None
     except (ValueError, TypeError):
         return None
 
@@ -118,7 +120,11 @@ def _to_float(v: Any) -> float | None:
     try:
         if v is None or isinstance(v, bool):
             return None
-        return float(str(v).strip())
+        f = float(str(v).strip())
+        # NaN/Infinity (e.g. a ComfyUI `cfg` widget that round-tripped a non-
+        # finite value) must never enter gen.* — strict JSON serialization of the
+        # feed (Starlette uses allow_nan=False) would 500 on it.
+        return f if math.isfinite(f) else None
     except (ValueError, TypeError):
         return None
 

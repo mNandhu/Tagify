@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Workflow, Save, Trash2, Play, X, Plus, Search } from "lucide-react";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
@@ -28,7 +28,59 @@ const FIELD_LABEL: Record<RuleField, string> = {
   cfg: "CFG",
 };
 
+// Does a key or any descendant value contain the (lowercased) search term?
+// Drives both the highlight and the auto-expand: a node matches when its own key
+// matches (e.g. node id "34"), or any nested value does (a class_type like
+// "CLIPTextEncode", a prompt word like "masterpiece"). Exported for unit testing.
+export function matchesQuery(
+  value: unknown,
+  query: string,
+  key?: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return false;
+  if (key !== undefined && key.toLowerCase().includes(q)) return true;
+  if (value === null || value === undefined) return false;
+  if (typeof value !== "object") return String(value).toLowerCase().includes(q);
+  const entries = Array.isArray(value)
+    ? value.map((v, i) => [String(i), v] as const)
+    : Object.entries(value as Record<string, unknown>);
+  return entries.some(([k, v]) => matchesQuery(v, q, k));
+}
+
+// Flatten every leaf whose key or value contains the term into pinnable rows,
+// so matches can be surfaced at the top of the panel (no scrolling to find the
+// buried node). Each row carries its rooted dot-path — the same path clicking the
+// tree leaf would pin. Exported for unit testing.
+export type GraphMatch = { path: string; value: unknown };
+
+export function collectMatches(
+  value: unknown,
+  query: string,
+  path = "",
+  key = "",
+): GraphMatch[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  if (value === null || typeof value !== "object") {
+    const keyHit = key.toLowerCase().includes(q);
+    const valHit = value != null && String(value).toLowerCase().includes(q);
+    return keyHit || valHit ? [{ path, value }] : [];
+  }
+  const entries = Array.isArray(value)
+    ? value.map((v, i) => [String(i), v] as const)
+    : Object.entries(value as Record<string, unknown>);
+  return entries.flatMap(([k, v]) =>
+    collectMatches(v, q, path ? `${path}.${k}` : k, k),
+  );
+}
+
+const HIT = "bg-yellow-500/25 text-yellow-100 rounded px-0.5";
+
 // A clickable JSON tree: leaves pin their dot-path into the active field.
+// `query` highlights matching keys/values and force-opens the branches that
+// contain a match (the tree is collapsed at depth >= 2), so a search reveals the
+// whole matching node — its id *and* its class_type stay in view, never pruned.
 // Exported for unit testing the path construction (the load-bearing, silent-on-
 // failure interaction: click leaf -> correct dot-path).
 export function JsonTree({
@@ -36,23 +88,30 @@ export function JsonTree({
   path,
   onPin,
   depth = 0,
+  query = "",
 }: {
   value: unknown;
   path: string;
   onPin: (path: string) => void;
   depth?: number;
+  query?: string;
 }) {
   const [open, setOpen] = useState(depth < 2);
   const isObj = value && typeof value === "object";
+  const hasQuery = query.trim().length > 0;
 
   if (!isObj) {
+    const valHit = hasQuery && matchesQuery(value, query);
     return (
       <button
         onClick={() => onPin(path)}
+        data-graph-path={path}
         className="group inline-flex items-baseline gap-2 text-left hover:bg-purple-500/10 rounded px-1 -mx-1 w-full"
         title={`Pin ${path}`}
       >
-        <span className="text-emerald-300 break-all">{JSON.stringify(value)}</span>
+        <span className={valHit ? `break-all ${HIT}` : "text-emerald-300 break-all"}>
+          {JSON.stringify(value)}
+        </span>
         <span className="text-[10px] text-neutral-600 group-hover:text-purple-300 ml-auto shrink-0">
           {path}
         </span>
@@ -69,23 +128,39 @@ export function JsonTree({
       {entries.map(([k, v]) => {
         const childPath = path ? `${path}.${k}` : k;
         const leaf = !v || typeof v !== "object";
+        const keyHit = hasQuery && k.toLowerCase().includes(query.trim().toLowerCase());
+        const keyCls = keyHit ? HIT : "text-sky-300";
+        // Force a branch open when it (or a descendant) matches the search.
+        const childOpen = open || (hasQuery && matchesQuery(v, query, k));
         return (
           <div key={k} className="py-0.5">
             {leaf ? (
               <div className="flex items-baseline gap-2">
-                <span className="text-sky-300 shrink-0">{k}:</span>
-                <JsonTree value={v} path={childPath} onPin={onPin} depth={depth + 1} />
+                <span className={`shrink-0 ${keyCls}`}>{k}:</span>
+                <JsonTree
+                  value={v}
+                  path={childPath}
+                  onPin={onPin}
+                  depth={depth + 1}
+                  query={query}
+                />
               </div>
             ) : (
               <div>
                 <button
                   onClick={() => setOpen((o) => !o)}
-                  className="text-sky-300 hover:text-sky-200"
+                  className={`hover:text-sky-200 ${keyCls}`}
                 >
-                  {open ? "▾" : "▸"} {k}
+                  {childOpen ? "▾" : "▸"} {k}
                 </button>
-                {open && (
-                  <JsonTree value={v} path={childPath} onPin={onPin} depth={depth + 1} />
+                {childOpen && (
+                  <JsonTree
+                    value={v}
+                    path={childPath}
+                    onPin={onPin}
+                    depth={depth + 1}
+                    query={query}
+                  />
                 )}
               </div>
             )}
@@ -105,22 +180,17 @@ export default function RulesPage() {
   const [activeField, setActiveField] = useState<RuleField>("prompt");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState("");
+  // Search *within* the selected sample graph — find a node by id, class_type, or
+  // a prompt word and see where it lives so its dot-path can be pinned.
+  const [graphQuery, setGraphQuery] = useState("");
 
-  const loadSignatures = useCallback(
-    (q?: string) => {
-      fetchSignatures(q ?? query)
-        .then(setSigs)
-        .catch((e) => push(`Failed to load signatures: ${String(e)}`, "error"));
-    },
-    [push, query],
-  );
+  const loadSignatures = useCallback(() => {
+    fetchSignatures()
+      .then(setSigs)
+      .catch((e) => push(`Failed to load signatures: ${String(e)}`, "error"));
+  }, [push]);
 
-  // Debounce the prompt-term search so typing "masterpiece" hits the API once.
-  useEffect(() => {
-    const t = setTimeout(() => loadSignatures(query), 250);
-    return () => clearTimeout(t);
-  }, [query, loadSignatures]);
+  useEffect(() => loadSignatures(), [loadSignatures]);
 
   const selectSig = useCallback(
     async (row: SignatureRow) => {
@@ -210,6 +280,27 @@ export default function RulesPage() {
   const previewGen = preview?.gen;
   const firedByField = useMemo(() => preview?.paths ?? {}, [preview]);
 
+  // Matches surfaced at the top of the graph panel so a hit deep in a large graph
+  // is reachable instead of scrolling to find it.
+  const matches = useMemo(
+    () => (graph && graphQuery.trim() ? collectMatches(graph, graphQuery) : []),
+    [graph, graphQuery],
+  );
+
+  // Scroll the matched leaf into view so its surrounding node (class_type,
+  // sibling inputs) is readable — the user picks the right hit before pinning.
+  const graphScrollRef = useRef<HTMLDivElement>(null);
+  const revealPath = useCallback((path: string) => {
+    const el = graphScrollRef.current?.querySelector<HTMLElement>(
+      `[data-graph-path="${path.replace(/"/g, '\\"')}"]`,
+    );
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    // Brief flash so the eye lands on the right row after the scroll.
+    el.classList.add("ring-1", "ring-purple-400", "rounded");
+    setTimeout(() => el.classList.remove("ring-1", "ring-purple-400", "rounded"), 1200);
+  }, []);
+
   return (
     <div className="p-6 space-y-4">
       <PageHeader
@@ -219,7 +310,7 @@ export default function RulesPage() {
         description="Pin where each generation field lives in your custom workflows."
       />
 
-      {sigs.length === 0 && !query.trim() ? (
+      {sigs.length === 0 ? (
         <EmptyState
           icon={Workflow}
           title="No workflow signatures yet"
@@ -229,24 +320,6 @@ export default function RulesPage() {
         <div className="grid grid-cols-12 gap-4">
           {/* Signature picker */}
           <div className="col-span-12 lg:col-span-3 space-y-1.5">
-            <div className="relative">
-              <Search
-                size={14}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none"
-              />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Find by prompt term (e.g. masterpiece)"
-                className="w-full pl-8 pr-2 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-sm placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
-              />
-            </div>
-            {sigs.length === 0 && query.trim() ? (
-              <div className="px-3 py-2 text-[11px] text-neutral-500">
-                No signatures with a prompt matching “{query.trim()}”.
-              </div>
-            ) : null}
             {sigs.map((s) => (
               <button
                 key={s.workflow_sig}
@@ -368,14 +441,75 @@ export default function RulesPage() {
               </div>
 
               {/* Raw graph tree */}
-              <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 overflow-auto max-h-[70vh]">
-                <div className="text-xs text-neutral-400 mb-2">
-                  Sample graph — click a value to pin it to{" "}
-                  <span className="text-purple-300">{FIELD_LABEL[activeField]}</span>
+              <div
+                ref={graphScrollRef}
+                className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 overflow-auto max-h-[70vh]"
+              >
+                {/* Sticky header: stays put while the tree scrolls, so the search
+                    box and the surfaced matches are always reachable. */}
+                <div className="sticky -top-3 -mx-3 -mt-3 px-3 pt-3 pb-2 bg-neutral-950 z-10 border-b border-neutral-800">
+                  <div className="text-xs text-neutral-400 mb-2">
+                    Sample graph — click a value to pin it to{" "}
+                    <span className="text-purple-300">{FIELD_LABEL[activeField]}</span>
+                  </div>
+                  <div className="relative">
+                    <Search
+                      size={14}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none"
+                    />
+                    <input
+                      type="search"
+                      value={graphQuery}
+                      onChange={(e) => setGraphQuery(e.target.value)}
+                      placeholder="Find a node — id, class_type, or prompt word (e.g. masterpiece)"
+                      className="w-full pl-8 pr-2 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-xs placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
+                    />
+                  </div>
+                  {graphQuery.trim() && (
+                    <div className="mt-2">
+                      <div className="text-[11px] text-neutral-400 mb-1">
+                        {matches.length === 0
+                          ? "No matches in this graph"
+                          : `${matches.length} match${matches.length > 1 ? "es" : ""} — click to jump to it; + pins to ${FIELD_LABEL[activeField]}`}
+                      </div>
+                      <div className="max-h-40 overflow-auto space-y-0.5">
+                        {matches.slice(0, 100).map((m) => (
+                          <div
+                            key={m.path}
+                            className="flex items-baseline gap-1 rounded hover:bg-purple-500/10"
+                          >
+                            <button
+                              onClick={() => revealPath(m.path)}
+                              title={`Jump to ${m.path}`}
+                              className="flex-1 min-w-0 text-left flex items-baseline gap-2 px-1.5 py-1 font-mono text-[11px]"
+                            >
+                              <span className="text-purple-300 shrink-0">{m.path}</span>
+                              <span className="text-neutral-400 truncate">
+                                {String(m.value)}
+                              </span>
+                            </button>
+                            <button
+                              onClick={() => pinPath(m.path)}
+                              title={`Pin ${m.path} → ${FIELD_LABEL[activeField]}`}
+                              aria-label={`Pin ${m.path}`}
+                              className="shrink-0 px-1.5 py-1 text-neutral-500 hover:text-purple-300"
+                            >
+                              <Plus size={13} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {graph ? (
                   <div className="font-mono text-xs leading-relaxed">
-                    <JsonTree value={graph} path="" onPin={pinPath} />
+                    <JsonTree
+                      value={graph}
+                      path=""
+                      onPin={pinPath}
+                      query={graphQuery}
+                    />
                   </div>
                 ) : (
                   <div className="text-neutral-500 text-sm">Loading graph…</div>
