@@ -27,6 +27,7 @@ interface VirtualizedGridProps {
   selectionMode: boolean;
   className?: string;
   getScrollContainer?: () => HTMLElement | null;
+  focusedIndex?: number;
 }
 
 const GAP = 12; // gap-3 (0.75rem)
@@ -39,6 +40,7 @@ export function VirtualizedGrid({
   selectionMode,
   className,
   getScrollContainer,
+  focusedIndex = -1,
 }: VirtualizedGridProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const virtualContainerRef = useRef<HTMLDivElement>(null);
@@ -191,6 +193,27 @@ export function VirtualizedGrid({
     el.style.height = `${totalHeight}px`;
   }, [totalHeight]);
 
+  // Keyboard-focused tile may be outside the rendered/visible window; scroll the
+  // container so it shows (the layout knows every tile's y).
+  useEffect(() => {
+    if (focusedIndex < 0) return;
+    const scrollEl = getScrollContainer?.();
+    const tile = tiles[focusedIndex];
+    if (!scrollEl || !tile) return;
+    const top = wrapperTop + tile.y;
+    const bottom = top + tile.h;
+    const viewTop = scrollEl.scrollTop;
+    const viewBottom = viewTop + scrollEl.clientHeight;
+    if (top < viewTop) {
+      scrollEl.scrollTo({ top: Math.max(0, top - 12), behavior: "smooth" });
+    } else if (bottom > viewBottom) {
+      scrollEl.scrollTo({
+        top: bottom - scrollEl.clientHeight + 12,
+        behavior: "smooth",
+      });
+    }
+  }, [focusedIndex, tiles, wrapperTop, getScrollContainer]);
+
   return (
     <div ref={wrapperRef} className={`relative ${className || ""}`}>
       {/* Virtual container with total height */}
@@ -215,6 +238,7 @@ export function VirtualizedGrid({
               onToggle={onToggle}
               getRoot={getScrollContainer}
               eager
+              focused={tile.index === focusedIndex}
             />
           </div>
         ))}

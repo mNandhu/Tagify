@@ -14,6 +14,7 @@ export function GalleryGrid({
   onOpen,
   selectionMode,
   getScrollContainer,
+  focusedIndex = -1,
 }: {
   items: ImageDocWithDims[];
   selection: Set<string>;
@@ -21,6 +22,7 @@ export function GalleryGrid({
   onOpen: (id: string) => void;
   selectionMode: boolean;
   getScrollContainer?: () => HTMLElement | null;
+  focusedIndex?: number;
 }) {
   // Use virtualization for large datasets; prefer the standard grid otherwise
   // to keep scroll restoration simple.
@@ -35,6 +37,7 @@ export function GalleryGrid({
         onOpen={onOpen}
         selectionMode={selectionMode}
         getScrollContainer={getScrollContainer}
+        focusedIndex={focusedIndex}
         className="min-h-screen"
       />
     );
@@ -48,6 +51,7 @@ export function GalleryGrid({
       onOpen={onOpen}
       selectionMode={selectionMode}
       getScrollContainer={getScrollContainer}
+      focusedIndex={focusedIndex}
     />
   );
 }
@@ -59,6 +63,7 @@ function StandardGrid({
   onOpen,
   selectionMode,
   getScrollContainer,
+  focusedIndex = -1,
 }: {
   items: ImageDocWithDims[];
   selection: Set<string>;
@@ -66,6 +71,7 @@ function StandardGrid({
   onOpen: (id: string) => void;
   selectionMode: boolean;
   getScrollContainer?: () => HTMLElement | null;
+  focusedIndex?: number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [colWidth, setColWidth] = useState<number>(0);
@@ -115,6 +121,7 @@ function StandardGrid({
           rowUnit={rowUnit}
           rowGap={rowGap}
           getRoot={getScrollContainer}
+          focused={index === focusedIndex}
         />
       ))}
     </div>
@@ -134,6 +141,7 @@ const SpannedTile = React.memo(function SpannedTile({
   rowUnit,
   rowGap,
   getRoot,
+  focused,
 }: {
   it: ImageDocWithDims;
   index: number;
@@ -145,6 +153,7 @@ const SpannedTile = React.memo(function SpannedTile({
   rowUnit: number;
   rowGap: number;
   getRoot?: () => HTMLElement | null;
+  focused: boolean;
 }) {
   const span = useMemo(() => {
     if (colWidth <= 0 || rowUnit <= 0) return 1;
@@ -166,6 +175,7 @@ const SpannedTile = React.memo(function SpannedTile({
         onToggle={onToggle}
         onOpen={onOpen}
         getRoot={getRoot}
+        focused={focused}
       />
     </div>
   );

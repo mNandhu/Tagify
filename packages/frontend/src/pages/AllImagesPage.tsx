@@ -28,8 +28,17 @@ import {
   type TagSuggestion,
 } from "../components/TagSearchInput";
 import { useFilters } from "../hooks/useFilters";
-import { useImageFeed, useImageGroups } from "../hooks/useImageFeed";
+import {
+  useImageFeed,
+  useImageGroups,
+  imageFeedKey,
+} from "../hooks/useImageFeed";
 import { useScrollRestoration } from "../hooks/useScrollRestoration";
+import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { PAGE_LIMIT, type ImageDoc } from "../lib/imageFilter";
+import { nextFocusIndex, isGridNavKey } from "../lib/gridNav";
+import { gridColumns } from "../lib/masonryLayout";
+import { setScore as apiSetScore, setQuarantine as apiSetQuarantine } from "../lib/gen";
 
 type Library = { _id: string; name?: string; path: string };
 
@@ -77,6 +86,10 @@ export default function AllImagesPage() {
   >([]);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
+  // Keyboard triage: index of the focused tile (-1 = none). Disabled in
+  // selection mode and in the grouped view (tiles there are batch reps).
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const queryClient = useQueryClient();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -286,6 +299,115 @@ export default function AllImagesPage() {
     },
     [groupMode, items, filters, setFilters, openImage],
   );
+
+  // --- Keyboard triage on the focused tile -----------------------------------
+  const triageEnabled = !selectionMode && !groupMode;
+
+  // Optimistically patch the feed cache so a score/quarantine shows instantly.
+  const patchFeed = useCallback(
+    (mut: (pages: ImageDoc[][]) => ImageDoc[][]) => {
+      queryClient.setQueryData<InfiniteData<ImageDoc[]>>(
+        imageFeedKey(filters, PAGE_LIMIT),
+        (old) => (old ? { ...old, pages: mut(old.pages) } : old),
+      );
+    },
+    [queryClient, filters],
+  );
+
+  const triageScore = useCallback(
+    async (n: number) => {
+      const it = items[focusedIndex];
+      if (!it) return;
+      patchFeed((pages) =>
+        pages.map((pg) =>
+          pg.map((x) => (x._id === it._id ? { ...x, score: n } : x)),
+        ),
+      );
+      try {
+        await apiSetScore(it._id, n);
+      } catch (e) {
+        push(`Failed to set score: ${String(e)}`, "error");
+        feed.refetch();
+      }
+    },
+    [items, focusedIndex, patchFeed, push, feed],
+  );
+
+  const triageQuarantine = useCallback(async () => {
+    const it = items[focusedIndex];
+    if (!it) return;
+    // Default feed quarantines; the quarantined view restores. Either way the
+    // tile leaves the current list, so drop it and keep focus in range.
+    const next = !filters.quarantined;
+    patchFeed((pages) => pages.map((pg) => pg.filter((x) => x._id !== it._id)));
+    setFocusedIndex((i) => Math.min(i, items.length - 2));
+    try {
+      await apiSetQuarantine(it._id, next);
+      push(next ? "Quarantined" : "Restored", "info");
+    } catch (e) {
+      push(`Failed: ${String(e)}`, "error");
+      feed.refetch();
+    }
+  }, [items, focusedIndex, filters.quarantined, patchFeed, push, feed]);
+
+  useEffect(() => {
+    if (!triageEnabled) {
+      setFocusedIndex(-1);
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement;
+      if (
+        t &&
+        (t.tagName.toLowerCase() === "input" ||
+          t.tagName.toLowerCase() === "textarea" ||
+          t.tagName.toLowerCase() === "select" ||
+          t.isContentEditable)
+      )
+        return;
+      if (isGridNavKey(e.key)) {
+        e.preventDefault();
+        const key = e.key; // narrowed to GridNavKey before the closure
+        const cols = gridColumns(containerRef.current?.clientWidth || 0);
+        setFocusedIndex((prev) => nextFocusIndex(prev, key, cols, items.length));
+      } else if (e.key >= "0" && e.key <= "5") {
+        if (focusedIndex >= 0) {
+          e.preventDefault();
+          void triageScore(Number(e.key));
+        }
+      } else if (e.key === "x" || e.key === "X" || e.key === "Delete") {
+        if (focusedIndex >= 0) {
+          e.preventDefault();
+          void triageQuarantine();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [triageEnabled, items.length, focusedIndex, triageScore, triageQuarantine]);
+
+  // Keep the focused tile in view + actually DOM-focused (so the app's arrow-key
+  // scroll handler defers to us). Retry once after a tick for the virtualized
+  // grid, where an off-screen tile mounts only after its scroll lands.
+  useEffect(() => {
+    if (focusedIndex < 0) return;
+    const sc = getScrollContainer();
+    const focusEl = () => {
+      const el = sc?.querySelector(
+        `[data-tile-index="${focusedIndex}"]`,
+      ) as HTMLElement | null;
+      if (el) {
+        el.focus?.({ preventScroll: true });
+        el.scrollIntoView({ block: "nearest" });
+      }
+      return !!el;
+    };
+    if (!focusEl()) {
+      const id = setTimeout(focusEl, 80);
+      return () => clearTimeout(id);
+    }
+  }, [focusedIndex, getScrollContainer]);
 
   return (
     <div ref={containerRef} className="p-6 space-y-3">
@@ -670,6 +792,7 @@ export default function AllImagesPage() {
           onOpen={openTile}
           getScrollContainer={getScrollContainer}
           selectionMode={selectionMode}
+          focusedIndex={focusedIndex}
         />
       )}
 

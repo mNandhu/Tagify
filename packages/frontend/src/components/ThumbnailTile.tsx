@@ -21,6 +21,7 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   onOpen,
   getRoot,
   eager = false,
+  focused = false,
 }: {
   item: ImageDocWithDims;
   index: number;
@@ -30,6 +31,7 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   onOpen: (id: string) => void;
   getRoot?: () => HTMLElement | null;
   eager?: boolean;
+  focused?: boolean;
 }) {
   // Prefer the ready-to-use URL embedded in the list payload (no per-tile
   // resolve request). Fall back to the endpoint, which ImageThumbnail resolves
@@ -38,7 +40,16 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   const src = embedded ?? `/api/images/${encodeURIComponent(item._id)}/thumb`;
 
   return (
-    <div className="relative group h-full">
+    <div
+      className={
+        "relative group h-full rounded-lg" +
+        (focused
+          ? " ring-2 ring-purple-400 ring-offset-2 ring-offset-neutral-900"
+          : "")
+      }
+      data-tile-index={index}
+      tabIndex={-1}
+    >
       <ImageThumbnail
         src={src}
         preResolved={!!embedded}
