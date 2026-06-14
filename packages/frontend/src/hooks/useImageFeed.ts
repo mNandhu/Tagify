@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   fetchImagesPage,
+  fetchGroupsPage,
   nextCursorOf,
   PAGE_LIMIT,
   type Filters,
@@ -31,6 +32,33 @@ export function useImageFeed(filters: Filters, limit: number = PAGE_LIMIT) {
     // A short page means the end; otherwise page on the last item's id.
     getNextPageParam: (lastPage: ImageDoc[]) =>
       lastPage.length >= limit ? nextCursorOf(lastPage) : undefined,
+  });
+
+  const items = useMemo<ImageDoc[]>(
+    () => query.data?.pages.flat() ?? [],
+    [query.data],
+  );
+
+  return { ...query, items };
+}
+
+/**
+ * The grouped (batch-collapsed) view of the feed. Offset-paged; each item is a
+ * batch representative carrying `group_count`. Same filter shape as the feed.
+ */
+export function useImageGroups(
+  filters: Filters,
+  enabled: boolean,
+  limit: number = PAGE_LIMIT,
+) {
+  const query = useInfiniteQuery({
+    queryKey: ["image-groups", limit, filters] as const,
+    enabled,
+    queryFn: ({ pageParam, signal }) =>
+      fetchGroupsPage(filters, { offset: pageParam, limit, signal }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage: ImageDoc[], allPages) =>
+      lastPage.length >= limit ? allPages.length * limit : undefined,
   });
 
   const items = useMemo<ImageDoc[]>(

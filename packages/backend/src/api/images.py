@@ -35,6 +35,100 @@ class PurgeBody(BaseModel):
     confirm: bool = False
 
 
+def _build_feed_query(
+    *,
+    tags: list[str] | None,
+    logic: str,
+    library_id: str | None,
+    no_tags: int | None,
+    no_ai_tags: int | None,
+    quarantined: int | None,
+    needs_mapping: int | None,
+    pterms: list[str] | None,
+    plogic: str,
+    model: list[str] | None,
+    min_w: int | None,
+    max_w: int | None,
+    min_h: int | None,
+    max_h: int | None,
+    group_id: str | None = None,
+) -> dict:
+    """Build the Mongo filter shared by the feed and the grouped view, so the two
+    can never drift. Raises HTTPException on invalid input."""
+    if logic not in ("and", "or"):
+        raise HTTPException(status_code=422, detail="logic must be 'and' or 'or'")
+    if plogic not in ("and", "or"):
+        raise HTTPException(status_code=422, detail="plogic must be 'and' or 'or'")
+    if tags:
+        if len(tags) > 100:
+            raise HTTPException(status_code=422, detail="too many tags (max 100)")
+        for t in tags:
+            if not isinstance(t, str) or len(t) == 0:
+                raise HTTPException(status_code=422, detail="tags must be non-empty")
+            if len(t) > 128:
+                raise HTTPException(status_code=422, detail="tag too long (max 128)")
+
+    q: dict = {}
+    if tags:
+        if no_tags == 1:
+            raise HTTPException(
+                status_code=422,
+                detail="no_tags=1 cannot be combined with tags filter",
+            )
+        q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}
+        if no_ai_tags == 1:
+            q["has_ai_tags"] = False
+    else:
+        if no_tags == 1:
+            q["has_tags"] = False
+        if no_ai_tags == 1:
+            q["has_ai_tags"] = False
+    if library_id:
+        q["library_id"] = library_id
+    # Quarantined images leave the default feed. `$ne True` (not `== False`) so
+    # pre-existing docs without the field still appear.
+    if quarantined == 1:
+        q["quarantined"] = True
+    else:
+        q["quarantined"] = {"$ne": True}
+    if needs_mapping == 1:
+        q["gen.workflow_sig"] = {"$ne": None}
+        q["gen.prompt"] = None
+    if pterms:
+        terms = [t.strip().lower() for t in pterms if t and t.strip()]
+        if terms:
+            q["gen.prompt_terms"] = (
+                {"$in": terms} if plogic == "or" else {"$all": terms}
+            )
+    if model:
+        models = [m for m in model if m]
+        if models:
+            q["gen.model"] = {"$in": models}
+    for field, lo, hi in (("width", min_w, max_w), ("height", min_h, max_h)):
+        rng: dict = {}
+        if lo is not None:
+            rng["$gte"] = lo
+        if hi is not None:
+            rng["$lte"] = hi
+        if rng:
+            q[field] = rng
+    # Drill into one batch's members (used by the grouped view's expand).
+    if group_id:
+        q["gen.group_id"] = group_id
+    return q
+
+
+def _attach_thumb_url(it: dict) -> None:
+    """Replace the doc's thumb_key with a ready-to-use thumb_url (presigned MinIO
+    URL or the streaming route)."""
+    presign_mode = settings.media_presigned_mode in ("redirect", "url")
+    thumb_key = it.pop("thumb_key", None)
+    if thumb_key and presign_mode:
+        it["thumb_url"] = presign_thumb(thumb_key)
+    else:
+        it["thumb_url"] = f"/api/images/{quote(it['_id'], safe='')}/thumb"
+
+
 @router.get("")
 async def list_images(
     response: Response,
@@ -54,79 +148,18 @@ async def list_images(
     max_w: int | None = Query(default=None, ge=0),
     min_h: int | None = Query(default=None, ge=0),
     max_h: int | None = Query(default=None, ge=0),
+    group_id: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
 ):
-    # Lightweight input validation / abuse guards
-    if logic not in ("and", "or"):
-        raise HTTPException(status_code=422, detail="logic must be 'and' or 'or'")
-    if plogic not in ("and", "or"):
-        raise HTTPException(status_code=422, detail="plogic must be 'and' or 'or'")
-    if tags:
-        if len(tags) > 100:
-            raise HTTPException(status_code=422, detail="too many tags (max 100)")
-        for t in tags:
-            if not isinstance(t, str) or len(t) == 0:
-                raise HTTPException(status_code=422, detail="tags must be non-empty")
-            if len(t) > 128:
-                raise HTTPException(status_code=422, detail="tag too long (max 128)")
     if cursor and len(cursor) > 1024:
         raise HTTPException(status_code=422, detail="cursor too long")
 
-    q: dict = {}
-    if tags:
-        if no_tags == 1:
-            # Asking for specific tags and also "no tags" is contradictory.
-            raise HTTPException(
-                status_code=422,
-                detail="no_tags=1 cannot be combined with tags filter",
-            )
-        # Tag filters: OR uses $in, AND uses $all
-        q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}
-        if no_ai_tags == 1:
-            # Combineable: "images that have these tags" AND "no AI tags".
-            q["has_ai_tags"] = False
-    else:
-        if no_tags == 1:
-            # Fast-path: use has_tags boolean set at write time
-            q["has_tags"] = False
-        if no_ai_tags == 1:
-            # Images without any AI-generated tags (manual tags do not count).
-            q["has_ai_tags"] = False
-    if library_id:
-        q["library_id"] = library_id
-    # Curation: quarantined images leave the default feed. `$ne True` (not
-    # `== False`) so pre-existing docs without the field still appear.
-    if quarantined == 1:
-        q["quarantined"] = True
-    else:
-        q["quarantined"] = {"$ne": True}
-    # "Needs mapping": ComfyUI images whose structured prompt extraction failed
-    # (a signature is present but no positive prompt was resolved). Derived, not
-    # stored — clears automatically once a reproject extracts a prompt.
-    if needs_mapping == 1:
-        q["gen.workflow_sig"] = {"$ne": None}
-        q["gen.prompt"] = None
-    # Generation-metadata filters. Prompt terms reuse the tokenized index; AND
-    # uses $all, OR uses $in. Model is an equality/$in over the checkpoint.
-    if pterms:
-        terms = [t.strip().lower() for t in pterms if t and t.strip()]
-        if terms:
-            q["gen.prompt_terms"] = (
-                {"$in": terms} if plogic == "or" else {"$all": terms}
-            )
-    if model:
-        models = [m for m in model if m]
-        if models:
-            q["gen.model"] = {"$in": models}
-    # Dimension ranges reuse the existing width/height fields.
-    for field, lo, hi in (("width", min_w, max_w), ("height", min_h, max_h)):
-        rng: dict = {}
-        if lo is not None:
-            rng["$gte"] = lo
-        if hi is not None:
-            rng["$lte"] = hi
-        if rng:
-            q[field] = rng
+    q = _build_feed_query(
+        tags=tags, logic=logic, library_id=library_id, no_tags=no_tags,
+        no_ai_tags=no_ai_tags, quarantined=quarantined, needs_mapping=needs_mapping,
+        pterms=pterms, plogic=plogic, model=model, min_w=min_w, max_w=max_w,
+        min_h=min_h, max_h=max_h, group_id=group_id,
+    )
     # Projection keeps payload small for the grid. thumb_key is included so we
     # can hand the grid a ready-to-use thumb_url and skip the per-tile round
     # trip through /thumb (a 307 redirect or a resolve request).
@@ -149,17 +182,9 @@ async def list_images(
         )
         cur = cur.skip(offset)
     items = await cur.to_list(length=limit)
-    presign_mode = settings.media_presigned_mode in ("redirect", "url")
     for it in items:
         it["_id"] = str(it["_id"])  # string id
-        # Embed a directly-usable thumbnail URL so the grid renders <img src>
-        # without a second request. In presigned modes this is the MinIO URL
-        # (presign is local HMAC, no I/O); otherwise it's the streaming route.
-        thumb_key = it.pop("thumb_key", None)
-        if thumb_key and presign_mode:
-            it["thumb_url"] = presign_thumb(thumb_key)
-        else:
-            it["thumb_url"] = f"/api/images/{quote(it['_id'], safe='')}/thumb"
+        _attach_thumb_url(it)
     return items
 
 
@@ -275,6 +300,74 @@ async def list_models(library_id: str | None = Query(default=None)):
     ]
     rows = await acol("images").aggregate(pipeline).to_list(length=10000)
     return [{"model": r["_id"], "count": r["count"]} for r in rows]
+
+
+@router.get("/groups")
+async def list_groups(
+    tags: list[str] | None = Query(default=None),
+    logic: str = Query(default="and"),
+    library_id: str | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=1000),
+    no_tags: int | None = Query(default=None, alias="no_tags"),
+    no_ai_tags: int | None = Query(default=None, alias="no_ai_tags"),
+    quarantined: int | None = Query(default=None),
+    needs_mapping: int | None = Query(default=None),
+    pterms: list[str] | None = Query(default=None),
+    plogic: str = Query(default="and"),
+    model: list[str] | None = Query(default=None),
+    min_w: int | None = Query(default=None, ge=0),
+    max_w: int | None = Query(default=None, ge=0),
+    min_h: int | None = Query(default=None, ge=0),
+    max_h: int | None = Query(default=None, ge=0),
+):
+    """Batch-collapsed view of the same feed: images sharing a gen.group_id fold
+    into one entry (the newest member is the representative, plus a count).
+    Prompt-less / ungrouped images stand alone. Grouping spans page boundaries
+    because it's a full aggregation, not a paged-then-grouped pass."""
+    q = _build_feed_query(
+        tags=tags, logic=logic, library_id=library_id, no_tags=no_tags,
+        no_ai_tags=no_ai_tags, quarantined=quarantined, needs_mapping=needs_mapping,
+        pterms=pterms, plogic=plogic, model=model, min_w=min_w, max_w=max_w,
+        min_h=min_h, max_h=max_h,
+    )
+    pipeline = [
+        {"$match": q},
+        # Ungrouped images key on their own _id so each stands alone (never a
+        # single giant "null" bucket).
+        {"$addFields": {"_gkey": {"$ifNull": ["$gen.group_id", "$_id"]}}},
+        {"$sort": {"_id": -1}},
+        {
+            "$group": {
+                "_id": "$_gkey",
+                "count": {"$sum": 1},
+                "rep": {
+                    "$first": {
+                        "_id": "$_id",
+                        "path": "$path",
+                        "width": "$width",
+                        "height": "$height",
+                        "thumb_key": "$thumb_key",
+                        "blurhash": "$blurhash",
+                        "score": "$score",
+                        "group_id": "$gen.group_id",
+                    }
+                },
+            }
+        },
+        {"$sort": {"rep._id": -1}},
+        {"$skip": offset},
+        {"$limit": limit},
+    ]
+    rows = await acol("images").aggregate(pipeline).to_list(length=limit)
+    out = []
+    for r in rows:
+        it = r["rep"]
+        it["_id"] = str(it["_id"])
+        _attach_thumb_url(it)
+        it["group_count"] = r["count"]
+        out.append(it)
+    return out
 
 
 @router.get("/{image_id:path}/workflow")

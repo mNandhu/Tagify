@@ -68,6 +68,15 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
           )}
         </button>
       )}
+      {/* Batch-stack indicator: this tile represents N grouped variations. */}
+      {!selectionMode && (item.group_count ?? 1) > 1 && (
+        <span
+          className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-black/70 border border-white/15 text-white pointer-events-none"
+          title={`${item.group_count} variations in this batch`}
+        >
+          ⧉ {item.group_count}
+        </span>
+      )}
     </div>
   );
 });

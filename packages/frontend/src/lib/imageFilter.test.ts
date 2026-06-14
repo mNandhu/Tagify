@@ -32,6 +32,8 @@ describe("Image filter URL round-trip", () => {
       maxW: 2048,
       minH: 768,
       maxH: undefined,
+      group: true,
+      groupId: "abc123",
     };
     expect(roundTrip(f)).toEqual(f);
   });

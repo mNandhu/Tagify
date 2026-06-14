@@ -11,6 +11,8 @@ import {
   ImageOff,
   Images,
   Sparkles,
+  Layers,
+  ArrowLeft,
 } from "lucide-react";
 import {
   DEFAULT_FILTERS,
@@ -26,7 +28,7 @@ import {
   type TagSuggestion,
 } from "../components/TagSearchInput";
 import { useFilters } from "../hooks/useFilters";
-import { useImageFeed } from "../hooks/useImageFeed";
+import { useImageFeed, useImageGroups } from "../hooks/useImageFeed";
 import { useScrollRestoration } from "../hooks/useScrollRestoration";
 
 type Library = { _id: string; name?: string; path: string };
@@ -48,7 +50,8 @@ const hasActiveFilter = (f: Filters) =>
   f.minW != null ||
   f.maxW != null ||
   f.minH != null ||
-  f.maxH != null;
+  f.maxH != null ||
+  !!f.groupId;
 
 export default function AllImagesPage() {
   const { push } = useToast();
@@ -57,7 +60,12 @@ export default function AllImagesPage() {
   // Image filter (URL is the single source of truth) and the Image feed it drives.
   const [filters, setFilters] = useFilters();
   const feed = useImageFeed(filters);
-  const items = feed.items;
+  // Grouped (batch-collapsed) view: active only when collapsing AND not drilled
+  // into a specific batch. Drilling in (groupId) shows that batch ungrouped.
+  const groupMode = filters.group && !filters.groupId;
+  const groups = useImageGroups(filters, groupMode);
+  const activeFeed = groupMode ? groups : feed;
+  const items = activeFeed.items;
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [libs, setLibs] = useState<Library[]>([]);
@@ -247,17 +255,37 @@ export default function AllImagesPage() {
     if (!selectionMode && selectionActive) setSelection(new Set());
   }, [selectionMode, selectionActive]);
 
-  // Infinite scroll: fetch the next feed page when the sentinel comes into view.
+  // Infinite scroll: fetch the next page (feed or grouped view) on sentinel view.
   useEffect(() => {
-    if (!feed.hasNextPage || feed.isFetchingNextPage) return;
+    if (!activeFeed.hasNextPage || activeFeed.isFetchingNextPage) return;
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) feed.fetchNextPage();
+      if (entries[0].isIntersecting) activeFeed.fetchNextPage();
     });
     obs.observe(el);
     return () => obs.disconnect();
-  }, [feed.hasNextPage, feed.isFetchingNextPage, feed.fetchNextPage]);
+  }, [
+    activeFeed.hasNextPage,
+    activeFeed.isFetchingNextPage,
+    activeFeed.fetchNextPage,
+  ]);
+
+  // Open a tile: in grouped view, clicking a batch (>1) drills into its members
+  // instead of opening the representative image.
+  const openTile = useCallback(
+    (id: string) => {
+      if (groupMode) {
+        const it = items.find((x) => x._id === id);
+        if (it && (it.group_count ?? 1) > 1 && it.group_id) {
+          setFilters({ ...filters, group: false, groupId: it.group_id });
+          return;
+        }
+      }
+      openImage(id);
+    },
+    [groupMode, items, filters, setFilters, openImage],
+  );
 
   return (
     <div ref={containerRef} className="p-6 space-y-3">
@@ -296,6 +324,22 @@ export default function AllImagesPage() {
               placeholder="Search tags…"
             />
           </div>
+          <Button
+            size="icon"
+            variant="secondary"
+            active={filters.group && !filters.groupId}
+            onClick={() =>
+              setFilters({
+                ...filters,
+                group: !filters.group,
+                groupId: undefined,
+              })
+            }
+            aria-label={filters.group ? "Ungroup batches" : "Group batches"}
+            title="Group batches (same prompt + workflow)"
+          >
+            <Layers size={18} />
+          </Button>
           <Button
             size="icon"
             variant="secondary"
@@ -580,7 +624,7 @@ export default function AllImagesPage() {
         )}
       </div>
 
-      {!feed.isLoading && items.length === 0 && (
+      {!activeFeed.isLoading && items.length === 0 && (
         <EmptyState
           icon={ImageOff}
           title="No images found"
@@ -607,12 +651,23 @@ export default function AllImagesPage() {
         />
       )}
 
+      {filters.groupId && (
+        <button
+          onClick={() =>
+            setFilters({ ...filters, groupId: undefined, group: true })
+          }
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm bg-neutral-800 border border-neutral-700 hover:border-neutral-600"
+        >
+          <ArrowLeft size={14} /> Back to batches
+        </button>
+      )}
+
       {items.length > 0 && (
         <GalleryGrid
           items={items}
           selection={selection}
           onToggle={toggleSelection}
-          onOpen={openImage}
+          onOpen={openTile}
           getScrollContainer={getScrollContainer}
           selectionMode={selectionMode}
         />

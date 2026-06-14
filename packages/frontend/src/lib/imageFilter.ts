@@ -21,6 +21,10 @@ export type ImageDoc = {
   rating?: string;
   // 0-5 quality score (distinct from `rating`, the content-safety axis).
   score?: number;
+  // Batch grouping (grouped view only): the representative's group + member
+  // count. group_count > 1 means this tile stands for a batch of variations.
+  group_id?: string;
+  group_count?: number;
   // DB-only curation flag; quarantined images leave the default feed.
   quarantined?: boolean;
   // Structured generation metadata (extracted from embedded AI-art data).
@@ -50,6 +54,11 @@ export type Filters = {
   maxW?: number;
   minH?: number;
   maxH?: number;
+  // Batch grouping: `group` collapses the feed into batches (grouped view);
+  // `groupId` drills into one batch's members (ungrouped). Mutually exclusive
+  // in practice — drilling in turns collapse off.
+  group: boolean;
+  groupId?: string;
 };
 
 export const DEFAULT_FILTERS: Filters = {
@@ -66,6 +75,8 @@ export const DEFAULT_FILTERS: Filters = {
   maxW: undefined,
   minH: undefined,
   maxH: undefined,
+  group: false,
+  groupId: undefined,
 };
 
 /** Default page size for the Image feed. */
@@ -96,6 +107,8 @@ export function parseFilters(sp: URLSearchParams): Filters {
     maxW: numOrUndef(sp.get("max_w")),
     minH: numOrUndef(sp.get("min_h")),
     maxH: numOrUndef(sp.get("max_h")),
+    group: sp.get("group") === "1",
+    groupId: sp.get("group_id") || undefined,
   };
 }
 
@@ -126,6 +139,8 @@ export function serializeFilters(filters: Filters): URLSearchParams {
   if (filters.maxW != null) sp.set("max_w", String(filters.maxW));
   if (filters.minH != null) sp.set("min_h", String(filters.minH));
   if (filters.maxH != null) sp.set("max_h", String(filters.maxH));
+  if (filters.group) sp.set("group", "1");
+  if (filters.groupId) sp.set("group_id", filters.groupId);
   return sp;
 }
 
@@ -155,6 +170,22 @@ export async function fetchImagesPage(
 ): Promise<ImageDoc[]> {
   const qs = buildImagesQuery(filters, opts);
   const r = await fetch(`/api/images?${qs}`, { signal: opts.signal });
+  if (!r.ok) throw new Error(await r.text());
+  return (await r.json()) as ImageDoc[];
+}
+
+/** Fetch one page of the grouped (batch-collapsed) view. Offset-paged because
+ * grouping is a server-side aggregation, not cursor-pageable. */
+export async function fetchGroupsPage(
+  filters: Filters,
+  opts: { offset?: number; limit?: number; signal?: AbortSignal } = {},
+): Promise<ImageDoc[]> {
+  const sp = serializeFilters(filters);
+  sp.set("limit", String(opts.limit ?? PAGE_LIMIT));
+  sp.set("offset", String(opts.offset ?? 0));
+  const r = await fetch(`/api/images/groups?${sp.toString()}`, {
+    signal: opts.signal,
+  });
   if (!r.ok) throw new Error(await r.text());
   return (await r.json()) as ImageDoc[];
 }
