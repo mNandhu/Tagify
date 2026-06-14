@@ -14,6 +14,9 @@ import { cn } from "../lib/cn";
 export type TagSuggestion = { _id: string; count: number };
 
 const formatTag = (raw: string) => {
+  // `any:` is the merged cross-source entry the gallery search emits; manual:/
+  // prompt: are source-specific. All display as the bare tag text.
+  if (raw.startsWith("any:")) return raw.slice("any:".length);
   if (raw.startsWith("manual:")) return raw.slice("manual:".length);
   if (raw.startsWith("prompt:")) return raw.slice("prompt:".length);
   return raw;

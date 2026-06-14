@@ -73,6 +73,60 @@ def to_prompt(tag: str) -> str:
     return tag if is_prompt(tag) else f"{PROMPT_PREFIX}{tag}"
 
 
+# Gallery-search sentinel: ``any:<base>`` is not a stored tag kind but a *query*
+# marker the gallery tag search emits. It means "match this text from any source"
+# (AI, manual or prompt). Same-text tags from different sources collapse into one
+# ``any:`` suggestion in the dropdown so the user sees a single "tag1" row instead
+# of three near-identical ones. Only the query builder interprets it.
+ANY_PREFIX = "any:"
+
+
+def is_any(tag: str) -> bool:
+    return tag.startswith(ANY_PREFIX)
+
+
+def any_variants(tag: str) -> list[str]:
+    """Concrete tag ids an ``any:<base>`` selection should match: the bare AI
+    tag plus its manual/prompt-prefixed siblings."""
+    base = tag[len(ANY_PREFIX):]
+    return [base, to_manual(base), to_prompt(base)]
+
+
+def expand_search_tag(tag: str) -> list[str]:
+    """Tag ids a single selected search entry matches. An ``any:`` entry fans out
+    to all sources; any other entry matches itself exactly (source-specific deep
+    links stay precise)."""
+    return any_variants(tag) if is_any(tag) else [tag]
+
+
+def build_tags_match(tags: list[str], logic: str) -> dict:
+    """Mongo predicate for a list of selected search entries.
+
+    AND → every entry must be present, OR within each ``any:`` group:
+    ``{"$and": [{"tags": {"$in": [variants]}}, {"tags": exact}, ...]}``.
+    OR  → union of every entry's variants into one ``{"tags": {"$in": [...]}}``.
+
+    A single AND clause is returned unwrapped so callers can attach sibling
+    filter keys (``library_id``, ``quarantined``, cursor) by implicit AND."""
+    if logic == "or":
+        flat: list[str] = []
+        seen: set[str] = set()
+        for t in tags:
+            for v in expand_search_tag(t):
+                if v not in seen:
+                    seen.add(v)
+                    flat.append(v)
+        return {"tags": {"$in": flat}}
+
+    clauses: list[dict] = []
+    for t in tags:
+        ids = expand_search_tag(t)
+        clauses.append({"tags": ids[0]} if len(ids) == 1 else {"tags": {"$in": ids}})
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
+
+
 def normalize_rating(raw: str | None) -> str | None:
     """Map a raw rating label to the canonical vocabulary.
 

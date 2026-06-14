@@ -27,6 +27,7 @@ import {
   TagSearchInput,
   type TagSuggestion,
 } from "../components/TagSearchInput";
+import { mergeTagSuggestions } from "../lib/tagSuggest";
 import { useFilters } from "../hooks/useFilters";
 import {
   useImageFeed,
@@ -184,10 +185,14 @@ export default function AllImagesPage() {
   }, [filtersOpen]);
 
   // Load the tag list once for autocomplete; counts come straight from the
-  // same aggregate the Tags page uses (manual tags included).
+  // same aggregate the Tags page uses (manual + prompt tags included so prompt-
+  // extracted terms are searchable here too). Same-text tags from different
+  // sources collapse into one cross-source `any:` suggestion so the dropdown
+  // shows a single "tag1" row instead of three near-duplicates; selecting it
+  // matches images tagged from any source (the backend expands `any:`).
   useEffect(() => {
-    api<TagSuggestion[]>(`/api/tags?include_manual=1`)
-      .then(setTagOptions)
+    api<TagSuggestion[]>(`/api/tags?include_manual=1&include_prompt=1`)
+      .then((raw) => setTagOptions(mergeTagSuggestions(raw)))
       .catch(() => setTagOptions([]));
   }, []);
 

@@ -75,7 +75,11 @@ def _build_feed_query(
                 status_code=422,
                 detail="no_tags=1 cannot be combined with tags filter",
             )
-        q = {"tags": {"$in": tags}} if logic == "or" else {"tags": {"$all": tags}}
+        # `any:<base>` entries (from the gallery tag search) fan out to all
+        # sources here; exact tags stay precise. build_tags_match returns a
+        # `$and` of per-entry clauses for AND logic — sibling filter keys below
+        # still AND in cleanly.
+        q = image_tags.build_tags_match(tags, logic)
         if no_ai_tags == 1:
             q["has_ai_tags"] = False
     else:

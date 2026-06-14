@@ -32,6 +32,59 @@ def test_is_prompt():
     assert not it.is_prompt("manual:fav")
 
 
+# --- any-source search sentinel ----------------------------------------------
+
+
+def test_any_variants_fans_out_to_all_sources():
+    assert it.any_variants("any:cat") == ["cat", "manual:cat", "prompt:cat"]
+
+
+def test_expand_search_tag_exact_stays_precise():
+    # Source-specific (deep-link) entries match only themselves.
+    assert it.expand_search_tag("prompt:cat") == ["prompt:cat"]
+    assert it.expand_search_tag("manual:cat") == ["manual:cat"]
+    assert it.expand_search_tag("cat") == ["cat"]
+    # any: fans out.
+    assert it.expand_search_tag("any:cat") == ["cat", "manual:cat", "prompt:cat"]
+
+
+def test_build_tags_match_single_any_unwrapped():
+    # One any: entry → a single $in, no $and wrapper, so sibling keys attach.
+    assert it.build_tags_match(["any:cat"], "and") == {
+        "tags": {"$in": ["cat", "manual:cat", "prompt:cat"]}
+    }
+
+
+def test_build_tags_match_single_exact_unwrapped():
+    assert it.build_tags_match(["prompt:cat"], "and") == {"tags": "prompt:cat"}
+
+
+def test_build_tags_match_two_any_and_logic():
+    # AND across groups, OR within each group.
+    assert it.build_tags_match(["any:cat", "any:dog"], "and") == {
+        "$and": [
+            {"tags": {"$in": ["cat", "manual:cat", "prompt:cat"]}},
+            {"tags": {"$in": ["dog", "manual:dog", "prompt:dog"]}},
+        ]
+    }
+
+
+def test_build_tags_match_mixed_exact_and_any():
+    assert it.build_tags_match(["any:cat", "prompt:dog"], "and") == {
+        "$and": [
+            {"tags": {"$in": ["cat", "manual:cat", "prompt:cat"]}},
+            {"tags": "prompt:dog"},
+        ]
+    }
+
+
+def test_build_tags_match_or_logic_unions_and_dedupes():
+    # OR flattens every variant into one $in; overlapping ids dedupe, order kept.
+    assert it.build_tags_match(["any:cat", "cat"], "or") == {
+        "tags": {"$in": ["cat", "manual:cat", "prompt:cat"]}
+    }
+
+
 # --- rating normalization ----------------------------------------------------
 
 
