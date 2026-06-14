@@ -56,7 +56,10 @@ COMFY = {
             "latent_image": ["5", 0],
         },
     },
-    "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "sdxl.safetensors"}},
+    "4": {
+        "class_type": "CheckpointLoaderSimple",
+        "inputs": {"ckpt_name": "sdxl.safetensors"},
+    },
     "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "a fox in snow"}},
     "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "ugly, blurry"}},
     "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 1024}},
@@ -97,15 +100,16 @@ def test_comfyui_model_via_lora_passthrough():
 
 
 def test_signature_stable_across_id_renumber():
-    renumbered = {
-        ("4" + k if False else str(int(k) + 40)): v for k, v in COMFY.items()
-    }
+    renumbered = {("4" + k if False else str(int(k) + 40)): v for k, v in COMFY.items()}
     assert gm.workflow_sig(COMFY) == gm.workflow_sig(renumbered)
 
 
 def test_signature_stable_across_value_tweak():
     tweaked = dict(COMFY)
-    tweaked["6"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "totally different"}}
+    tweaked["6"] = {
+        "class_type": "CLIPTextEncode",
+        "inputs": {"text": "totally different"},
+    }
     assert gm.workflow_sig(COMFY) == gm.workflow_sig(tweaked)
 
 
@@ -203,7 +207,9 @@ def test_resolve_path_empty_or_nonwalkable():
 
 
 def test_pin_overrides_structural():
-    rs = {"fields": {"prompt": ["prompt.7.inputs.text"]}}  # point prompt at the negative node
+    rs = {
+        "fields": {"prompt": ["prompt.7.inputs.text"]}
+    }  # point prompt at the negative node
     g = gm.extract(RAW_COMFY, rs)
     assert g["prompt"] == "ugly, blurry"  # pin won
     assert g["negative"] == "ugly, blurry"  # structural untouched
@@ -248,7 +254,11 @@ def test_unknown_rule_field_ignored():
 def test_resolve_ruleset_paths_reports_per_path():
     fields = {"prompt": ["prompt.6.inputs.text", "prompt.999.x"]}
     rows = gm.resolve_ruleset_paths(RAW_COMFY, fields)["prompt"]
-    assert rows[0] == {"path": "prompt.6.inputs.text", "raw": "a fox in snow", "coerced": "a fox in snow"}
+    assert rows[0] == {
+        "path": "prompt.6.inputs.text",
+        "raw": "a fox in snow",
+        "coerced": "a fox in snow",
+    }
     assert rows[1] == {"path": "prompt.999.x", "raw": None, "coerced": None}
 
 

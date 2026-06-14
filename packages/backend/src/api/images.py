@@ -155,10 +155,21 @@ async def list_images(
         raise HTTPException(status_code=422, detail="cursor too long")
 
     q = _build_feed_query(
-        tags=tags, logic=logic, library_id=library_id, no_tags=no_tags,
-        no_ai_tags=no_ai_tags, quarantined=quarantined, needs_mapping=needs_mapping,
-        pterms=pterms, plogic=plogic, model=model, min_w=min_w, max_w=max_w,
-        min_h=min_h, max_h=max_h, group_id=group_id,
+        tags=tags,
+        logic=logic,
+        library_id=library_id,
+        no_tags=no_tags,
+        no_ai_tags=no_ai_tags,
+        quarantined=quarantined,
+        needs_mapping=needs_mapping,
+        pterms=pterms,
+        plogic=plogic,
+        model=model,
+        min_w=min_w,
+        max_w=max_w,
+        min_h=min_h,
+        max_h=max_h,
+        group_id=group_id,
     )
     # Projection keeps payload small for the grid. thumb_key is included so we
     # can hand the grid a ready-to-use thumb_url and skip the per-tile round
@@ -238,7 +249,9 @@ async def head_image_file(image_id: str):
         "Content-Length": str(st.st_size),
     }
     return Response(
-        status_code=200, headers=headers, media_type=media_type or "application/octet-stream"
+        status_code=200,
+        headers=headers,
+        media_type=media_type or "application/octet-stream",
     )
 
 
@@ -326,10 +339,20 @@ async def list_groups(
     Prompt-less / ungrouped images stand alone. Grouping spans page boundaries
     because it's a full aggregation, not a paged-then-grouped pass."""
     q = _build_feed_query(
-        tags=tags, logic=logic, library_id=library_id, no_tags=no_tags,
-        no_ai_tags=no_ai_tags, quarantined=quarantined, needs_mapping=needs_mapping,
-        pterms=pterms, plogic=plogic, model=model, min_w=min_w, max_w=max_w,
-        min_h=min_h, max_h=max_h,
+        tags=tags,
+        logic=logic,
+        library_id=library_id,
+        no_tags=no_tags,
+        no_ai_tags=no_ai_tags,
+        quarantined=quarantined,
+        needs_mapping=needs_mapping,
+        pterms=pterms,
+        plogic=plogic,
+        model=model,
+        min_w=min_w,
+        max_w=max_w,
+        min_h=min_h,
+        max_h=max_h,
     )
     pipeline = [
         {"$match": q},
@@ -472,6 +495,7 @@ async def purge_image(image_id: str, body: PurgeBody):
 
     path = img.get("path")
     if path:
+
         def _unlink():
             try:
                 os.remove(path)

@@ -132,15 +132,17 @@ def test_recompute_flags_stage_has_prompt_axis():
     assert "has_prompt_tags" in keys
     # AI = neither manual nor prompt.
     ai_in = keys["has_ai_tags"]["$anyElementTrue"]["$map"]["in"]
-    assert ai_in == {"$not": [{"$regexMatch": {"input": "$$t", "regex": "^(manual|prompt):"}}]}
+    assert ai_in == {
+        "$not": [{"$regexMatch": {"input": "$$t", "regex": "^(manual|prompt):"}}]
+    }
 
 
 def test_has_tags_excludes_prompt_only_so_untagged_tile_holds():
     # has_tags must mean "has a curatable (non-prompt) tag", else prompt-only
     # images (fresh AI art, post-reproject) would vanish from the Untagged tile.
-    has_tags_in = it._recompute_flags_stage()["$set"]["has_tags"][
-        "$anyElementTrue"
-    ]["$map"]["in"]
+    has_tags_in = it._recompute_flags_stage()["$set"]["has_tags"]["$anyElementTrue"][
+        "$map"
+    ]["in"]
     assert has_tags_in == {
         "$not": [{"$regexMatch": {"input": "$$t", "regex": "^prompt:"}}]
     }

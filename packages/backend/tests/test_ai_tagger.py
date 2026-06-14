@@ -26,9 +26,7 @@ def test_mcut_edge_cases():
 
 def test_select_tags_thresholds_and_sorts():
     preds = np.array([0.1, 0.8, 0.9, 0.3, 0.95])
-    out = select_tags(
-        _labels(), preds, general_thresh=0.35, character_thresh=0.85
-    )
+    out = select_tags(_labels(), preds, general_thresh=0.35, character_thresh=0.85)
     # rating dict carries both rating labels with their probs
     assert out["rating"] == {"safe": 0.1, "explicit": 0.8}
     # only cat (0.9) passes the 0.35 general threshold; dog (0.3) drops

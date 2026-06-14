@@ -132,7 +132,12 @@ def _recompute_flags_stage() -> dict[str, Any]:
                         "as": "t",
                         "in": {
                             "$not": [
-                                {"$regexMatch": {"input": "$$t", "regex": _PROMPT_REGEX}}
+                                {
+                                    "$regexMatch": {
+                                        "input": "$$t",
+                                        "regex": _PROMPT_REGEX,
+                                    }
+                                }
                             ]
                         },
                     }
@@ -145,7 +150,12 @@ def _recompute_flags_stage() -> dict[str, Any]:
                         "as": "t",
                         "in": {
                             "$not": [
-                                {"$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}}
+                                {
+                                    "$regexMatch": {
+                                        "input": "$$t",
+                                        "regex": _NON_AI_REGEX,
+                                    }
+                                }
                             ]
                         },
                     }
@@ -205,7 +215,9 @@ def replace_ai_pipeline(
                     "$filter": {
                         "input": {"$ifNull": ["$tags", []]},
                         "as": "t",
-                        "cond": {"$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}},
+                        "cond": {
+                            "$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}
+                        },
                     }
                 },
             }
@@ -231,7 +243,12 @@ def replace_prompt_pipeline(prompt_tags: list[str]) -> list[dict[str, Any]]:
                         "as": "t",
                         "cond": {
                             "$not": [
-                                {"$regexMatch": {"input": "$$t", "regex": _PROMPT_REGEX}}
+                                {
+                                    "$regexMatch": {
+                                        "input": "$$t",
+                                        "regex": _PROMPT_REGEX,
+                                    }
+                                }
                             ]
                         },
                     }
@@ -254,7 +271,9 @@ def clear_ai_pipeline() -> list[dict[str, Any]]:
                     "$filter": {
                         "input": {"$ifNull": ["$tags", []]},
                         "as": "t",
-                        "cond": {"$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}},
+                        "cond": {
+                            "$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}
+                        },
                     }
                 },
                 "rating": "-",

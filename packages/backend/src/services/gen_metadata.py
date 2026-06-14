@@ -340,7 +340,9 @@ def parse_a1111(text: str | None) -> dict[str, Any]:
 # prompt_terms, group_id, source) are computed, never pinned.
 _INT_FIELDS = frozenset({"seed", "steps"})
 _FLOAT_FIELDS = frozenset({"cfg"})
-_RULE_FIELDS = frozenset({"prompt", "negative", "seed", "model", "sampler", "steps", "cfg"})
+_RULE_FIELDS = frozenset(
+    {"prompt", "negative", "seed", "model", "sampler", "steps", "cfg"}
+)
 
 
 def resolve_path(raw: Any, path: str) -> Any:
@@ -400,7 +402,9 @@ def resolve_ruleset_paths(
             rows.append(
                 {
                     "path": path,
-                    "raw": resolved if isinstance(resolved, (str, int, float, bool)) else None,
+                    "raw": resolved
+                    if isinstance(resolved, (str, int, float, bool))
+                    else None,
                     "coerced": _coerce_field(field, resolved),
                 }
             )
@@ -424,7 +428,9 @@ def clean_rule_fields(fields: Any) -> dict[str, list[str]]:
     return out
 
 
-def _apply_ruleset(g: dict[str, Any], raw: dict[str, Any], ruleset: dict[str, Any]) -> None:
+def _apply_ruleset(
+    g: dict[str, Any], raw: dict[str, Any], ruleset: dict[str, Any]
+) -> None:
     """Override structural baseline ``g`` with the first resolving pin per field."""
     fields = ruleset.get("fields") or {}
     for field, paths in fields.items():

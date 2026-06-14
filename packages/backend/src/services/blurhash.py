@@ -64,7 +64,9 @@ def encode(rgb: np.ndarray, components_x: int = 6, components_y: int = 4) -> str
             basis = np.outer(cos_y, cos_x)  # (h, w)
             norm = 1.0 if (x == 0 and y == 0) else 2.0
             # factor[c] = norm/(w*h) * sum(basis * linear[:,:,c])
-            factor = (norm / (w * h)) * np.tensordot(basis, linear, axes=([0, 1], [0, 1]))
+            factor = (norm / (w * h)) * np.tensordot(
+                basis, linear, axes=([0, 1], [0, 1])
+            )
             factors.append(factor)  # shape (3,)
 
     dc = factors[0]

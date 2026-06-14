@@ -29,9 +29,7 @@ def _png_with(**text_chunks: str) -> Image.Image:
 
 
 def test_read_gen_raw_comfyui_png_parses_chunks():
-    with _png_with(
-        prompt=json.dumps(_COMFY), workflow=json.dumps({"nodes": []})
-    ) as im:
+    with _png_with(prompt=json.dumps(_COMFY), workflow=json.dumps({"nodes": []})) as im:
         raw = scanner._read_gen_raw(im)
     assert raw is not None
     assert raw["source"] == "comfyui"

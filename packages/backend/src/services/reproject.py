@@ -64,9 +64,7 @@ def _reproject_query(query: dict) -> int:
             continue
         prompt_tags = [to_prompt(t) for t in g.get("prompt_terms", [])]
         ops.append(UpdateOne({"_id": raw["_id"]}, {"$set": {"gen": g}}))
-        ops.append(
-            UpdateOne({"_id": raw["_id"]}, replace_prompt_pipeline(prompt_tags))
-        )
+        ops.append(UpdateOne({"_id": raw["_id"]}, replace_prompt_pipeline(prompt_tags)))
         updated += 1
         if len(ops) >= _BATCH:
             _flush()

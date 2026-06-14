@@ -77,7 +77,9 @@ async def update_ai_settings(patch: dict[str, Any]) -> dict[str, Any]:
     # IMPORTANT: MongoDB rejects updates that try to modify the same field in
     # multiple operators (e.g. $set and $setOnInsert). Since DEFAULT_AI_SETTINGS
     # contains all fields, we must omit any keys present in $set from $setOnInsert.
-    on_insert_defaults = {k: v for k, v in DEFAULT_AI_SETTINGS.items() if k not in clean}
+    on_insert_defaults = {
+        k: v for k, v in DEFAULT_AI_SETTINGS.items() if k not in clean
+    }
     update_doc: dict[str, Any] = {"$setOnInsert": {"_id": "ai", **on_insert_defaults}}
     if clean:
         update_doc["$set"] = clean

@@ -51,7 +51,11 @@ def image_indexes() -> list[IndexModel]:
         ),
         # Optimize AI tagging progress queries (untagged by AI)
         IndexModel(
-            [("library_id", ASCENDING), ("has_ai_tags", ASCENDING), ("_id", DESCENDING)],
+            [
+                ("library_id", ASCENDING),
+                ("has_ai_tags", ASCENDING),
+                ("_id", DESCENDING),
+            ],
             name="lib_id_has_ai_tags__id",
         ),
         # Prompt term search: multikey prefix serves $in/$all, trailing _id covers
