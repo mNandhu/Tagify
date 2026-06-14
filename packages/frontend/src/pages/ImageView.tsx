@@ -77,7 +77,7 @@ export default function ImageView() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { push } = useToast();
-  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(true);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -113,7 +113,6 @@ export default function ImageView() {
       if (!id) return;
       try {
         await apiSetScore(id, n);
-        push(n ? `Score ${n}★` : "Score cleared", "success");
         refreshImage();
       } catch (e) {
         push(`Failed to set score: ${String(e)}`, "error");
@@ -307,6 +306,13 @@ export default function ImageView() {
     return raw;
   }, []);
 
+  const openTag = useCallback(
+    (tagRaw: string) => {
+      navigate(`/?tags=${encodeURIComponent(tagRaw)}`);
+    },
+    [navigate],
+  );
+
   const setTagThumbnail = useCallback(
     async (tagRaw: string) => {
       if (!data?._id) return;
@@ -408,11 +414,11 @@ export default function ImageView() {
       <div
         role="region"
         aria-label="Image information"
-        className={`fixed top-0 right-0 z-40 h-dvh w-full sm:w-[340px] md:w-[380px] lg:w-[420px] border-l border-neutral-800 p-4 bg-neutral-900/85 bg-gradient-to-b from-neutral-900/90 to-neutral-900/70 backdrop-blur-sm shadow-lg shadow-black/20 transition-transform duration-300 ease-out ${
+        className={`fixed top-0 right-0 z-40 h-dvh w-full sm:w-[340px] md:w-[380px] lg:w-[420px] flex flex-col border-l border-neutral-800 p-4 bg-neutral-900/85 bg-gradient-to-b from-neutral-900/90 to-neutral-900/70 backdrop-blur-sm shadow-lg shadow-black/20 transition-transform duration-300 ease-out ${
           infoOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 shrink-0">
           <div className="font-semibold">Info</div>
           <button
             className="text-sm text-neutral-300 hover:text-white"
@@ -424,7 +430,7 @@ export default function ImageView() {
           </button>
         </div>
         {infoOpen && data && (
-          <div className="space-y-3">
+          <div className="flex-1 min-h-0 overflow-y-auto -mr-4 pr-4 space-y-3">
             <div className="text-sm font-semibold truncate" title={data.path}>
               {fileName}
             </div>
@@ -477,7 +483,14 @@ export default function ImageView() {
                     key={t}
                     className="group px-2 py-1 rounded-full bg-neutral-800 text-xs border border-neutral-700 inline-flex items-center gap-1"
                   >
-                    {t}
+                    <button
+                      type="button"
+                      className="hover:underline"
+                      title={`Filter by ${t}`}
+                      onClick={() => openTag(t)}
+                    >
+                      {t}
+                    </button>
                     <button
                       type="button"
                       className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-300 hover:text-white"
@@ -495,7 +508,14 @@ export default function ImageView() {
                     className="group px-2 py-1 rounded-full bg-emerald-900/30 text-xs border border-emerald-800 text-emerald-100 inline-flex items-center gap-1"
                     title="Manual tag"
                   >
-                    {formatTag(t)}
+                    <button
+                      type="button"
+                      className="hover:underline"
+                      title={`Filter by ${formatTag(t)}`}
+                      onClick={() => openTag(t)}
+                    >
+                      {formatTag(t)}
+                    </button>
                     <button
                       type="button"
                       className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-100/80 hover:text-emerald-100"
@@ -513,7 +533,14 @@ export default function ImageView() {
                     className="group px-2 py-1 rounded-full bg-sky-900/30 text-xs border border-sky-800 text-sky-100 inline-flex items-center gap-1"
                     title="Prompt-extracted tag"
                   >
-                    {formatTag(t)}
+                    <button
+                      type="button"
+                      className="hover:underline"
+                      title={`Filter by ${formatTag(t)}`}
+                      onClick={() => openTag(t)}
+                    >
+                      {formatTag(t)}
+                    </button>
                     <button
                       type="button"
                       className="opacity-0 group-hover:opacity-100 transition-opacity text-sky-100/80 hover:text-sky-100"
