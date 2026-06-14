@@ -265,19 +265,130 @@ def parse_a1111(text: str | None) -> dict[str, Any]:
     return g
 
 
+# --- User extraction rules (pure) --------------------------------------------
+#
+# A ruleset (one per workflow_sig) pins dot-paths into the raw doc for specific
+# fields. Pins are tried first; a resolving pin overrides the structural/class
+# baseline. The fallback chain is therefore pinned -> structural -> class, and
+# structural is never removed — only overridden when a pin actually resolves.
+
+# Fields a user may pin, and their coercion. Derived fields (workflow_sig,
+# prompt_terms, group_id, source) are computed, never pinned.
+_INT_FIELDS = frozenset({"seed", "steps"})
+_FLOAT_FIELDS = frozenset({"cfg"})
+_RULE_FIELDS = frozenset({"prompt", "negative", "seed", "model", "sampler", "steps", "cfg"})
+
+
+def resolve_path(raw: Any, path: str) -> Any:
+    """Walk a dot-path into the raw doc (``prompt.32.inputs.text0``).
+
+    Segments index dict keys or, when the current value is a list, integer
+    positions. Returns ``None`` on any miss (missing key, bad index, walking
+    through a scalar) — never raises.
+    """
+    if not path or not isinstance(raw, (dict, list)):
+        return None
+    cur: Any = raw
+    for seg in path.split("."):
+        if isinstance(cur, dict):
+            cur = cur.get(seg)
+        elif isinstance(cur, list):
+            try:
+                cur = cur[int(seg)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+        if cur is None:
+            return None
+    return cur
+
+
+def _coerce_field(field: str, value: Any) -> Any:
+    """Coerce a pin's resolved value to the field's type, matching the structural
+    parser's coercion. A non-scalar resolution (link/dict/list) is a miss."""
+    if value is None:
+        return None
+    if field in _INT_FIELDS:
+        return _to_int(value)
+    if field in _FLOAT_FIELDS:
+        return _to_float(value)
+    # String fields accept only strings; a link (list) or node (dict) is a miss
+    # so the structural fallback handles it instead of storing garbage.
+    if isinstance(value, str):
+        return value or None
+    return None
+
+
+def resolve_ruleset_paths(
+    raw: dict[str, Any], fields: dict[str, list[str]]
+) -> dict[str, list[dict[str, Any]]]:
+    """Per-path resolution for the authoring preview: for each field, each pinned
+    path with its raw resolved value and coerced result. Lets the UI show whether
+    a specific pin fired, distinct from the final field value."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for field, paths in (fields or {}).items():
+        if field not in _RULE_FIELDS:
+            continue
+        rows: list[dict[str, Any]] = []
+        for path in paths or []:
+            resolved = resolve_path(raw, path)
+            rows.append(
+                {
+                    "path": path,
+                    "raw": resolved if isinstance(resolved, (str, int, float, bool)) else None,
+                    "coerced": _coerce_field(field, resolved),
+                }
+            )
+        out[field] = rows
+    return out
+
+
+def clean_rule_fields(fields: Any) -> dict[str, list[str]]:
+    """Validate/normalise a ruleset's ``fields`` for storage: keep only known
+    fields, coerce each to a list of non-empty path strings, drop empties."""
+    out: dict[str, list[str]] = {}
+    if not isinstance(fields, dict):
+        return out
+    for field in _RULE_FIELDS:
+        raw_paths = fields.get(field)
+        if not isinstance(raw_paths, list):
+            continue
+        paths = [p.strip() for p in raw_paths if isinstance(p, str) and p.strip()]
+        if paths:
+            out[field] = paths
+    return out
+
+
+def _apply_ruleset(g: dict[str, Any], raw: dict[str, Any], ruleset: dict[str, Any]) -> None:
+    """Override structural baseline ``g`` with the first resolving pin per field."""
+    fields = ruleset.get("fields") or {}
+    for field, paths in fields.items():
+        if field not in _RULE_FIELDS:
+            continue
+        for path in paths or []:
+            coerced = _coerce_field(field, resolve_path(raw, path))
+            if coerced is not None:
+                g[field] = coerced
+                break
+
+
 # --- Top-level dispatcher -----------------------------------------------------
 
 
-def extract(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+def extract(
+    raw: dict[str, Any] | None, ruleset: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Derive structured ``gen.*`` from a stored raw doc.
 
     ``raw`` is the ``image_gen_raw`` document shape:
         ``{"source": "comfyui", "prompt": {...}, "workflow": {...}}`` or
         ``{"source": "a1111", "parameters": "<text>"}``.
 
-    Returns ``None`` for an unrecognised/empty source so callers can skip the
-    update. ``workflow_sig``, ``prompt_terms`` and ``group_id`` are always
-    derived here (the single place), never by the scanner.
+    ``ruleset`` (optional) pins dot-paths per field; a resolving pin overrides the
+    structural/class baseline. Returns ``None`` for an unrecognised/empty source.
+    ``workflow_sig``, ``prompt_terms`` and ``group_id`` are always derived here
+    (the single place), never by the scanner.
     """
     if not isinstance(raw, dict):
         return None
@@ -291,6 +402,9 @@ def extract(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         g = parse_a1111(raw.get("parameters"))
     else:
         return None
+
+    if ruleset:
+        _apply_ruleset(g, raw, ruleset)
 
     g["prompt_terms"] = tokenize_prompt(g.get("prompt"), g.get("negative"))
     g["group_id"] = group_id(g.get("workflow_sig"), g.get("prompt"))

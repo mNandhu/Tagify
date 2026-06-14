@@ -4,6 +4,7 @@ import {
   Images,
   FolderOpen,
   Tags as TagsIcon,
+  Workflow,
   Settings,
   Tag,
   PanelLeftClose,
@@ -21,6 +22,7 @@ const NAV = [
       { label: "All Images", path: "/", icon: Images },
       { label: "Libraries", path: "/libraries", icon: FolderOpen },
       { label: "Tags", path: "/tags", icon: TagsIcon },
+      { label: "Rules", path: "/rules", icon: Workflow },
     ],
   },
 ] as const;

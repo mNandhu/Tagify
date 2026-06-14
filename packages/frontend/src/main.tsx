@@ -10,6 +10,7 @@ import AllImagesPage from "./pages/AllImagesPage";
 import LibrariesPage from "./pages/LibrariesPage";
 import TagsPage from "./pages/TagsPage";
 import SettingsPage from "./pages/SettingsPage";
+import RulesPage from "./pages/RulesPage";
 import ImageView from "./pages/ImageView";
 import { ToastProvider } from "./components/Toasts";
 
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
       { path: "overview", element: <OverviewPage /> },
       { path: "libraries", element: <LibrariesPage /> },
       { path: "tags", element: <TagsPage /> },
+      { path: "rules", element: <RulesPage /> },
       { path: "settings", element: <SettingsPage /> },
     ],
   },

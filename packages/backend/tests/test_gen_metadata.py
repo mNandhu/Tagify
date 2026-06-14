@@ -169,3 +169,84 @@ def test_extract_a1111():
 def test_extract_unknown_source_returns_none():
     assert gm.extract({"source": "nope"}) is None
     assert gm.extract(None) is None
+
+
+# --- Path resolver -----------------------------------------------------------
+
+RAW_COMFY = {"source": "comfyui", "prompt": COMFY}
+
+
+def test_resolve_path_dict_keys():
+    assert gm.resolve_path(RAW_COMFY, "prompt.6.inputs.text") == "a fox in snow"
+
+
+def test_resolve_path_list_index():
+    assert gm.resolve_path(RAW_COMFY, "prompt.3.inputs.positive.0") == "6"
+
+
+def test_resolve_path_missing_returns_none():
+    assert gm.resolve_path(RAW_COMFY, "prompt.999.inputs.text") is None
+    assert gm.resolve_path(RAW_COMFY, "prompt.6.inputs.text.deeper") is None
+
+
+def test_resolve_path_bad_index_returns_none():
+    assert gm.resolve_path(RAW_COMFY, "prompt.3.inputs.positive.99") is None
+    assert gm.resolve_path(RAW_COMFY, "prompt.3.inputs.positive.x") is None
+
+
+def test_resolve_path_empty_or_nonwalkable():
+    assert gm.resolve_path(RAW_COMFY, "") is None
+    assert gm.resolve_path(None, "a.b") is None
+
+
+# --- Ruleset application -----------------------------------------------------
+
+
+def test_pin_overrides_structural():
+    rs = {"fields": {"prompt": ["prompt.7.inputs.text"]}}  # point prompt at the negative node
+    g = gm.extract(RAW_COMFY, rs)
+    assert g["prompt"] == "ugly, blurry"  # pin won
+    assert g["negative"] == "ugly, blurry"  # structural untouched
+
+
+def test_pin_null_leaves_structural_baseline():
+    rs = {"fields": {"prompt": ["prompt.999.inputs.text"]}}  # resolves to None
+    g = gm.extract(RAW_COMFY, rs)
+    assert g["prompt"] == "a fox in snow"  # structural baseline intact
+
+
+def test_first_non_null_pin_wins():
+    rs = {"fields": {"prompt": ["prompt.999.inputs.text", "prompt.6.inputs.text"]}}
+    assert gm.extract(RAW_COMFY, rs)["prompt"] == "a fox in snow"
+
+
+def test_pin_on_link_or_dict_is_miss_falls_through():
+    # `prompt.3.inputs.positive` is a link list ["6",0]; a str field rejects it.
+    rs = {"fields": {"prompt": ["prompt.3.inputs.positive"]}}
+    g = gm.extract(RAW_COMFY, rs)
+    assert g["prompt"] == "a fox in snow"  # fell through to structural
+
+
+def test_pinned_scalar_is_coerced_per_field():
+    rs = {"fields": {"seed": ["prompt.3.inputs.steps"]}}  # steps is 25 (int already)
+    g = gm.extract(RAW_COMFY, rs)
+    assert g["seed"] == 25 and isinstance(g["seed"], int)
+
+
+def test_empty_ruleset_behaves_like_none():
+    assert gm.extract(RAW_COMFY, {"fields": {}}) == gm.extract(RAW_COMFY)
+    assert gm.extract(RAW_COMFY, {}) == gm.extract(RAW_COMFY)
+
+
+def test_unknown_rule_field_ignored():
+    rs = {"fields": {"workflow_sig": ["prompt.6.inputs.text"], "bogus": ["x"]}}
+    g = gm.extract(RAW_COMFY, rs)
+    # workflow_sig stays the computed hash, not overridden by a pin
+    assert g["workflow_sig"] == gm.workflow_sig(COMFY)
+
+
+def test_resolve_ruleset_paths_reports_per_path():
+    fields = {"prompt": ["prompt.6.inputs.text", "prompt.999.x"]}
+    rows = gm.resolve_ruleset_paths(RAW_COMFY, fields)["prompt"]
+    assert rows[0] == {"path": "prompt.6.inputs.text", "raw": "a fox in snow", "coerced": "a fox in snow"}
+    assert rows[1] == {"path": "prompt.999.x", "raw": None, "coerced": None}

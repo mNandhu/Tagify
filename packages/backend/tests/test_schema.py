@@ -26,7 +26,7 @@ def test_image_indexes_have_expected_names():
 
 def test_gen_raw_indexes_have_expected_names():
     assert _names(schema.gen_raw_indexes()) == sorted(
-        ["gen_raw_library_id", "gen_raw_lib_sig"]
+        ["gen_raw_library_id", "gen_raw_lib_sig", "gen_raw_sig"]
     )
 
 

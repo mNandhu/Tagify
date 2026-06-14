@@ -80,6 +80,10 @@ def gen_raw_indexes() -> list[IndexModel]:
             [("library_id", ASCENDING), ("workflow_sig", ASCENDING)],
             name="gen_raw_lib_sig",
         ),
+        # Sig-global queries: by-sig reproject + the signature-listing aggregation
+        # for the authoring UI hit all libraries, so they need a non-prefixed sig
+        # index (the library-prefixed ones above can't serve them).
+        IndexModel([("workflow_sig", ASCENDING)], name="gen_raw_sig"),
     ]
 
 

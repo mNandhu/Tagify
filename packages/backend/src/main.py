@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from .api import libraries, images, tags, ai
+from .api import libraries, images, tags, ai, rules
 from .database.motor import acol, ensure_indexes_async
 from .core.config import settings
 from .services.storage_minio import ensure_buckets
@@ -123,3 +123,4 @@ app.include_router(libraries.router, prefix="/libraries", tags=["libraries"])
 app.include_router(images.router, prefix="/images", tags=["images"])
 app.include_router(tags.router, prefix="/tags", tags=["tags"])
 app.include_router(ai.router, prefix="/ai", tags=["ai"])
+app.include_router(rules.router, prefix="/rules", tags=["rules"])

@@ -46,6 +46,84 @@ export function purgeImage(id: string): Promise<void> {
   });
 }
 
+// --- Extraction rules (v2) ---------------------------------------------------
+
+export const RULE_FIELDS = [
+  "prompt",
+  "negative",
+  "seed",
+  "model",
+  "sampler",
+  "steps",
+  "cfg",
+] as const;
+export type RuleField = (typeof RULE_FIELDS)[number];
+export type RuleFields = Partial<Record<RuleField, string[]>>;
+
+export type Ruleset = { _id: string; fields: RuleFields; updated_at?: number };
+
+export type SignatureRow = {
+  workflow_sig: string;
+  count: number;
+  needs_mapping: number;
+  sample_image_id: string;
+  has_ruleset: boolean;
+};
+
+export type PreviewResult = {
+  gen: GenMeta | null;
+  paths: Partial<
+    Record<RuleField, Array<{ path: string; raw: unknown; coerced: unknown }>>
+  >;
+};
+
+async function getJson<T>(url: string): Promise<T> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(await r.text());
+  return (await r.json()) as T;
+}
+
+export function fetchSignatures(): Promise<SignatureRow[]> {
+  return getJson<SignatureRow[]>("/api/rules/signatures");
+}
+
+export function fetchRuleset(sig: string): Promise<Ruleset> {
+  return getJson<Ruleset>(`/api/rules/${encodeURIComponent(sig)}`);
+}
+
+export async function saveRuleset(
+  sig: string,
+  fields: RuleFields,
+): Promise<Ruleset> {
+  const r = await fetch(`/api/rules/${encodeURIComponent(sig)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return (await r.json()) as Ruleset;
+}
+
+export async function deleteRuleset(sig: string): Promise<void> {
+  const r = await fetch(`/api/rules/${encodeURIComponent(sig)}`, {
+    method: "DELETE",
+  });
+  if (!r.ok) throw new Error(await r.text());
+}
+
+export async function previewRuleset(
+  sampleImageId: string,
+  fields: RuleFields,
+): Promise<PreviewResult> {
+  const r = await fetch(`/api/rules/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sample_image_id: sampleImageId, fields }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return (await r.json()) as PreviewResult;
+}
+
 export async function fetchWorkflow(id: string): Promise<WorkflowPayload> {
   const r = await fetch(`/api/images/${encodeURIComponent(id)}/workflow`);
   if (!r.ok) throw new Error(await r.text());

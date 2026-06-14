@@ -23,14 +23,15 @@ from . import gen_metadata
 _BATCH = 200
 
 
-def reproject_library(library_id: str, *, workflow_sig: str | None = None) -> int:
-    """Recompute ``gen.*`` for one library's images (optionally scoped to a single
-    workflow signature). Returns the number of image docs updated."""
-    query: dict = {"library_id": library_id}
-    if workflow_sig is not None:
-        query["workflow_sig"] = workflow_sig
+def _load_rulesets() -> dict[str, dict]:
+    """All user rulesets keyed by workflow signature (``_id``)."""
+    return {doc["_id"]: doc for doc in col("gen_rulesets").find({})}
 
-    raw_col = col("image_gen_raw")
+
+def _reproject_query(query: dict) -> int:
+    """Recompute ``gen.*`` for every raw doc matching ``query``, applying the
+    user ruleset bound to each doc's signature. Returns docs updated."""
+    rulesets = _load_rulesets()
     images = col("images")
     ops: list[UpdateOne] = []
     updated = 0
@@ -41,21 +42,18 @@ def reproject_library(library_id: str, *, workflow_sig: str | None = None) -> in
             return
         batch = ops
         ops = []
-
-        def _do():
-            return images.bulk_write(batch, ordered=False)
-
         for attempt in range(3):
             try:
-                _do()
+                images.bulk_write(batch, ordered=False)
                 break
             except (AutoReconnect, NetworkTimeout, PyMongoError):
                 if attempt == 2:
                     raise
         updated += len(batch)
 
-    for raw in raw_col.find(query):
-        g = gen_metadata.extract(raw)
+    for raw in col("image_gen_raw").find(query):
+        ruleset = rulesets.get(raw.get("workflow_sig"))
+        g = gen_metadata.extract(raw, ruleset)
         if g is None:
             continue
         ops.append(UpdateOne({"_id": raw["_id"]}, {"$set": {"gen": g}}))
@@ -63,6 +61,21 @@ def reproject_library(library_id: str, *, workflow_sig: str | None = None) -> in
             _flush()
     _flush()
     return updated
+
+
+def reproject_library(library_id: str, *, workflow_sig: str | None = None) -> int:
+    """Recompute ``gen.*`` for one library's images (optionally scoped to a single
+    workflow signature)."""
+    query: dict = {"library_id": library_id}
+    if workflow_sig is not None:
+        query["workflow_sig"] = workflow_sig
+    return _reproject_query(query)
+
+
+def reproject_by_sig(workflow_sig: str) -> int:
+    """Recompute ``gen.*`` for every image of a signature across all libraries.
+    Used when a ruleset is created/edited/deleted (rulesets are sig-global)."""
+    return _reproject_query({"workflow_sig": workflow_sig})
 
 
 def reproject_library_async(
@@ -74,6 +87,17 @@ def reproject_library_async(
         args=(library_id,),
         kwargs={"workflow_sig": workflow_sig},
         name=f"reproject-{library_id}",
+        daemon=True,
+    )
+    t.start()
+
+
+def reproject_by_sig_async(workflow_sig: str) -> None:
+    """Fire-and-forget by-sig reprojection (triggered on ruleset save/delete)."""
+    t = threading.Thread(
+        target=reproject_by_sig,
+        args=(workflow_sig,),
+        name=f"reproject-sig-{workflow_sig[:8]}",
         daemon=True,
     )
     t.start()

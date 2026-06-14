@@ -46,6 +46,7 @@ async def list_images(
     no_tags: int | None = Query(default=None, alias="no_tags"),
     no_ai_tags: int | None = Query(default=None, alias="no_ai_tags"),
     quarantined: int | None = Query(default=None),
+    needs_mapping: int | None = Query(default=None),
     cursor: str | None = Query(default=None),
 ):
     # Lightweight input validation / abuse guards
@@ -90,6 +91,12 @@ async def list_images(
         q["quarantined"] = True
     else:
         q["quarantined"] = {"$ne": True}
+    # "Needs mapping": ComfyUI images whose structured prompt extraction failed
+    # (a signature is present but no positive prompt was resolved). Derived, not
+    # stored — clears automatically once a reproject extracts a prompt.
+    if needs_mapping == 1:
+        q["gen.workflow_sig"] = {"$ne": None}
+        q["gen.prompt"] = None
     # Projection keeps payload small for the grid. thumb_key is included so we
     # can hand the grid a ready-to-use thumb_url and skip the per-tile round
     # trip through /thumb (a 307 redirect or a resolve request).
