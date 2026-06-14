@@ -28,12 +28,15 @@ export default function LibrariesPage() {
   const { push } = useToast();
   const queryClient = useQueryClient();
 
-  // Library changes alter which images the gallery should show. The Image feed
-  // (`["images", ...]`) is cached with a 30s staleTime, so without this the
-  // gallery shows stale results until reload. Drop those entries so the feed
-  // refetches next time it mounts.
-  const invalidateImageFeed = () =>
+  // Library changes alter which images the gallery should show. Both the flat
+  // feed (`["images", ...]`) and the batch-collapsed grouped view
+  // (`["image-groups", ...]`) are cached with a staleTime, so without this the
+  // gallery shows stale results — including images from a removed library —
+  // until a manual reload. Drop both so they refetch next time they mount.
+  const invalidateImageFeed = () => {
     queryClient.invalidateQueries({ queryKey: ["images"] });
+    queryClient.invalidateQueries({ queryKey: ["image-groups"] });
+  };
   const [libs, setLibs] = useState<Library[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
