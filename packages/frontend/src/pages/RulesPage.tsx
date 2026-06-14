@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Workflow, Save, Trash2, Play, X, Plus } from "lucide-react";
+import { Workflow, Save, Trash2, Play, X, Plus, Search } from "lucide-react";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -105,14 +105,22 @@ export default function RulesPage() {
   const [activeField, setActiveField] = useState<RuleField>("prompt");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
 
-  const loadSignatures = useCallback(() => {
-    fetchSignatures()
-      .then(setSigs)
-      .catch((e) => push(`Failed to load signatures: ${String(e)}`, "error"));
-  }, [push]);
+  const loadSignatures = useCallback(
+    (q?: string) => {
+      fetchSignatures(q ?? query)
+        .then(setSigs)
+        .catch((e) => push(`Failed to load signatures: ${String(e)}`, "error"));
+    },
+    [push, query],
+  );
 
-  useEffect(() => loadSignatures(), [loadSignatures]);
+  // Debounce the prompt-term search so typing "masterpiece" hits the API once.
+  useEffect(() => {
+    const t = setTimeout(() => loadSignatures(query), 250);
+    return () => clearTimeout(t);
+  }, [query, loadSignatures]);
 
   const selectSig = useCallback(
     async (row: SignatureRow) => {
@@ -211,7 +219,7 @@ export default function RulesPage() {
         description="Pin where each generation field lives in your custom workflows."
       />
 
-      {sigs.length === 0 ? (
+      {sigs.length === 0 && !query.trim() ? (
         <EmptyState
           icon={Workflow}
           title="No workflow signatures yet"
@@ -221,6 +229,24 @@ export default function RulesPage() {
         <div className="grid grid-cols-12 gap-4">
           {/* Signature picker */}
           <div className="col-span-12 lg:col-span-3 space-y-1.5">
+            <div className="relative">
+              <Search
+                size={14}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none"
+              />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Find by prompt term (e.g. masterpiece)"
+                className="w-full pl-8 pr-2 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-sm placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
+              />
+            </div>
+            {sigs.length === 0 && query.trim() ? (
+              <div className="px-3 py-2 text-[11px] text-neutral-500">
+                No signatures with a prompt matching “{query.trim()}”.
+              </div>
+            ) : null}
             {sigs.map((s) => (
               <button
                 key={s.workflow_sig}

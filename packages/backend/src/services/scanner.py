@@ -2,7 +2,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from io import BytesIO
-import json
 from PIL import Image as PILImage
 from ..database.mongo import col
 from . import image_tags
@@ -40,13 +39,12 @@ def _read_gen_raw(img: PILImage.Image) -> dict | None:
     # PNG text chunks (JSON strings). Keep both: `prompt` drives extraction, and
     # `workflow` is needed for canvas-paste in copy-workflow.
     if info.get("prompt") or info.get("workflow"):
-        def _loads(key: str):
-            try:
-                return json.loads(info[key]) if info.get(key) else None
-            except (ValueError, TypeError):
-                return None
-
-        return {"source": "comfyui", "prompt": _loads("prompt"), "workflow": _loads("workflow")}
+        # Lenient parse per chunk: a malformed `prompt` must not also discard an
+        # intact `workflow` (and vice versa), and the common control-char/trailing
+        # -byte malformations are recovered rather than dropped.
+        prompt = gen_metadata.loads_lenient(info.get("prompt"))
+        workflow = gen_metadata.loads_lenient(info.get("workflow"))
+        return {"source": "comfyui", "prompt": prompt, "workflow": workflow}
 
     # Automatic1111 PNG: a single `parameters` text chunk.
     params = info.get("parameters")

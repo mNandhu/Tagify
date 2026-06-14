@@ -20,8 +20,66 @@ Two source formats, two strategies:
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from typing import Any
+
+
+# --- Resilient JSON parsing (pure) -------------------------------------------
+#
+# Embedded ComfyUI metadata is hand-assembled by a zoo of custom nodes and is
+# routinely not strictly valid JSON. The two malformations seen in the wild are
+# recoverable and worth recovering, since a dropped `prompt` chunk loses the
+# whole signature + extraction for every image of that workflow:
+#
+#   - literal control characters inside string values (a real newline pasted
+#     into a text-encode widget) — ``strict=False`` accepts them;
+#   - trailing bytes after the JSON document (NUL padding, a second
+#     concatenated blob) — ``raw_decode`` stops at the document's close.
+#
+# Truncated JSON (a clipped chunk) stays unrecoverable and returns ``None``.
+
+_LENIENT = json.JSONDecoder(strict=False)
+
+
+def loads_lenient(text: Any) -> Any | None:
+    """Parse embedded metadata JSON, tolerating control chars + trailing bytes.
+
+    Tries strict parsing first (the common case), then a lenient
+    control-char-tolerant decode that ignores anything after the first complete
+    value. Returns ``None`` when no leading JSON value can be salvaged — callers
+    treat that the same as an absent chunk.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        pass
+    try:
+        obj, _ = _LENIENT.raw_decode(text.lstrip())
+        return obj
+    except (ValueError, TypeError):
+        return None
+
+
+def raw_matches_term(raw: Any, term: str) -> bool:
+    """Does the lowercased ``term`` appear anywhere in a raw embedded-metadata doc?
+
+    Searches the whole stored raw (ComfyUI ``prompt``/``workflow`` graphs or the
+    A1111 ``parameters`` string) by stringifying it. This is the search source the
+    rules page needs: a custom workflow whose prompt the structural parser can't
+    reach has ``gen.prompt = None`` and empty ``prompt_terms``, so the only place
+    a remembered keyword like ``masterpiece`` survives is the raw text itself.
+    """
+    if not term:
+        return False
+    try:
+        blob = json.dumps(raw, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return False
+    return term.lower() in blob.lower()
+
 
 # Canonical empty structured result. Callers fill what they can; nulls mean the
 # heuristic couldn't find it (which is fine — raw is always retained).

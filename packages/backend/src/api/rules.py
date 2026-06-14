@@ -35,10 +35,19 @@ async def list_rulesets():
 
 
 @router.get("/signatures")
-async def list_signatures():
+async def list_signatures(q: str | None = None):
     """Workflow signatures seen in the library, with image counts, how many still
     need mapping, a sample image to author against, and whether a ruleset exists.
-    Drives the authoring UI's signature picker."""
+    Drives the authoring UI's signature picker.
+
+    ``q`` (optional) narrows the list to signatures whose raw embedded metadata
+    contains the term — so a user who remembers a prompt word (``masterpiece``)
+    can find the otherwise-opaque signature hash to map. We search the *raw* doc,
+    not ``gen.prompt_terms``: an unmapped custom workflow (the whole reason this
+    page exists) has ``gen.prompt = None`` and empty terms, so the keyword only
+    survives in the raw graph. Counts stay whole-signature; the sample image is
+    swapped to one that actually matched so the authoring graph shows the term.
+    """
     pipeline = [
         {"$match": {"gen.workflow_sig": {"$ne": None}}},
         {
@@ -60,6 +69,35 @@ async def list_signatures():
         {"$sort": {"needs_mapping": -1, "count": -1}},
     ]
     rows = await acol("images").aggregate(pipeline).to_list(length=10000)
+
+    term = (q or "").strip()
+    if term:
+        # Map each signature's images to itself, then scan their raw docs for the
+        # term. Stream raws (one at a time) and stop a signature as soon as one of
+        # its images matches — bounded by distinct signatures, not library size,
+        # since this is an authoring page and the raw graphs are large.
+        sig_by_img = {
+            d["_id"]: d["gen"]["workflow_sig"]
+            async for d in acol("images").find(
+                {"gen.workflow_sig": {"$ne": None}}, {"gen.workflow_sig": 1}
+            )
+        }
+        want = {r["_id"] for r in rows}
+        sample_by_sig: dict[str, str] = {}
+        async for raw in acol("image_gen_raw").find(
+            {}, {"prompt": 1, "workflow": 1, "parameters": 1}
+        ):
+            sig = sig_by_img.get(raw["_id"])
+            if sig is None or sig not in want or sig in sample_by_sig:
+                continue
+            if gen_metadata.raw_matches_term(raw, term):
+                sample_by_sig[sig] = raw["_id"]
+                if len(sample_by_sig) == len(want):
+                    break
+        rows = [r for r in rows if r["_id"] in sample_by_sig]
+        for r in rows:
+            r["sample_image_id"] = sample_by_sig[r["_id"]]
+
     mapped = {
         d["_id"]
         for d in await acol("gen_rulesets").find({}, {"_id": 1}).to_list(length=10000)

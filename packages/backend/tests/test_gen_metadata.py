@@ -250,3 +250,54 @@ def test_resolve_ruleset_paths_reports_per_path():
     rows = gm.resolve_ruleset_paths(RAW_COMFY, fields)["prompt"]
     assert rows[0] == {"path": "prompt.6.inputs.text", "raw": "a fox in snow", "coerced": "a fox in snow"}
     assert rows[1] == {"path": "prompt.999.x", "raw": None, "coerced": None}
+
+
+# --- Resilient JSON parsing (loads_lenient) ----------------------------------
+
+
+def test_loads_lenient_valid_passes_through():
+    assert gm.loads_lenient('{"a": 1, "b": [2, 3]}') == {"a": 1, "b": [2, 3]}
+
+
+def test_loads_lenient_recovers_unescaped_control_char():
+    # A real newline pasted into a text-encode widget — strict json.loads rejects.
+    s = '{"6":{"class_type":"CLIPTextEncode","inputs":{"text":"line1\nmasterpiece"}}}'
+    out = gm.loads_lenient(s)
+    assert out["6"]["inputs"]["text"] == "line1\nmasterpiece"
+
+
+def test_loads_lenient_recovers_trailing_bytes():
+    # NUL padding / a concatenated blob after the document.
+    s = '{"3":{"class_type":"KSampler"}}\x00\x00garbage'
+    assert gm.loads_lenient(s) == {"3": {"class_type": "KSampler"}}
+
+
+def test_loads_lenient_truncated_is_unrecoverable():
+    assert gm.loads_lenient('{"3":{"inputs":{"seed":99') is None
+
+
+def test_loads_lenient_empty_and_non_str():
+    assert gm.loads_lenient("") is None
+    assert gm.loads_lenient("   ") is None
+    assert gm.loads_lenient(None) is None
+    assert gm.loads_lenient(123) is None
+
+
+# --- raw_matches_term (rules-page search source) -----------------------------
+
+
+def test_raw_matches_term_finds_keyword_in_comfy_graph():
+    raw = {"source": "comfyui", "prompt": COMFY, "workflow": None}
+    assert gm.raw_matches_term(raw, "fox") is True       # buried in inputs.text
+    assert gm.raw_matches_term(raw, "FOX") is True        # case-insensitive
+    assert gm.raw_matches_term(raw, "KSampler") is True    # class_type
+    assert gm.raw_matches_term(raw, "no-such-token") is False
+
+
+def test_raw_matches_term_finds_in_a1111_parameters():
+    raw = {"source": "a1111", "parameters": A1111_FULL}
+    assert gm.raw_matches_term(raw, "masterpiece") is True
+
+
+def test_raw_matches_term_empty_term_is_false():
+    assert gm.raw_matches_term({"prompt": COMFY}, "") is False

@@ -83,8 +83,12 @@ async function getJson<T>(url: string): Promise<T> {
   return (await r.json()) as T;
 }
 
-export function fetchSignatures(): Promise<SignatureRow[]> {
-  return getJson<SignatureRow[]>("/api/rules/signatures");
+export function fetchSignatures(q?: string): Promise<SignatureRow[]> {
+  const term = (q ?? "").trim();
+  const url = term
+    ? `/api/rules/signatures?q=${encodeURIComponent(term)}`
+    : "/api/rules/signatures";
+  return getJson<SignatureRow[]>(url);
 }
 
 export function fetchRuleset(sig: string): Promise<Ruleset> {
