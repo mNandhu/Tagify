@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -13,34 +15,12 @@ import logging
 import time
 import anyio
 
-app = FastAPI(title="Tagify API", version="0.1.0")
-
 logger = logging.getLogger("tagify")
 
-# GZip compression for JSON responses
-app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# CORS: allow frontend dev server and Docker frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8080",
-        "http://frontend",
-        "http://frontend:80",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Static thumbnails mount removed; images served via API backed by MinIO
-
-
-@app.on_event("startup")
-async def _on_startup():
-    # Ensure required MongoDB indexes exist
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Ensure required MongoDB indexes exist
     await ensure_indexes_async()
     # Ensure MinIO buckets exist (run off the event loop)
     await anyio.to_thread.run_sync(ensure_buckets)
@@ -69,6 +49,33 @@ async def _on_startup():
     except Exception:
         # Best-effort; AI can still run with defaults, but log failures for operators.
         logger.exception("Failed to load AI settings during startup; continuing")
+
+    yield
+
+    # Shutdown: add cleanup if needed in the future
+
+
+app = FastAPI(title="Tagify API", version="0.1.0", lifespan=lifespan)
+
+# GZip compression for JSON responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# CORS: allow frontend dev server and Docker frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://frontend",
+        "http://frontend:80",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Static thumbnails mount removed; images served via API backed by MinIO
 
 
 _rl_state: dict[tuple[str, str], tuple[float, int]] = {}
