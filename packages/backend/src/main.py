@@ -13,7 +13,7 @@ from .services.ai_tagger import get_tagger_manager
 
 import logging
 import time
-import anyio
+import anyio  # type: ignore[import-not-found]
 
 logger = logging.getLogger("tagify")
 
@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     # Startup: Ensure required MongoDB indexes exist
     await ensure_indexes_async()
     # Ensure MinIO buckets exist (run off the event loop)
-    await anyio.to_thread.run_sync(ensure_buckets)
+    await anyio.to_thread.run_sync(ensure_buckets)  # type: ignore[attr-defined]
 
     # Backfill fields introduced after initial releases.
     # This keeps filters like `no_ai_tags=1` working for older DBs.

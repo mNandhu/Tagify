@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-import anyio
+import anyio  # type: ignore[import-not-found]
 
 
 from ..database.motor import acol
@@ -73,7 +73,7 @@ async def remove_library(library_id: str):
     await acol("image_gen_raw").delete_many({"library_id": library_id})
     # remove MinIO objects for this library
     try:
-        await anyio.to_thread.run_sync(delete_by_prefix, f"{library_id}/")
+        await anyio.to_thread.run_sync(lambda: delete_by_prefix(f"{library_id}/"))  # type: ignore[attr-defined]
     except Exception:
         # ignore failures to remove objects
         pass
@@ -134,7 +134,8 @@ async def update_library(library_id: str, body: LibraryUpdate):
         raise HTTPException(status_code=404, detail="Library not found")
     await libraries.update_one({"_id": oid}, {"$set": update_doc})
     doc = await libraries.find_one({"_id": oid})
-    doc["_id"] = str(doc["_id"])  # stringify
+    if doc:
+        doc["_id"] = str(doc["_id"])  # stringify
     if "path" in update_doc and update_doc["path"] != old_doc.get("path"):
         scan_library_async(library_id, update_doc["path"])
     return doc

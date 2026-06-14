@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Header, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import mimetypes
-import anyio
+import anyio  # type: ignore[import-not-found]
 import os
 from urllib.parse import quote
 
@@ -12,7 +12,7 @@ from ..services.storage_minio import (
     presign_thumb,
 )
 from ..services import gen_metadata, image_tags
-from ..services.image_tags import find_image as _find_image_doc
+from ..services.image_tags import find_image as _find_image_doc  # type: ignore
 from ..core.config import settings
 
 
@@ -203,7 +203,7 @@ async def get_image_file(
         raise HTTPException(status_code=404, detail="File path not available")
 
     # Verify the file still exists on disk
-    if not await anyio.to_thread.run_sync(lambda: os.path.isfile(path)):
+    if not await anyio.to_thread.run_sync(lambda: os.path.isfile(path)):  # type: ignore[attr-defined]
         raise HTTPException(status_code=404, detail="Original file not found on disk")
 
     media_type, _ = mimetypes.guess_type(path)
@@ -228,11 +228,11 @@ async def head_image_file(image_id: str):
     if not path:
         raise HTTPException(status_code=404, detail="File path not available")
 
-    if not await anyio.to_thread.run_sync(lambda: os.path.isfile(path)):
+    if not await anyio.to_thread.run_sync(lambda: os.path.isfile(path)):  # type: ignore[attr-defined]
         raise HTTPException(status_code=404, detail="Original file not found on disk")
 
     media_type, _ = mimetypes.guess_type(path)
-    st = await anyio.to_thread.run_sync(lambda: os.stat(path))
+    st = await anyio.to_thread.run_sync(lambda: os.stat(path))  # type: ignore[attr-defined]
     headers: dict[str, str] = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(st.st_size),
@@ -262,7 +262,7 @@ async def get_image_thumb(image_id: str):
             return resp
         else:
             return {"url": url}
-    obj = await anyio.to_thread.run_sync(lambda: get_thumb(thumb_key))
+    obj = await anyio.to_thread.run_sync(lambda: get_thumb(thumb_key))  # type: ignore[attr-defined]
     headers = {}
     etag = obj.headers.get("ETag")
     if etag:
@@ -478,7 +478,7 @@ async def purge_image(image_id: str, body: PurgeBody):
             except FileNotFoundError:
                 pass
 
-        await anyio.to_thread.run_sync(_unlink)
+        await anyio.to_thread.run_sync(_unlink)  # type: ignore[attr-defined]
 
     await acol("images").delete_one({"_id": img["_id"]})
     await acol("image_gen_raw").delete_one({"_id": img["_id"]})
@@ -489,7 +489,7 @@ async def purge_image(image_id: str, body: PurgeBody):
             from ..services.storage_minio import get_minio
 
             client = get_minio()
-            await anyio.to_thread.run_sync(
+            await anyio.to_thread.run_sync(  # type: ignore[attr-defined]
                 lambda: client.remove_object(settings.minio_bucket_thumbs, thumb_key)
             )
         except Exception:
