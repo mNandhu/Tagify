@@ -19,7 +19,7 @@ import {
 } from "../lib/imageFilter";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
-import { Select } from "../components/ui/Input";
+import { Input, Select } from "../components/ui/Input";
 import { EmptyState } from "../components/ui/EmptyState";
 import {
   TagSearchInput,
@@ -38,7 +38,17 @@ async function api<T>(url: string): Promise<T> {
 }
 
 const hasActiveFilter = (f: Filters) =>
-  f.tags.length > 0 || !!f.libraryId || f.noTags || f.noAiTags || f.quarantined;
+  f.tags.length > 0 ||
+  !!f.libraryId ||
+  f.noTags ||
+  f.noAiTags ||
+  f.quarantined ||
+  f.promptTerms.length > 0 ||
+  !!f.model ||
+  f.minW != null ||
+  f.maxW != null ||
+  f.minH != null ||
+  f.maxH != null;
 
 export default function AllImagesPage() {
   const { push } = useToast();
@@ -53,6 +63,10 @@ export default function AllImagesPage() {
   const [libs, setLibs] = useState<Library[]>([]);
   // Known tags (with image counts) powering the search autocomplete.
   const [tagOptions, setTagOptions] = useState<TagSuggestion[]>([]);
+  // Distinct checkpoints (with counts) for the model filter dropdown.
+  const [modelOptions, setModelOptions] = useState<
+    { model: string; count: number }[]
+  >([]);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
 
@@ -154,6 +168,13 @@ export default function AllImagesPage() {
     api<TagSuggestion[]>(`/api/tags?include_manual=1`)
       .then(setTagOptions)
       .catch(() => setTagOptions([]));
+  }, []);
+
+  // Distinct extracted checkpoints for the model dropdown.
+  useEffect(() => {
+    api<{ model: string; count: number }[]>(`/api/images/models`)
+      .then(setModelOptions)
+      .catch(() => setModelOptions([]));
   }, []);
 
   // Keyboard shortcuts: S toggle selection, F focus search, N no-tags, A no-AI-tags.
@@ -429,6 +450,130 @@ export default function AllImagesPage() {
                   Clear filters
                 </Button>
                 <Button onClick={clearSelection}>Clear selection</Button>
+              </div>
+            </div>
+
+            {/* Generation-metadata search */}
+            <div className="mt-3 pt-3 border-t border-neutral-800 space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                Generation
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                    Prompt contains
+                  </label>
+                  <TagSearchInput
+                    value={filters.promptTerms}
+                    onChange={(promptTerms) =>
+                      setFilters({ ...filters, promptTerms })
+                    }
+                    suggestions={[]}
+                    placeholder="Prompt terms…"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                    Prompt logic
+                  </label>
+                  <Select
+                    aria-label="Prompt term logic"
+                    value={filters.promptLogic}
+                    onChange={(e) =>
+                      setFilters({
+                        ...filters,
+                        promptLogic: e.target.value as Filters["promptLogic"],
+                      })
+                    }
+                  >
+                    <option value="and">Match all terms (AND)</option>
+                    <option value="or">Match any term (OR)</option>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                    Model
+                  </label>
+                  <Select
+                    aria-label="Model filter"
+                    value={filters.model || ""}
+                    onChange={(e) =>
+                      setFilters({
+                        ...filters,
+                        model: e.target.value || undefined,
+                      })
+                    }
+                  >
+                    <option value="">Any model</option>
+                    {modelOptions.map((m) => (
+                      <option key={m.model} value={m.model}>
+                        {m.model} ({m.count})
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                    Width (min / max)
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      aria-label="Min width"
+                      placeholder="min"
+                      value={filters.minW ?? ""}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          minW: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                    />
+                    <Input
+                      type="number"
+                      aria-label="Max width"
+                      placeholder="max"
+                      value={filters.maxW ?? ""}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          maxW: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                    Height (min / max)
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      aria-label="Min height"
+                      placeholder="min"
+                      value={filters.minH ?? ""}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          minH: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                    />
+                    <Input
+                      type="number"
+                      aria-label="Max height"
+                      placeholder="max"
+                      value={filters.maxH ?? ""}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          maxH: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>

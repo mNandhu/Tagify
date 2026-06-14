@@ -47,11 +47,20 @@ async def list_images(
     no_ai_tags: int | None = Query(default=None, alias="no_ai_tags"),
     quarantined: int | None = Query(default=None),
     needs_mapping: int | None = Query(default=None),
+    pterms: list[str] | None = Query(default=None),
+    plogic: str = Query(default="and"),
+    model: list[str] | None = Query(default=None),
+    min_w: int | None = Query(default=None, ge=0),
+    max_w: int | None = Query(default=None, ge=0),
+    min_h: int | None = Query(default=None, ge=0),
+    max_h: int | None = Query(default=None, ge=0),
     cursor: str | None = Query(default=None),
 ):
     # Lightweight input validation / abuse guards
     if logic not in ("and", "or"):
         raise HTTPException(status_code=422, detail="logic must be 'and' or 'or'")
+    if plogic not in ("and", "or"):
+        raise HTTPException(status_code=422, detail="plogic must be 'and' or 'or'")
     if tags:
         if len(tags) > 100:
             raise HTTPException(status_code=422, detail="too many tags (max 100)")
@@ -97,6 +106,27 @@ async def list_images(
     if needs_mapping == 1:
         q["gen.workflow_sig"] = {"$ne": None}
         q["gen.prompt"] = None
+    # Generation-metadata filters. Prompt terms reuse the tokenized index; AND
+    # uses $all, OR uses $in. Model is an equality/$in over the checkpoint.
+    if pterms:
+        terms = [t.strip().lower() for t in pterms if t and t.strip()]
+        if terms:
+            q["gen.prompt_terms"] = (
+                {"$in": terms} if plogic == "or" else {"$all": terms}
+            )
+    if model:
+        models = [m for m in model if m]
+        if models:
+            q["gen.model"] = {"$in": models}
+    # Dimension ranges reuse the existing width/height fields.
+    for field, lo, hi in (("width", min_w, max_w), ("height", min_h, max_h)):
+        rng: dict = {}
+        if lo is not None:
+            rng["$gte"] = lo
+        if hi is not None:
+            rng["$lte"] = hi
+        if rng:
+            q[field] = rng
     # Projection keeps payload small for the grid. thumb_key is included so we
     # can hand the grid a ready-to-use thumb_url and skip the per-tile round
     # trip through /thumb (a 307 redirect or a resolve request).
@@ -229,6 +259,22 @@ async def head_image_thumb(image_id: str):
     media_type = "image/webp" if thumb_key.endswith(".webp") else "image/jpeg"
     headers = {"Accept-Ranges": "bytes"}
     return Response(status_code=200, headers=headers, media_type=media_type)
+
+
+@router.get("/models")
+async def list_models(library_id: str | None = Query(default=None)):
+    """Distinct extracted checkpoints with image counts, for the model filter
+    dropdown. Sorted by frequency."""
+    match: dict = {"gen.model": {"$ne": None}}
+    if library_id:
+        match["library_id"] = library_id
+    pipeline = [
+        {"$match": match},
+        {"$group": {"_id": "$gen.model", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    rows = await acol("images").aggregate(pipeline).to_list(length=10000)
+    return [{"model": r["_id"], "count": r["count"]} for r in rows]
 
 
 @router.get("/{image_id:path}/workflow")

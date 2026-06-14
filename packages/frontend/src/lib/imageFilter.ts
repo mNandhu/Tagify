@@ -41,6 +41,15 @@ export type Filters = {
   // View only quarantined images instead of the default (quarantine-excluded)
   // feed. Off = default feed (quarantined hidden).
   quarantined: boolean;
+  // Generation-metadata search: prompt terms (tokenized), checkpoint model,
+  // and dimension bounds. promptTerms match against gen.prompt_terms.
+  promptTerms: string[];
+  promptLogic: TagLogic;
+  model?: string;
+  minW?: number;
+  maxW?: number;
+  minH?: number;
+  maxH?: number;
 };
 
 export const DEFAULT_FILTERS: Filters = {
@@ -50,6 +59,13 @@ export const DEFAULT_FILTERS: Filters = {
   noTags: false,
   noAiTags: false,
   quarantined: false,
+  promptTerms: [],
+  promptLogic: "and",
+  model: undefined,
+  minW: undefined,
+  maxW: undefined,
+  minH: undefined,
+  maxH: undefined,
 };
 
 /** Default page size for the Image feed. */
@@ -73,7 +89,20 @@ export function parseFilters(sp: URLSearchParams): Filters {
     noTags: sp.get("no_tags") === "1",
     noAiTags: sp.get("no_ai_tags") === "1",
     quarantined: sp.get("quarantined") === "1",
+    promptTerms: sp.getAll("pterms"),
+    promptLogic: sp.get("plogic") === "or" ? "or" : "and",
+    model: sp.get("model") || undefined,
+    minW: numOrUndef(sp.get("min_w")),
+    maxW: numOrUndef(sp.get("max_w")),
+    minH: numOrUndef(sp.get("min_h")),
+    maxH: numOrUndef(sp.get("max_h")),
   };
+}
+
+function numOrUndef(v: string | null): number | undefined {
+  if (v == null || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /**
@@ -89,6 +118,14 @@ export function serializeFilters(filters: Filters): URLSearchParams {
   if (filters.noTags) sp.set("no_tags", "1");
   if (filters.noAiTags) sp.set("no_ai_tags", "1");
   if (filters.quarantined) sp.set("quarantined", "1");
+  filters.promptTerms.forEach((t) => sp.append("pterms", t));
+  if (filters.promptTerms.length && filters.promptLogic)
+    sp.set("plogic", filters.promptLogic);
+  if (filters.model) sp.set("model", filters.model);
+  if (filters.minW != null) sp.set("min_w", String(filters.minW));
+  if (filters.maxW != null) sp.set("max_w", String(filters.maxW));
+  if (filters.minH != null) sp.set("min_h", String(filters.minH));
+  if (filters.maxH != null) sp.set("max_h", String(filters.maxH));
   return sp;
 }
 

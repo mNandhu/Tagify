@@ -25,6 +25,13 @@ describe("Image filter URL round-trip", () => {
       noTags: false,
       noAiTags: true,
       quarantined: true,
+      promptTerms: ["cyberpunk", "neon"],
+      promptLogic: "or",
+      model: "sdxl",
+      minW: 512,
+      maxW: 2048,
+      minH: 768,
+      maxH: undefined,
     };
     expect(roundTrip(f)).toEqual(f);
   });
