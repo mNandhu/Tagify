@@ -19,9 +19,13 @@ async function api<T>(url: string): Promise<T> {
   return r.json();
 }
 
-const formatTag = (raw: string) =>
-  raw.startsWith("manual:") ? raw.slice("manual:".length) : raw;
+const formatTag = (raw: string) => {
+  if (raw.startsWith("manual:")) return raw.slice("manual:".length);
+  if (raw.startsWith("prompt:")) return raw.slice("prompt:".length);
+  return raw;
+};
 const isManual = (raw: string) => raw.startsWith("manual:");
+const isPrompt = (raw: string) => raw.startsWith("prompt:");
 
 export default function TagsPage() {
   const navigate = useNavigate();
@@ -29,13 +33,18 @@ export default function TagsPage() {
   const [q, setQ] = useState("");
   const [visible, setVisible] = useState(PAGE);
   const [samples, setSamples] = useState<Record<string, Sample[]>>({});
+  // Prompt-extracted tags are large and long-tail, so they stay off by default;
+  // this opts the whole browser into showing them alongside AI + manual tags.
+  const [includePrompt, setIncludePrompt] = useState(false);
   const requested = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    api<TagAgg[]>(`/api/tags?include_manual=1`)
+    setTags(null);
+    const params = includePrompt ? "?include_manual=1&include_prompt=1" : "?include_manual=1";
+    api<TagAgg[]>(`/api/tags${params}`)
       .then(setTags)
       .catch(() => setTags([]));
-  }, []);
+  }, [includePrompt]);
 
   // Reset paging when the search term changes.
   useEffect(() => setVisible(PAGE), [q]);
@@ -75,17 +84,26 @@ export default function TagsPage() {
         count={tags?.length}
         description="Jump into any tag, or surface what still needs tagging."
       >
-        <div className="relative max-w-md">
-          <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500"
-          />
-          <Input
-            className="pl-9"
-            placeholder="Filter tags…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+        <div className="flex items-center gap-3">
+          <div className="relative max-w-md flex-1">
+            <Search
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500"
+            />
+            <Input
+              className="pl-9"
+              placeholder="Filter tags…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+          <Button
+            active={includePrompt}
+            onClick={() => setIncludePrompt((v) => !v)}
+            title="Show tags extracted from generation prompts"
+          >
+            {includePrompt ? "Hide prompt tags" : "Show prompt tags"}
+          </Button>
         </div>
       </PageHeader>
 
@@ -200,6 +218,11 @@ function TagCard({
           {isManual(tag._id) && (
             <Badge tone="success" className="text-[10px] shrink-0">
               manual
+            </Badge>
+          )}
+          {isPrompt(tag._id) && (
+            <Badge tone="info" className="text-[10px] shrink-0">
+              prompt
             </Badge>
           )}
         </div>

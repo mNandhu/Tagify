@@ -19,6 +19,7 @@ from pymongo.errors import AutoReconnect, NetworkTimeout, PyMongoError
 
 from ..database.mongo import col
 from . import gen_metadata
+from .image_tags import replace_prompt_pipeline, to_prompt
 
 _BATCH = 200
 
@@ -30,14 +31,20 @@ def _load_rulesets() -> dict[str, dict]:
 
 def _reproject_query(query: dict) -> int:
     """Recompute ``gen.*`` for every raw doc matching ``query``, applying the
-    user ruleset bound to each doc's signature. Returns docs updated."""
+    user ruleset bound to each doc's signature, and mirror the extracted prompt
+    terms into ``prompt:`` tags. Returns docs updated.
+
+    Each doc emits two writes: a classic ``$set`` for ``gen`` (kept classic so the
+    stored prompt text is never re-evaluated as an aggregation expression) and a
+    separate pipeline update that replaces the doc's ``prompt:`` tags. They touch
+    disjoint fields, so ``ordered=False`` batching is order-independent."""
     rulesets = _load_rulesets()
     images = col("images")
     ops: list[UpdateOne] = []
     updated = 0
 
     def _flush() -> None:
-        nonlocal updated, ops
+        nonlocal ops
         if not ops:
             return
         batch = ops
@@ -49,14 +56,18 @@ def _reproject_query(query: dict) -> int:
             except (AutoReconnect, NetworkTimeout, PyMongoError):
                 if attempt == 2:
                     raise
-        updated += len(batch)
 
     for raw in col("image_gen_raw").find(query):
         ruleset = rulesets.get(raw.get("workflow_sig"))
         g = gen_metadata.extract(raw, ruleset)
         if g is None:
             continue
+        prompt_tags = [to_prompt(t) for t in g.get("prompt_terms", [])]
         ops.append(UpdateOne({"_id": raw["_id"]}, {"$set": {"gen": g}}))
+        ops.append(
+            UpdateOne({"_id": raw["_id"]}, replace_prompt_pipeline(prompt_tags))
+        )
+        updated += 1
         if len(ops) >= _BATCH:
             _flush()
     _flush()

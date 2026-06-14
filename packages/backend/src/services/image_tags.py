@@ -2,17 +2,21 @@
 
 Conventions enforced here (and nowhere else):
 
-- ``tags`` holds two kinds of tag in one array:
-    * AI tags    — primary, stored unprefixed (e.g. ``"1girl"``)
+- ``tags`` holds three kinds of tag in one array:
+    * AI tags     — primary, stored unprefixed (e.g. ``"1girl"``)
     * Manual tags — stored with a ``manual:`` prefix (e.g. ``"manual:favourite"``)
-- ``has_tags``    — True iff ``tags`` is non-empty.
-- ``has_ai_tags`` — True iff ``tags`` contains at least one non-manual tag.
-- ``rating``      — one of RATINGS; reset to ``"-"`` when AI tags are cleared.
+    * Prompt tags — extracted from generation prompts, stored with a ``prompt:``
+      prefix (e.g. ``"prompt:masterpiece"``). Owned by reprojection, not the user.
+- ``has_tags``        — True iff ``tags`` has a *curatable* tag (a non-``prompt:``
+  tag, i.e. AI or manual). Prompt-only images stay "untagged" for curation.
+- ``has_ai_tags``     — True iff ``tags`` has a tag that is neither manual nor prompt.
+- ``has_prompt_tags`` — True iff ``tags`` contains at least one ``prompt:`` tag.
+- ``rating``          — one of RATINGS; reset to ``"-"`` when AI tags are cleared.
 
-Every write that touches ``tags`` recomputes ``has_tags``/``has_ai_tags`` from the
-resulting array via :func:`_recompute_flags_stage`, so the two booleans can never
-drift from the array they summarise. Callers hand the repo a high-level intent
-(apply manual / remove / replace AI / clear AI); they never assemble pipelines.
+Every write that touches ``tags`` recomputes the three flags from the resulting
+array via :func:`_recompute_flags_stage`, so the booleans can never drift from the
+array they summarise. Callers hand the repo a high-level intent (apply manual /
+remove / replace AI / clear AI / replace prompt); they never assemble pipelines.
 """
 
 from __future__ import annotations
@@ -22,7 +26,11 @@ from typing import Any
 from ..database.motor import acol
 
 MANUAL_PREFIX = "manual:"
-_MANUAL_REGEX = r"^manual:"
+PROMPT_PREFIX = "prompt:"
+_PROMPT_REGEX = r"^prompt:"
+# Tags that are NOT AI tags: anything carrying a kind prefix. AI is the absence
+# of a prefix, so "is an AI tag" == "matches neither of these".
+_NON_AI_REGEX = r"^(manual|prompt):"
 
 # Canonical rating vocabulary used by the API, UI and AI tagger.
 RATINGS = ("-", "general", "sensitive", "questionable", "explicit")
@@ -38,6 +46,7 @@ def initial_tag_fields() -> dict[str, Any]:
         "tags": [],
         "has_tags": False,
         "has_ai_tags": False,
+        "has_prompt_tags": False,
         "quarantined": False,
         "score": 0,
     }
@@ -53,6 +62,15 @@ def is_manual(tag: str) -> bool:
 def to_manual(tag: str) -> str:
     """Return ``tag`` with the manual prefix, idempotently."""
     return tag if is_manual(tag) else f"{MANUAL_PREFIX}{tag}"
+
+
+def is_prompt(tag: str) -> bool:
+    return tag.startswith(PROMPT_PREFIX)
+
+
+def to_prompt(tag: str) -> str:
+    """Return ``tag`` with the prompt prefix, idempotently."""
+    return tag if is_prompt(tag) else f"{PROMPT_PREFIX}{tag}"
 
 
 def normalize_rating(raw: str | None) -> str | None:
@@ -95,11 +113,31 @@ def id_variants(image_id: str) -> list[str]:
 
 
 def _recompute_flags_stage() -> dict[str, Any]:
-    """A ``$set`` stage deriving the flags from the current ``$tags`` array."""
+    """A ``$set`` stage deriving the three flags from the current ``$tags`` array.
+
+    ``has_ai_tags`` is "has a tag carrying no kind prefix" — neither ``manual:``
+    nor ``prompt:`` — so prompt tags never masquerade as AI tags.
+    """
     tags = {"$ifNull": ["$tags", []]}
     return {
         "$set": {
-            "has_tags": {"$gt": [{"$size": tags}, 0]},
+            # "has_tags" means "has a curatable tag" — a non-prompt tag (AI or
+            # manual). Prompt tags are reproject-owned, not curation, so a
+            # prompt-only image still reads as untagged (stays in the Untagged
+            # tile until it gets AI/manual tags). This keeps Untagged ⊂ AI-Untagged.
+            "has_tags": {
+                "$anyElementTrue": {
+                    "$map": {
+                        "input": tags,
+                        "as": "t",
+                        "in": {
+                            "$not": [
+                                {"$regexMatch": {"input": "$$t", "regex": _PROMPT_REGEX}}
+                            ]
+                        },
+                    }
+                }
+            },
             "has_ai_tags": {
                 "$anyElementTrue": {
                     "$map": {
@@ -107,9 +145,18 @@ def _recompute_flags_stage() -> dict[str, Any]:
                         "as": "t",
                         "in": {
                             "$not": [
-                                {"$regexMatch": {"input": "$$t", "regex": _MANUAL_REGEX}}
+                                {"$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}}
                             ]
                         },
+                    }
+                }
+            },
+            "has_prompt_tags": {
+                "$anyElementTrue": {
+                    "$map": {
+                        "input": tags,
+                        "as": "t",
+                        "in": {"$regexMatch": {"input": "$$t", "regex": _PROMPT_REGEX}},
                     }
                 }
             },
@@ -147,29 +194,59 @@ def remove_tags_pipeline(tags: list[str]) -> list[dict[str, Any]]:
 def replace_ai_pipeline(
     *, ai_tags: list[str], ai_meta: dict[str, Any], rating: str
 ) -> list[dict[str, Any]]:
-    """Replace AI tags with ``ai_tags``, preserving manual tags; set AI meta+rating."""
+    """Replace AI tags with ``ai_tags``, preserving manual + prompt tags; set AI
+    meta+rating. Only the unprefixed (AI) tags are swapped out."""
     return [
         {
             "$set": {
                 "ai": ai_meta,
                 "rating": rating,
-                "__manual_tags": {
+                "__keep_tags": {
                     "$filter": {
                         "input": {"$ifNull": ["$tags", []]},
                         "as": "t",
-                        "cond": {"$regexMatch": {"input": "$$t", "regex": _MANUAL_REGEX}},
+                        "cond": {"$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}},
                     }
                 },
             }
         },
-        {"$set": {"tags": {"$concatArrays": ["$__manual_tags", ai_tags]}}},
+        {"$set": {"tags": {"$concatArrays": ["$__keep_tags", ai_tags]}}},
         _recompute_flags_stage(),
-        {"$unset": "__manual_tags"},
+        {"$unset": "__keep_tags"},
+    ]
+
+
+def replace_prompt_pipeline(prompt_tags: list[str]) -> list[dict[str, Any]]:
+    """Replace ``prompt:`` tags with ``prompt_tags``, preserving AI + manual tags.
+
+    Owned by reprojection (mirror of :func:`replace_ai_pipeline`). Re-runnable:
+    existing prompt tags are dropped and replaced, never appended. ``prompt_tags``
+    are already prefixed by the caller (see :func:`to_prompt`)."""
+    return [
+        {
+            "$set": {
+                "__keep_tags": {
+                    "$filter": {
+                        "input": {"$ifNull": ["$tags", []]},
+                        "as": "t",
+                        "cond": {
+                            "$not": [
+                                {"$regexMatch": {"input": "$$t", "regex": _PROMPT_REGEX}}
+                            ]
+                        },
+                    }
+                },
+            }
+        },
+        {"$set": {"tags": {"$concatArrays": ["$__keep_tags", prompt_tags]}}},
+        _recompute_flags_stage(),
+        {"$unset": "__keep_tags"},
     ]
 
 
 def clear_ai_pipeline() -> list[dict[str, Any]]:
-    """Drop AI tags + AI meta from an image, keeping manual tags. Resets rating."""
+    """Drop AI tags + AI meta from an image, keeping manual + prompt tags. Resets
+    rating."""
     return [
         {
             "$set": {
@@ -177,7 +254,7 @@ def clear_ai_pipeline() -> list[dict[str, Any]]:
                     "$filter": {
                         "input": {"$ifNull": ["$tags", []]},
                         "as": "t",
-                        "cond": {"$regexMatch": {"input": "$$t", "regex": _MANUAL_REGEX}},
+                        "cond": {"$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}},
                     }
                 },
                 "rating": "-",
@@ -188,9 +265,23 @@ def clear_ai_pipeline() -> list[dict[str, Any]]:
     ]
 
 
-def exclude_manual_match() -> dict[str, Any]:
-    """Match expression selecting only non-manual (AI) tags."""
-    return {"tags": {"$not": {"$regex": _MANUAL_REGEX}}}
+def browse_exclude_match(
+    *, include_manual: bool = False, include_prompt: bool = False
+) -> dict[str, Any] | None:
+    """Match expression for the tag browser: exclude the kinds not opted into.
+
+    Default browse is AI-only (manual + prompt both excluded). Returns ``None``
+    when nothing is excluded (both kinds opted in), so callers can skip the stage.
+    """
+    excluded: list[str] = []
+    if not include_manual:
+        excluded.append("manual")
+    if not include_prompt:
+        excluded.append("prompt")
+    if not excluded:
+        return None
+    regex = rf"^({'|'.join(excluded)}):"
+    return {"tags": {"$not": {"$regex": regex}}}
 
 
 # --- Repository (I/O) ---------------------------------------------------------

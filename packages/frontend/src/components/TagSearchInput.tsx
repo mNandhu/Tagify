@@ -13,9 +13,13 @@ import { cn } from "../lib/cn";
 
 export type TagSuggestion = { _id: string; count: number };
 
-const formatTag = (raw: string) =>
-  raw.startsWith("manual:") ? raw.slice("manual:".length) : raw;
+const formatTag = (raw: string) => {
+  if (raw.startsWith("manual:")) return raw.slice("manual:".length);
+  if (raw.startsWith("prompt:")) return raw.slice("prompt:".length);
+  return raw;
+};
 const isManual = (raw: string) => raw.startsWith("manual:");
+const isPrompt = (raw: string) => raw.startsWith("prompt:");
 
 const MAX_SUGGESTIONS = 8;
 
@@ -177,6 +181,11 @@ export const TagSearchInput = forwardRef<HTMLInputElement, Props>(
                     {isManual(s._id) && (
                       <Badge tone="success" className="text-[10px] shrink-0">
                         manual
+                      </Badge>
+                    )}
+                    {isPrompt(s._id) && (
+                      <Badge tone="info" className="text-[10px] shrink-0">
+                        prompt
                       </Badge>
                     )}
                   </span>

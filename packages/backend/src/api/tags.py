@@ -90,19 +90,24 @@ class TagThumbnailSet(BaseModel):
 
 
 @router.get("")
-async def list_tags(include_manual: bool = False):
+async def list_tags(include_manual: bool = False, include_prompt: bool = False):
     now = time.time()
-    cache_key = "all_with_manual" if include_manual else "all"
+    cache_key = f"m{int(include_manual)}:p{int(include_prompt)}"
     async with _CACHE_LOCK:
         cached = _TAGS_CACHE.get(cache_key)
         if cached and (now - cached[0]) < _TAGS_TTL_SECONDS:
             return cached[1]
 
-    # AI tags are primary (no prefix). Manual tags are stored as `manual:<tag>`.
-    # By default we exclude manual tags from the tag browser; Tags view can opt-in.
+    # AI tags are primary (no prefix). Manual tags are `manual:<tag>`, prompt-
+    # extracted tags are `prompt:<term>`. By default the browser is AI-only; the
+    # Tags view opts into the other kinds. Prompt vocabularies are large, so they
+    # stay off unless explicitly requested.
+    exclude = image_tags.browse_exclude_match(
+        include_manual=include_manual, include_prompt=include_prompt
+    )
     pipeline = [
         {"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": False}},
-        *([] if include_manual else [{"$match": image_tags.exclude_manual_match()}]),
+        *([] if exclude is None else [{"$match": exclude}]),
         # $max picks the newest image id (ids sort like _id desc) without a
         # blocking pre-group $sort over every unwound tag occurrence.
         {

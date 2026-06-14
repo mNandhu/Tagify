@@ -51,8 +51,14 @@ async def _on_startup():
         await acol("images").update_many(
             {"has_ai_tags": {"$exists": False}}, {"$set": {"has_ai_tags": False}}
         )
+        # `has_prompt_tags` (third tag-kind axis) ships after `has_ai_tags`; seed
+        # it false on older docs so browse/filters never hit a missing field.
+        await acol("images").update_many(
+            {"has_prompt_tags": {"$exists": False}},
+            {"$set": {"has_prompt_tags": False}},
+        )
     except Exception:
-        logger.exception("Failed to backfill images.has_ai_tags during startup")
+        logger.exception("Failed to backfill image tag-state flags during startup")
 
     # Start internal AI job worker
     jm = get_ai_job_manager()

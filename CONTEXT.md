@@ -9,11 +9,18 @@ belongs in this file.
 - **Library** — a root directory of images registered for indexing. Owns scan
   progress state. (`api/libraries.py`, `models/library.py`)
 - **Image** — one indexed file. Id is `{library_id}:{path-relative-to-root}`.
-- **Tag** — a label on an image. Two kinds share one `tags` array:
+- **Tag** — a label on an image. Three kinds share one `tags` array:
   - **AI tag** — produced by the tagger, stored unprefixed (`1girl`).
   - **Manual tag** — user-applied, stored with a `manual:` prefix.
+  - **Prompt tag** — extracted from generation prompts by reprojection, stored
+    with a `prompt:` prefix (`prompt:masterpiece`). Owned by reprojection, not the
+    user; mirrors `gen.prompt_terms` (which stays the fast search field). AI and
+    prompt tags may overlap (e.g. `1girl` and `prompt:1girl` coexist) — they are
+    distinct kinds and are never deduped against each other.
 - **Tag-state** — the invariant binding `tags` to its summary flags:
-  `has_tags` (any tag) and `has_ai_tags` (any non-manual tag), plus `rating`.
+  `has_tags` (any *curatable* tag — a non-`prompt:` tag, so prompt-only images
+  stay "Untagged"), `has_ai_tags` (any tag that is *neither* `manual:` nor
+  `prompt:`), and `has_prompt_tags` (any `prompt:` tag), plus `rating`.
   Owned by `services/image_tags.py` — the single place that mutates tags and
   recomputes the flags, so they can never drift.
 - **Rating** — one of `-`, `general`, `sensitive`, `questionable`, `explicit`.

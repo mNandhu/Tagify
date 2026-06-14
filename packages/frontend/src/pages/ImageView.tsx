@@ -302,7 +302,9 @@ export default function ImageView() {
   }, []);
 
   const formatTag = useCallback((raw: string) => {
-    return raw.startsWith("manual:") ? raw.slice("manual:".length) : raw;
+    if (raw.startsWith("manual:")) return raw.slice("manual:".length);
+    if (raw.startsWith("prompt:")) return raw.slice("prompt:".length);
+    return raw;
   }, []);
 
   const setTagThumbnail = useCallback(
@@ -330,9 +332,14 @@ export default function ImageView() {
 
   const imageCol = "lg:col-span-12";
   const fileName = data?.path ? data.path.split(/[\\/]/).pop() : "";
-  const aiTags = (data?.tags || []).filter((t) => !t.startsWith("manual:"));
+  const aiTags = (data?.tags || []).filter(
+    (t) => !t.startsWith("manual:") && !t.startsWith("prompt:"),
+  );
   const manualTagsRaw = (data?.tags || []).filter((t) =>
     t.startsWith("manual:"),
+  );
+  const promptTagsRaw = (data?.tags || []).filter((t) =>
+    t.startsWith("prompt:"),
   );
   const rating = pickRating(data);
 
@@ -492,6 +499,24 @@ export default function ImageView() {
                     <button
                       type="button"
                       className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-100/80 hover:text-emerald-100"
+                      title="Set as tag thumbnail"
+                      aria-label={`Set thumbnail for ${formatTag(t)}`}
+                      onClick={() => void setTagThumbnail(t)}
+                    >
+                      <ImageIcon size={12} />
+                    </button>
+                  </span>
+                ))}
+                {promptTagsRaw.map((t: string) => (
+                  <span
+                    key={t}
+                    className="group px-2 py-1 rounded-full bg-sky-900/30 text-xs border border-sky-800 text-sky-100 inline-flex items-center gap-1"
+                    title="Prompt-extracted tag"
+                  >
+                    {formatTag(t)}
+                    <button
+                      type="button"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-sky-100/80 hover:text-sky-100"
                       title="Set as tag thumbnail"
                       aria-label={`Set thumbnail for ${formatTag(t)}`}
                       onClick={() => void setTagThumbnail(t)}

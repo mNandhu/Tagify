@@ -61,6 +61,7 @@ def test_upsert_image_op_seeds_tag_state_only_on_insert():
         "tags": [],
         "has_tags": False,
         "has_ai_tags": False,
+        "has_prompt_tags": False,
         "quarantined": False,
         "score": 0,
     }

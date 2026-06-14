@@ -250,3 +250,83 @@ grouping stacking UI.
   path; EXIF needs `img.getexif()` + UNICODE prefix handling).
 - ComfyUI WebP outputs embed metadata in EXIF/XMP, not PNG chunks — confirm the
   reader covers them.
+
+## Prompt terms as a third tag kind (BUILT)
+
+**Status:** implemented. Backend tag-state gained the third axis (`has_prompt_tags`,
+AI redefined as "no `manual:` and no `prompt:`"); reproject writes `prompt:` tags
+via `replace_prompt_pipeline` as a *separate* bulk op from the classic `gen` `$set`
+(so stored prompt text is never re-evaluated as an aggregation expression); `/tags`
+gained `include_prompt`; the frontend renders a third (sky) chip kind and the Tags
+browser has a "Show prompt tags" toggle.
+
+**`has_tags` semantics (consequence not in the original spec):** redefined from
+"array non-empty" to "has a non-`prompt:` tag". Otherwise reproject writing prompt
+tags would flip `has_tags` true on fresh AI art and silently empty the "Untagged"
+tile. Prompt tags are reproject-owned, not curation, so prompt-only images stay
+untagged. Restores `Untagged ⊂ AI-Untagged`; `lib_id_has_tags__id` still serves it.
+
+**Overlap decision (answers open-question 4):** AI and prompt tags coexist as
+distinct prefixed entries and are **never deduped** against each other. Deduping
+would force reproject to read each doc's current AI tags, coupling it to the AI
+pipeline and breaking its independence (reproject runs off cold raw alone).
+
+
+
+**Goal:** surface extracted prompt terms in the `/tags` browser, but kept
+*separate* from AI tags and manual tags — a third prefixed kind in the same
+`tags` array. Today extraction only writes `gen.prompt_terms` (search-only,
+invisible to `/tags`).
+
+**Decision (user):** write them into `tags` with their own prefix, separated the
+same way `manual:` is separated from AI tags. Not a separate collection/browser.
+
+### Design
+
+- **New prefix `prompt:`** (parallel to `MANUAL_PREFIX` in
+  `services/image_tags.py`). A tag is now one of three kinds: AI (unprefixed),
+  `manual:`, `prompt:`.
+
+- **Tag-state flags must gain a third axis.** Current invariant: `has_tags` (any)
+  + `has_ai_tags` (any non-manual). That breaks here — `prompt:` tags are
+  non-manual, so the current regex would wrongly flip `has_ai_tags` true.
+  - Redefine `has_ai_tags` = "has a tag that is neither `manual:` nor `prompt:`".
+  - Add `has_prompt_tags` (any `prompt:` tag).
+  - Update `_recompute_flags_stage`, `exclude_manual_match`, and the
+    `_MANUAL_REGEX` classification so AI = "no `manual:` AND no `prompt:`".
+  - Seed `has_prompt_tags: false` in `initial_tag_fields()` (mind the
+    `{$ne:true}`-style missing-field footgun on any new filter).
+
+- **Reproject owns writing them.** `tags` is mutated only through
+  `services/image_tags.py`. Add a `replace_prompt_pipeline` (mirror of
+  `replace_ai_pipeline`): replace existing `prompt:` tags, preserve AI + manual.
+  Reproject (`services/reproject.py`) calls it alongside writing `gen.*`, deriving
+  `prompt:<term>` from the same tokenization as `gen.prompt_terms`
+  (`gen_metadata.tokenize_prompt`). Re-runnable (replace, not append).
+
+- **`/tags` browser:** default still AI-only. Add an opt-in like the existing
+  `include_manual` → `include_prompt` (query param + UI toggle), so prompt tags
+  don't bury curated tags by default. The `list_tags` aggregation `$match` needs
+  to exclude `prompt:` unless opted in.
+
+- **Frontend tag rendering** (`ImageView`, tag chips, `TagSearchInput`): handle a
+  third kind — `formatTag` strips `prompt:` too; give it a distinct chip color
+  (AI neutral, manual green, prompt = e.g. blue). Tag search over `tags`
+  (`$all`/`$in`) then filters prompt tags for free.
+
+- **CONTEXT.md:** update the Tag glossary — three kinds now, and the tag-state
+  invariant gains `has_prompt_tags`.
+
+### Open questions
+
+- **Redundancy with `gen.prompt_terms`:** once `prompt:` tags exist in `tags`,
+  the dedicated `gen.prompt_terms` index + the "Prompt contains" search overlap.
+  Keep both (tokenized field for fast search, `prompt:` tags for browse), or
+  unify on tag search? Lean: keep `gen.prompt_terms` for search, add `prompt:`
+  tags for browse — decide before building to avoid two sources of truth.
+- **Volume:** prompt vocabularies are huge and long-tail; the Tags mosaic may
+  need a min-count threshold or pagination when `include_prompt` is on.
+- **Migration:** existing libraries need a reproject pass to backfill `prompt:`
+  tags (the by-sig/library reproject already exists; a full reproject covers it).
+- One more thing, the tags added by AI and extracted from Prompt will definitely have
+  some overlap. How do we want to handle that? 
