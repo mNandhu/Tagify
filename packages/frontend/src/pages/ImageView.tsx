@@ -12,12 +12,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  Info,
-  X,
   Sparkles,
   Star,
   Copy,
   Ban,
+  Download,
+  PanelRight,
   Image as ImageIcon,
 } from "lucide-react";
 import { decode } from "blurhash";
@@ -362,7 +362,6 @@ export default function ImageView() {
 
   if (!id) return null;
 
-  const imageCol = "lg:col-span-12";
   const fileName = data?.path ? data.path.split(/[\\/]/).pop() : "";
   const aiTags = (data?.tags || []).filter(
     (t) => !t.startsWith("manual:") && !t.startsWith("prompt:"),
@@ -378,14 +377,13 @@ export default function ImageView() {
 
   return (
     <div
-      className="min-h-dvh bg-neutral-950 text-white grid grid-cols-12 relative"
+      className="h-dvh overflow-hidden bg-neutral-950 text-white flex relative"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onTouchMove={handleTouchMove}
     >
-      <div
-        className={`col-span-12 ${imageCol} flex items-center justify-center relative overflow-hidden`}
-      >
+      {/* Image stage */}
+      <div className="flex-1 h-full flex items-center justify-center relative overflow-hidden">
         {/* Back icon (overlay) */}
         <button
           onClick={() => navigate(`/${filterQuery ? `?${filterQuery}` : ""}`)}
@@ -395,14 +393,15 @@ export default function ImageView() {
         >
           <ArrowLeft />
         </button>
-        {/* Info toggle icon (overlay when closed) */}
+        {/* Reopen details panel (overlay when collapsed) */}
         {!infoOpen && (
           <button
             onClick={() => setInfoOpen(true)}
             className="absolute top-4 right-4 z-50 p-2 rounded-full bg-black/40 border border-white/10 hover:bg-black/60 transition-opacity duration-200 opacity-80 hover:opacity-100"
-            title="Show Info"
+            title="Show details"
+            aria-label="Show details"
           >
-            <Info />
+            <PanelRight />
           </button>
         )}
         {data ? (
@@ -453,153 +452,135 @@ export default function ImageView() {
           </button>
         </div>
       </div>
-      <div
+      {/* Details sidebar — docked on desktop, slide-over drawer on mobile */}
+      <aside
         role="region"
-        aria-label="Image information"
-        className={`fixed top-0 right-0 z-40 h-dvh w-full sm:w-[340px] md:w-[380px] lg:w-[420px] flex flex-col border-l border-neutral-800 p-4 bg-neutral-900/85 bg-gradient-to-b from-neutral-900/90 to-neutral-900/70 backdrop-blur-sm shadow-lg shadow-black/20 transition-transform duration-300 ease-out ${
-          infoOpen ? "translate-x-0" : "translate-x-full"
+        aria-label="Image details"
+        className={`fixed lg:static inset-y-0 right-0 z-40 h-dvh lg:h-full w-full sm:w-[380px] lg:w-[400px] lg:shrink-0 flex flex-col border-l border-neutral-800 bg-neutral-900 lg:bg-neutral-900/95 backdrop-blur-sm shadow-xl shadow-black/30 transition-transform duration-300 ease-out lg:transition-none ${
+          infoOpen ? "translate-x-0 lg:flex" : "translate-x-full lg:hidden"
         }`}
       >
-        <div className="flex items-center justify-between mb-3 shrink-0">
-          <div className="font-semibold">Info</div>
-          <button
-            className="text-sm text-neutral-300 hover:text-white"
-            onClick={() => setInfoOpen(false)}
-            title="Close Info"
-            aria-label="Close Info"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        {infoOpen && data && (
-          <div className="flex-1 min-h-0 overflow-y-auto -mr-4 pr-4 space-y-3">
-            <div className="text-sm font-semibold truncate" title={data.path}>
-              {fileName}
-            </div>
-            <div className="text-xs text-neutral-400 break-all">
-              {data.path}
-            </div>
-            <div className="text-sm">
-              {data.width}×{data.height} · {Math.round((data.size || 0) / 1024)}{" "}
-              KB
-            </div>
-
-            <div className="flex items-center justify-between gap-2">
-              <div className="font-semibold">Rating</div>
-              <RatingEditor id={data._id} value={rating} onDone={refreshImage} />
-            </div>
-
-            <div className="flex items-center justify-between gap-2">
-              <div className="font-semibold">Score</div>
-              <ScoreStars value={score} onSet={applyScore} />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => void copyWorkflow()}
-                className="flex-1 px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 inline-flex items-center justify-center gap-2 text-sm"
-                title="Copy generation workflow / parameters to clipboard"
-              >
-                <Copy size={14} /> Copy workflow
-              </button>
-              <button
-                onClick={() => void toggleQuarantine()}
-                className={`px-3 py-2 rounded border inline-flex items-center justify-center gap-2 text-sm ${
-                  quarantined
-                    ? "bg-amber-900/40 border-amber-800 text-amber-100 hover:bg-amber-900/60"
-                    : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
-                }`}
-                title={quarantined ? "Restore (X)" : "Quarantine (X)"}
-              >
-                <Ban size={14} /> {quarantined ? "Restore" : "Quarantine"}
-              </button>
-            </div>
-
-            <GenPanel gen={data.gen} />
-
-            <div>
-              <div className="font-semibold mb-2">Tags</div>
-              <div className="flex flex-wrap gap-2">
-                {aiTags.map((t: string) => (
-                  <span
-                    key={t}
-                    className="group px-2 py-1 rounded-full bg-neutral-800 text-xs border border-neutral-700 inline-flex items-center gap-1"
-                  >
-                    <button
-                      type="button"
-                      className="hover:underline"
-                      title={`Filter by ${t}`}
-                      onClick={() => openTag(t)}
-                    >
-                      {t}
-                    </button>
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-300 hover:text-white"
-                      title="Set as tag thumbnail"
-                      aria-label={`Set thumbnail for ${t}`}
-                      onClick={() => void setTagThumbnail(t)}
-                    >
-                      <ImageIcon size={12} />
-                    </button>
-                  </span>
-                ))}
-                {manualTagsRaw.map((t: string) => (
-                  <span
-                    key={t}
-                    className="group px-2 py-1 rounded-full bg-emerald-900/30 text-xs border border-emerald-800 text-emerald-100 inline-flex items-center gap-1"
-                    title="Manual tag"
-                  >
-                    <button
-                      type="button"
-                      className="hover:underline"
-                      title={`Filter by ${formatTag(t)}`}
-                      onClick={() => openTag(t)}
-                    >
-                      {formatTag(t)}
-                    </button>
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-100/80 hover:text-emerald-100"
-                      title="Set as tag thumbnail"
-                      aria-label={`Set thumbnail for ${formatTag(t)}`}
-                      onClick={() => void setTagThumbnail(t)}
-                    >
-                      <ImageIcon size={12} />
-                    </button>
-                  </span>
-                ))}
-                {promptTagsRaw.map((t: string) => (
-                  <span
-                    key={t}
-                    className="group px-2 py-1 rounded-full bg-sky-900/30 text-xs border border-sky-800 text-sky-100 inline-flex items-center gap-1"
-                    title="Prompt-extracted tag"
-                  >
-                    <button
-                      type="button"
-                      className="hover:underline"
-                      title={`Filter by ${formatTag(t)}`}
-                      onClick={() => openTag(t)}
-                    >
-                      {formatTag(t)}
-                    </button>
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-sky-100/80 hover:text-sky-100"
-                      title="Set as tag thumbnail"
-                      aria-label={`Set thumbnail for ${formatTag(t)}`}
-                      onClick={() => void setTagThumbnail(t)}
-                    >
-                      <ImageIcon size={12} />
-                    </button>
-                  </span>
-                ))}
+        {data && (
+          <>
+            {/* Header: filename + quick actions */}
+            <div className="flex items-start justify-between gap-2 p-3 border-b border-neutral-800 shrink-0">
+              <div className="min-w-0">
+                <div
+                  className="text-sm font-semibold truncate"
+                  title={data.path}
+                >
+                  {fileName}
+                </div>
+                <div className="text-xs text-neutral-400 mt-0.5">
+                  {data.width}×{data.height} ·{" "}
+                  {Math.round((data.size || 0) / 1024)} KB
+                </div>
               </div>
-              <TagEditor id={data._id} onChange={refreshImage} />
+              <div className="flex items-center gap-1 shrink-0">
+                <a
+                  href={
+                    fileUrl ||
+                    `/api/images/${encodeURIComponent(data._id)}/file`
+                  }
+                  download={fileName || ""}
+                  className="p-2 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+                  title="Download original"
+                  aria-label="Download original"
+                >
+                  <Download size={16} />
+                </a>
+                <button
+                  onClick={() => setInfoOpen(false)}
+                  className="p-2 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+                  title="Collapse panel"
+                  aria-label="Collapse panel"
+                >
+                  <PanelRight size={16} />
+                </button>
+              </div>
             </div>
-          </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+              {/* Tags */}
+              <Section
+                title="Tags"
+                right={
+                  <RatingEditor
+                    id={data._id}
+                    value={rating}
+                    onDone={refreshImage}
+                  />
+                }
+              >
+                {aiTags.length ||
+                manualTagsRaw.length ||
+                promptTagsRaw.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {aiTags.map((t) => (
+                      <TagChip
+                        key={t}
+                        label={t}
+                        kind="ai"
+                        onFilter={() => openTag(t)}
+                        onThumb={() => void setTagThumbnail(t)}
+                      />
+                    ))}
+                    {manualTagsRaw.map((t) => (
+                      <TagChip
+                        key={t}
+                        label={formatTag(t)}
+                        kind="manual"
+                        onFilter={() => openTag(t)}
+                        onThumb={() => void setTagThumbnail(t)}
+                      />
+                    ))}
+                    {promptTagsRaw.map((t) => (
+                      <TagChip
+                        key={t}
+                        label={formatTag(t)}
+                        kind="prompt"
+                        onFilter={() => openTag(t)}
+                        onThumb={() => void setTagThumbnail(t)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs text-neutral-500">No tags yet.</div>
+                )}
+                <TagEditor id={data._id} onChange={refreshImage} />
+              </Section>
+
+              {/* Curation (Tagify-specific) */}
+              <Section title="Curation">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-neutral-300">Score</span>
+                  <ScoreStars value={score} onSet={applyScore} />
+                </div>
+                <button
+                  onClick={() => void toggleQuarantine()}
+                  className={`w-full px-3 py-2 rounded-lg border inline-flex items-center justify-center gap-2 text-sm transition-colors ${
+                    quarantined
+                      ? "bg-amber-900/40 border-amber-800 text-amber-100 hover:bg-amber-900/60"
+                      : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
+                  }`}
+                  title={quarantined ? "Restore (X)" : "Quarantine (X)"}
+                >
+                  <Ban size={14} /> {quarantined ? "Restore" : "Quarantine"}
+                </button>
+              </Section>
+
+              {/* Generation data */}
+              <GenPanel
+                gen={data.gen}
+                width={data.width}
+                height={data.height}
+                onCopyAll={() => void copyWorkflow()}
+              />
+            </div>
+          </>
         )}
-      </div>
+      </aside>
     </div>
   );
 }
@@ -723,34 +704,250 @@ function ScoreStars({
   );
 }
 
-function GenField({ label, value }: { label: string; value: React.ReactNode }) {
+// Card shell used by the details sidebar — a titled, bordered panel with an
+// optional right-aligned control (e.g. the rating editor).
+function Section({
+  title,
+  right,
+  children,
+}: {
+  title: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        {right}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+const TAG_CHIP_STYLES: Record<
+  "ai" | "manual" | "prompt",
+  { cls: string; title: string }
+> = {
+  ai: { cls: "bg-neutral-800 border-neutral-700", title: "AI tag" },
+  manual: {
+    cls: "bg-emerald-900/30 border-emerald-800 text-emerald-100",
+    title: "Manual tag",
+  },
+  prompt: {
+    cls: "bg-sky-900/30 border-sky-800 text-sky-100",
+    title: "Prompt-extracted tag",
+  },
+};
+
+function TagChip({
+  label,
+  kind,
+  onFilter,
+  onThumb,
+}: {
+  label: string;
+  kind: "ai" | "manual" | "prompt";
+  onFilter: () => void;
+  onThumb: () => void;
+}) {
+  const { cls, title } = TAG_CHIP_STYLES[kind];
+  return (
+    <span
+      className={`group px-2 py-1 rounded-full text-xs border inline-flex items-center gap-1 ${cls}`}
+      title={title}
+    >
+      <button
+        type="button"
+        className="hover:underline"
+        title={`Filter by ${label}`}
+        onClick={onFilter}
+      >
+        {label}
+      </button>
+      <button
+        type="button"
+        className="opacity-0 group-hover:opacity-100 transition-opacity hover:brightness-125"
+        title="Set as tag thumbnail"
+        aria-label={`Set thumbnail for ${label}`}
+        onClick={onThumb}
+      >
+        <ImageIcon size={12} />
+      </button>
+    </span>
+  );
+}
+
+// A small uppercase key/value pill for the "Other metadata" row.
+function MetaChip({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
   if (value == null || value === "") return null;
   return (
-    <div className="flex gap-2 text-xs">
-      <span className="text-neutral-400 shrink-0 w-16">{label}</span>
-      <span className="text-neutral-100 break-words min-w-0">{value}</span>
+    <span className="px-2 py-1 rounded bg-neutral-800/80 border border-neutral-700 text-[11px] inline-flex items-center gap-1">
+      <span className="uppercase tracking-wide text-neutral-500">{label}</span>
+      <span className="text-neutral-100">{value}</span>
+    </span>
+  );
+}
+
+function ResourceRow({
+  name,
+  badge,
+  sub,
+}: {
+  name: string;
+  badge: string;
+  sub?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="min-w-0">
+        <div className="text-sm text-sky-300 truncate" title={name}>
+          {name}
+        </div>
+        {sub && <div className="text-xs text-neutral-500">{sub}</div>}
+      </div>
+      <span className="shrink-0 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-300">
+        {badge}
+      </span>
     </div>
   );
 }
 
-function GenPanel({ gen }: { gen?: import("../lib/gen").GenMeta }) {
+function CopyButton({
+  text,
+  label,
+}: {
+  text?: string | null;
+  label: string;
+}) {
+  const { push } = useToast();
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          push(`${label} copied`, "success");
+        } catch (e) {
+          push(`Copy failed: ${String(e)}`, "error");
+        }
+      }}
+      className="p-1.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+      title={`Copy ${label.toLowerCase()}`}
+      aria-label={`Copy ${label.toLowerCase()}`}
+    >
+      <Copy size={14} />
+    </button>
+  );
+}
+
+// Prompt / negative-prompt text with a collapse-by-default "Show more".
+function PromptBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div>
+      <p
+        className={`text-sm text-neutral-300 whitespace-pre-wrap break-words ${
+          expanded ? "" : "line-clamp-3"
+        }`}
+      >
+        {text}
+      </p>
+      {text.length > 140 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-xs text-sky-400 hover:text-sky-300"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function GenPanel({
+  gen,
+  width,
+  height,
+  onCopyAll,
+}: {
+  gen?: import("../lib/gen").GenMeta;
+  width?: number;
+  height?: number;
+  onCopyAll: () => void;
+}) {
   if (!gen || !gen.source) return null;
   return (
-    <div className="space-y-2 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
-      <div className="flex items-center justify-between">
-        <div className="font-semibold">Generation</div>
-        <span className="text-[10px] uppercase tracking-wide text-neutral-400 px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700">
-          {gen.source}
-        </span>
+    <section className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3 space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">Generation data</h2>
+        <button
+          type="button"
+          onClick={onCopyAll}
+          className="inline-flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
+          title="Copy all generation data"
+        >
+          <Copy size={12} /> Copy all
+        </button>
       </div>
-      <GenField label="Prompt" value={gen.prompt} />
-      <GenField label="Negative" value={gen.negative} />
-      <GenField label="Model" value={gen.model} />
-      <GenField label="Seed" value={gen.seed} />
-      <GenField label="Sampler" value={gen.sampler} />
-      <GenField label="Steps" value={gen.steps} />
-      <GenField label="CFG" value={gen.cfg} />
-    </div>
+
+      {gen.model && (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            Resources used
+          </div>
+          <ResourceRow name={gen.model} badge="Checkpoint" />
+        </div>
+      )}
+
+      {gen.prompt && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-semibold">Prompt</div>
+              <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400">
+                {gen.source}
+              </span>
+            </div>
+            <CopyButton text={gen.prompt} label="Prompt" />
+          </div>
+          <PromptBlock text={gen.prompt} />
+        </div>
+      )}
+
+      {gen.negative && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold">Negative prompt</div>
+            <CopyButton text={gen.negative} label="Negative prompt" />
+          </div>
+          <PromptBlock text={gen.negative} />
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          Other metadata
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <MetaChip label="CFG" value={gen.cfg} />
+          <MetaChip label="Steps" value={gen.steps} />
+          <MetaChip label="Sampler" value={gen.sampler} />
+          <MetaChip label="Seed" value={gen.seed} />
+          <MetaChip label="Width" value={width} />
+          <MetaChip label="Height" value={height} />
+        </div>
+      </div>
+    </section>
   );
 }
 
