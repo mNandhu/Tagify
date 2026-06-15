@@ -20,7 +20,21 @@ import {
   Ban,
   Image as ImageIcon,
 } from "lucide-react";
+import { decode } from "blurhash";
 import { resolveMediaUrl } from "../lib/media";
+
+// Primary colour of an image, taken from its BlurHash DC term (the average
+// colour) by decoding to a single pixel. Cheap, CORS-free, available before
+// the full image loads. Returns an `rgb(...)` string or null when absent.
+function accentFromBlurhash(hash?: string): string | null {
+  if (!hash) return null;
+  try {
+    const [r, g, b] = decode(hash, 1, 1);
+    return `rgb(${r}, ${g}, ${b})`;
+  } catch {
+    return null;
+  }
+}
 import { useToast } from "../components/Toasts";
 import {
   parseFilters,
@@ -360,6 +374,7 @@ export default function ImageView() {
     t.startsWith("prompt:"),
   );
   const rating = pickRating(data);
+  const accent = accentFromBlurhash(data?.blurhash);
 
   return (
     <div
@@ -369,7 +384,7 @@ export default function ImageView() {
       onTouchMove={handleTouchMove}
     >
       <div
-        className={`col-span-12 ${imageCol} flex items-center justify-center p-6 relative`}
+        className={`col-span-12 ${imageCol} flex items-center justify-center relative overflow-hidden`}
       >
         {/* Back icon (overlay) */}
         <button
@@ -391,14 +406,29 @@ export default function ImageView() {
           </button>
         )}
         {data ? (
-          <img
-            src={fileUrl || `/api/images/${encodeURIComponent(data._id)}/file`}
-            alt="image"
-            onLoad={() => setImgLoaded(true)}
-            className={`max-w-full max-h-[90vh] object-contain transition-opacity duration-300 ${
-              imgLoaded ? "opacity-100" : "opacity-0"
-            }`}
-          />
+          <div className="relative flex items-center justify-center">
+            {/* Ambient glow — a blurred accent panel matching the image box.
+                The blur spreads the primary colour outward from every edge, so
+                the whole image acts as the light source (not a centre point).
+                Blooms in only once the image has loaded. */}
+            {accent && (
+              <div
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-0 z-0 blur-[80px] transition-all duration-1000 ease-out ${
+                  imgLoaded ? "opacity-60 scale-110" : "opacity-0 scale-90"
+                }`}
+                style={{ background: accent }}
+              />
+            )}
+            <img
+              src={fileUrl || `/api/images/${encodeURIComponent(data._id)}/file`}
+              alt="image"
+              onLoad={() => setImgLoaded(true)}
+              className={`relative z-10 max-w-full max-h-dvh w-auto h-auto object-contain transition-opacity duration-300 ${
+                imgLoaded ? "opacity-100" : "opacity-0"
+              }`}
+            />
+          </div>
         ) : (
           <div className="text-neutral-400">Loading…</div>
         )}
