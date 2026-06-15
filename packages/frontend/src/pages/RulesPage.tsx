@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Workflow, Save, Trash2, Play, X, Plus, Search } from "lucide-react";
+import { Workflow, Save, Trash2, Play, X, Plus, Search, AlertTriangle } from "lucide-react";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -176,6 +176,7 @@ export default function RulesPage() {
   const [sigs, setSigs] = useState<SignatureRow[]>([]);
   const [selected, setSelected] = useState<SignatureRow | null>(null);
   const [fields, setFields] = useState<RuleFields>({});
+  const savedFields = useRef<RuleFields>({});
   const [graph, setGraph] = useState<unknown>(null);
   const [activeField, setActiveField] = useState<RuleField>("prompt");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -192,8 +193,25 @@ export default function RulesPage() {
 
   useEffect(() => loadSignatures(), [loadSignatures]);
 
+  const isDirty = useMemo(
+    () => JSON.stringify(fields) !== JSON.stringify(savedFields.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fields],
+  );
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
   const selectSig = useCallback(
     async (row: SignatureRow) => {
+      if (isDirty && !confirm("You have unsaved changes. Discard and switch signature?"))
+        return;
       setSelected(row);
       setPreview(null);
       setGraph(null);
@@ -202,7 +220,9 @@ export default function RulesPage() {
           fetchRuleset(row.workflow_sig),
           fetchWorkflow(row.sample_image_id),
         ]);
-        setFields(rs.fields || {});
+        const loaded = rs.fields || {};
+        savedFields.current = loaded;
+        setFields(loaded);
         // Root the tree at the raw doc so pinned paths read `prompt.<node>...`.
         const g: Record<string, unknown> = {};
         if (wf && (wf as { prompt?: unknown }).prompt != null)
@@ -214,7 +234,7 @@ export default function RulesPage() {
         push(`Failed to load ruleset: ${String(e)}`, "error");
       }
     },
-    [push],
+    [push, isDirty],
   );
 
   const pinPath = useCallback(
@@ -252,6 +272,7 @@ export default function RulesPage() {
     setBusy(true);
     try {
       await saveRuleset(selected.workflow_sig, fields);
+      savedFields.current = fields;
       push("Ruleset saved · reprojecting this signature", "success");
       loadSignatures();
     } catch (e) {
@@ -267,6 +288,7 @@ export default function RulesPage() {
     setBusy(true);
     try {
       await deleteRuleset(selected.workflow_sig);
+      savedFields.current = {};
       setFields({});
       push("Ruleset deleted", "info");
       loadSignatures();
@@ -356,16 +378,24 @@ export default function RulesPage() {
             <div className="col-span-12 lg:col-span-9 grid grid-cols-1 xl:grid-cols-2 gap-4">
               {/* Field editors + actions */}
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Button onClick={() => void runPreview()} disabled={busy}>
                     <Play size={14} /> Preview
                   </Button>
                   <Button variant="primary" onClick={() => void save()} disabled={busy}>
                     <Save size={14} /> Save
+                    {isDirty && (
+                      <span className="ml-1 w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                    )}
                   </Button>
                   <Button onClick={() => void remove()} disabled={busy}>
                     <Trash2 size={14} /> Delete
                   </Button>
+                  {isDirty && (
+                    <span className="flex items-center gap-1 text-[11px] text-amber-400">
+                      <AlertTriangle size={12} /> Unsaved changes
+                    </span>
+                  )}
                 </div>
 
                 {RULE_FIELDS.map((field) => (
