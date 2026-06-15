@@ -502,17 +502,44 @@ export default function ImageView() {
 
             {/* Scrollable body */}
             <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
-              {/* Tags */}
-              <Section
-                title="Tags"
-                right={
+              {/* Curation (Tagify-specific) */}
+              <Section title="Curation">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-neutral-300">Rating</span>
                   <RatingEditor
                     id={data._id}
                     value={rating}
                     onDone={refreshImage}
                   />
-                }
-              >
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-neutral-300">Score</span>
+                  <ScoreStars value={score} onSet={applyScore} />
+                </div>
+                <button
+                  onClick={() => void toggleQuarantine()}
+                  className={`w-full px-3 py-2 rounded-lg border inline-flex items-center justify-center gap-2 text-sm transition-colors ${
+                    quarantined
+                      ? "bg-amber-900/40 border-amber-800 text-amber-100 hover:bg-amber-900/60"
+                      : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
+                  }`}
+                  title={quarantined ? "Restore (X)" : "Quarantine (X)"}
+                >
+                  <Ban size={14} /> {quarantined ? "Restore" : "Quarantine"}
+                </button>
+              </Section>
+
+              {/* Generation data */}
+              <GenPanel
+                gen={data.gen}
+                width={data.width}
+                height={data.height}
+                onCopyAll={() => void copyWorkflow()}
+              />
+
+              {/* Tags — kept last; can be long, so it never pushes Curation
+                  and Generation data below the fold. */}
+              <Section title="Tags">
                 {aiTags.length ||
                 manualTagsRaw.length ||
                 promptTagsRaw.length ? (
@@ -550,33 +577,6 @@ export default function ImageView() {
                 )}
                 <TagEditor id={data._id} onChange={refreshImage} />
               </Section>
-
-              {/* Curation (Tagify-specific) */}
-              <Section title="Curation">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm text-neutral-300">Score</span>
-                  <ScoreStars value={score} onSet={applyScore} />
-                </div>
-                <button
-                  onClick={() => void toggleQuarantine()}
-                  className={`w-full px-3 py-2 rounded-lg border inline-flex items-center justify-center gap-2 text-sm transition-colors ${
-                    quarantined
-                      ? "bg-amber-900/40 border-amber-800 text-amber-100 hover:bg-amber-900/60"
-                      : "bg-neutral-800 border-neutral-700 hover:bg-neutral-700"
-                  }`}
-                  title={quarantined ? "Restore (X)" : "Quarantine (X)"}
-                >
-                  <Ban size={14} /> {quarantined ? "Restore" : "Quarantine"}
-                </button>
-              </Section>
-
-              {/* Generation data */}
-              <GenPanel
-                gen={data.gen}
-                width={data.width}
-                height={data.height}
-                onCopyAll={() => void copyWorkflow()}
-              />
             </div>
           </>
         )}
