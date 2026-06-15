@@ -23,7 +23,7 @@ they never assemble SQL.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import sqlalchemy as sa
 from sqlalchemy import Connection
@@ -318,7 +318,15 @@ async def _persist(
         await conn.execute(sa.insert(t.image_tags), rows)
 
 
-async def apply_manual(image_id: str, tags: list[str]) -> None:
+async def _mutate_tags(
+    image_id: str,
+    transform: Callable[[list[str]], list[str]],
+    *,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Resolve, read the current tag array, apply ``transform``, and persist —
+    the one read-modify-write path behind every high-level tag intent. No-op if
+    the image is unknown."""
     async with async_tx() as conn:
         resolved = await resolve_image_id(conn, image_id)
         if resolved is None:
@@ -328,40 +336,60 @@ async def apply_manual(image_id: str, tags: list[str]) -> None:
                 sa.select(t.images.c.tags).where(t.images.c._id == resolved)
             )
         ).scalar() or []
-        await _persist(conn, resolved, union_tags(current, [to_manual(x) for x in tags]))
+        await _persist(conn, resolved, transform(current), extra=extra)
+
+
+async def apply_manual(image_id: str, tags: list[str]) -> None:
+    await _mutate_tags(
+        image_id, lambda current: union_tags(current, [to_manual(x) for x in tags])
+    )
 
 
 async def remove_tags(image_id: str, tags: list[str]) -> None:
-    async with async_tx() as conn:
-        resolved = await resolve_image_id(conn, image_id)
-        if resolved is None:
-            return
-        current = (
-            await conn.execute(
-                sa.select(t.images.c.tags).where(t.images.c._id == resolved)
-            )
-        ).scalar() or []
-        await _persist(conn, resolved, without_tags(current, tags))
+    await _mutate_tags(image_id, lambda current: without_tags(current, tags))
 
 
 async def replace_ai(
     image_id: str, *, ai_tags: list[str], ai_meta: dict[str, Any], rating: str
 ) -> None:
+    await _mutate_tags(
+        image_id,
+        lambda current: with_replaced_ai(current, ai_tags),
+        extra={"ai": ai_meta, "rating": rating},
+    )
+
+
+# --- Scalar column writes (rating / score / quarantine) -----------------------
+#
+# These are the only writers of the per-image scalar columns, so the documented
+# single-owner rule (rating in particular) holds: no router assembles SQL. Each
+# returns the resolved ``_id`` (so the caller can 404) or ``None`` if unknown.
+
+
+async def _set_columns(image_id: str, **values: Any) -> str | None:
     async with async_tx() as conn:
         resolved = await resolve_image_id(conn, image_id)
         if resolved is None:
-            return
-        current = (
-            await conn.execute(
-                sa.select(t.images.c.tags).where(t.images.c._id == resolved)
-            )
-        ).scalar() or []
-        await _persist(
-            conn,
-            resolved,
-            with_replaced_ai(current, ai_tags),
-            extra={"ai": ai_meta, "rating": rating},
+            return None
+        await conn.execute(
+            sa.update(t.images).where(t.images.c._id == resolved).values(**values)
         )
+        return resolved
+
+
+async def set_rating(image_id: str, rating: str) -> str | None:
+    """Set the content-safety rating (caller normalizes via ``normalize_rating``)."""
+    return await _set_columns(image_id, rating=rating)
+
+
+async def set_score(image_id: str, score: int) -> str | None:
+    """Set the 0-5 quality score (caller validates the range)."""
+    return await _set_columns(image_id, score=score)
+
+
+async def set_quarantine(image_id: str, quarantined: bool) -> str | None:
+    """Toggle the DB-only quarantine flag (hides from the default feed)."""
+    return await _set_columns(image_id, quarantined=quarantined)
 
 
 async def clear_ai_all() -> tuple[int, int]:

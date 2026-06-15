@@ -51,7 +51,7 @@ it.
 
 **Benefits:** Locality (slash fix touches one place); leverage.
 
-## 3. Single-image mutation ownership (restores a stated invariant)
+## 3. Single-image mutation ownership (restores a stated invariant) — ✅ DONE
 
 **Files:** `api/images.py:483-528` (rating/score/quarantine — 3 near-identical
 resolve+update+return); `services/image_tags.py:310-370` (repo read-modify-write

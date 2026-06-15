@@ -309,13 +309,9 @@ async def set_image_rating(image_id: str, body: RatingPatch):
             status_code=422,
             detail="rating must be one of '-', 'general', 'sensitive', 'questionable', 'explicit'",
         )
-    async with async_tx() as conn:
-        rid = await image_tags.resolve_image_id(conn, image_id)
-        if rid is None:
-            raise HTTPException(status_code=404, detail="Image not found")
-        await conn.execute(
-            sa.update(t.images).where(t.images.c._id == rid).values(rating=rating)
-        )
+    rid = await image_tags.set_rating(image_id, rating)
+    if rid is None:
+        raise HTTPException(status_code=404, detail="Image not found")
     return {"_id": rid, "rating": rating}
 
 
@@ -324,28 +320,18 @@ async def set_image_score(image_id: str, body: ScorePatch):
     """Set the 0-5 quality score (distinct from the content-safety `rating`)."""
     if not (0 <= body.score <= 5):
         raise HTTPException(status_code=422, detail="score must be 0-5")
-    async with async_tx() as conn:
-        rid = await image_tags.resolve_image_id(conn, image_id)
-        if rid is None:
-            raise HTTPException(status_code=404, detail="Image not found")
-        await conn.execute(
-            sa.update(t.images).where(t.images.c._id == rid).values(score=body.score)
-        )
+    rid = await image_tags.set_score(image_id, body.score)
+    if rid is None:
+        raise HTTPException(status_code=404, detail="Image not found")
     return {"_id": rid, "score": body.score}
 
 
 @router.post("/{image_id:path}/quarantine")
 async def set_image_quarantine(image_id: str, body: QuarantinePatch):
     """Toggle the DB-only quarantine flag (hides from default feed; no disk I/O)."""
-    async with async_tx() as conn:
-        rid = await image_tags.resolve_image_id(conn, image_id)
-        if rid is None:
-            raise HTTPException(status_code=404, detail="Image not found")
-        await conn.execute(
-            sa.update(t.images)
-            .where(t.images.c._id == rid)
-            .values(quarantined=bool(body.quarantined))
-        )
+    rid = await image_tags.set_quarantine(image_id, bool(body.quarantined))
+    if rid is None:
+        raise HTTPException(status_code=404, detail="Image not found")
     return {"_id": rid, "quarantined": bool(body.quarantined)}
 
 
