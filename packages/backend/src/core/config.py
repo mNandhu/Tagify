@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     scanner_max_workers: int = 0
     scan_progress_update_ms: int = 500
 
+    # Local filesystem directory for downloaded AI tagger model files (ONNX +
+    # label CSV). Relative values resolve against the repo root, the same as
+    # `thumb_root` and `sqlite_path`, so the location doesn't depend on the
+    # process working directory.
+    model_cache_dir: str = ".cache/tagify/models"
+
     thumb_max_size: int = 1080
     thumb_format: str = "webp"
 
@@ -38,6 +44,13 @@ class Settings(BaseSettings):
 
     rate_limit_enabled: bool = False
     rate_limit_rescan_per_minute: int = 1
+
+    @property
+    def model_cache_dir_path(self) -> Path:
+        """Absolute model cache directory. Relative `model_cache_dir` anchors to
+        the repo root so the location doesn't depend on the process working directory."""
+        p = Path(self.model_cache_dir)
+        return p if p.is_absolute() else (_REPO_ROOT / p)
 
     @property
     def thumb_root_path(self) -> Path:

@@ -13,8 +13,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from ..database.db import async_conn, async_tx
 from ..database import schema as t
+from ..core.config import settings
 from .ai_tagger import get_tagger_manager
-from .ai_tagger_download import DEFAULT_CACHE_DIR
 
 DEFAULT_AI_SETTINGS: dict[str, Any] = {
     "model_repo": "SmilingWolf/wd-vit-tagger-v3",
@@ -25,7 +25,7 @@ DEFAULT_AI_SETTINGS: dict[str, Any] = {
     "max_general": 80,
     "max_character": 40,
     "idle_unload_s": 300,
-    "cache_dir": DEFAULT_CACHE_DIR,
+    "cache_dir": str(settings.model_cache_dir_path),
     # When on (default), prompt: tags are derived from the positive prompt only,
     # so negative-prompt words don't pollute search. Applied at reprojection.
     "prompt_positive_only": True,
