@@ -71,7 +71,7 @@ owner; router just validates.
 **Benefits:** Restores the documented single-owner seam; collapses 3 shallow
 endpoints + 3 repeated orchestrations.
 
-## 4. Scanner orchestration (extracted pure fn, untested orchestration)
+## 4. Scanner orchestration (extracted pure fn, untested orchestration) — ✅ DONE
 
 **Files:** `services/scanner.py:354-588` (`_run` closure), pure
 `reconcile_stale:225-241`.

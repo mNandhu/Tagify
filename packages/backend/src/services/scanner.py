@@ -10,11 +10,12 @@ from ..database.db import sync_conn, sync_tx
 from ..database import schema as t
 from . import image_tags
 from . import gen_metadata
+from . import batch_pool
+from .scan_writer import ScanWriter
 from .storage_fs import put_thumb
 from .blurhash import blurhash_for_image
 import hashlib
 import mimetypes
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
 from multiprocessing import cpu_count
@@ -248,6 +249,11 @@ _cancel_scans: set[str] = set()
 _scan_threads: dict[str, threading.Thread] = {}
 
 
+def _is_cancel_requested(library_id: str) -> bool:
+    with _scan_lock:
+        return library_id in _cancel_scans
+
+
 @dataclass
 class _ScanResult:
     image_id: str
@@ -398,22 +404,11 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 settings.scan_progress_update_ms / 1000.0,
             )
             last_progress_write = time.monotonic()
-            image_rows: list[dict] = []
-            gen_raw_rows: list[dict] = []
-            batch_size = 200
 
-            def _flush_ops():
-                nonlocal indexed
+            def _commit_batch(imgs: list[dict], raws: list[dict]) -> None:
                 # One short write transaction per batch keeps the SQLite write lock
                 # held briefly so concurrent API writes aren't starved. Image rows
                 # and their raw-gen rows commit together.
-                if not image_rows and not gen_raw_rows:
-                    return
-                imgs = list(image_rows)
-                raws = list(gen_raw_rows)
-                image_rows.clear()
-                gen_raw_rows.clear()
-
                 def _do_flush():
                     with sync_tx() as conn:
                         if raws:
@@ -426,92 +421,58 @@ def scan_library_async(library_id: str, root: str) -> dict:
                                 conn.execute(stmt, row)
 
                 _retry(_do_flush, attempts=3, base_delay_s=0.2)
-                indexed += len(imgs)
 
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                # Avoid submitting all tasks at once (can balloon memory on huge libraries).
-                max_pending = max(1, workers * 2)
-                it = iter(files)
-                pending: set = set()
+            writer = ScanWriter(_commit_batch, batch_size=200)
 
-                # Prime the queue.
-                while len(pending) < max_pending:
-                    try:
-                        p = next(it)
-                    except StopIteration:
-                        break
-                    pending.add(ex.submit(_process_image, library_id, root_path, p))
+            def _on_complete(res, exc) -> None:
+                nonlocal processed, failed, last_progress_write
+                if isinstance(res, _ScanResult) and res.ok and res.doc:
+                    writer.add(
+                        image_upsert_values(res.doc),
+                        _gen_raw_values(res.gen_raw_doc)
+                        if res.gen_raw_doc is not None
+                        else None,
+                    )
+                else:
+                    failed += 1
+                    if isinstance(res, _ScanResult) and len(failed_samples) < 20:
+                        failed_samples.append(
+                            {
+                                "image_id": res.image_id,
+                                "stage": res.stage,
+                                "error": res.error,
+                            }
+                        )
+                processed += 1
 
-                while pending:
-                    with _scan_lock:
-                        if library_id in _cancel_scans:
-                            # Cancel futures that haven't started yet.
-                            for fut in list(pending):
-                                fut.cancel()
-                            pending.clear()
-                            break
+                # Time-based progress persistence: smooth UI without spamming DB.
+                now = time.monotonic()
+                if (now - last_progress_write) >= progress_interval_s:
+                    last_progress_write = now
+                    _lib_set(
+                        library_id,
+                        {
+                            "scan_done": processed,
+                            "scan_failed_count": failed,
+                            "scan_failed_samples": failed_samples,
+                        },
+                    )
 
-                    done_set, pending = wait(pending, return_when=FIRST_COMPLETED)
-                    for fut in done_set:
-                        try:
-                            res = fut.result()
-                            if isinstance(res, _ScanResult) and res.ok and res.doc:
-                                image_rows.append(image_upsert_values(res.doc))
-                                if res.gen_raw_doc is not None:
-                                    gen_raw_rows.append(
-                                        _gen_raw_values(res.gen_raw_doc)
-                                    )
-
-                                # Flush periodically to keep memory bounded
-                                if len(image_rows) >= batch_size:
-                                    _flush_ops()
-                            else:
-                                failed += 1
-                                if (
-                                    isinstance(res, _ScanResult)
-                                    and len(failed_samples) < 20
-                                ):
-                                    failed_samples.append(
-                                        {
-                                            "image_id": res.image_id,
-                                            "stage": res.stage,
-                                            "error": res.error,
-                                        }
-                                    )
-                        except Exception:
-                            failed += 1
-                        processed += 1
-
-                        # Time-based progress persistence: smooth UI without spamming DB.
-                        now = time.monotonic()
-                        if (now - last_progress_write) >= progress_interval_s:
-                            last_progress_write = now
-                            _lib_set(
-                                library_id,
-                                {
-                                    "scan_done": processed,
-                                    "scan_failed_count": failed,
-                                    "scan_failed_samples": failed_samples,
-                                },
-                            )
-
-                    # Refill the queue.
-                    while len(pending) < max_pending:
-                        with _scan_lock:
-                            if library_id in _cancel_scans:
-                                break
-                        try:
-                            p = next(it)
-                        except StopIteration:
-                            break
-                        pending.add(ex.submit(_process_image, library_id, root_path, p))
+            batch_pool.run_pool(
+                files,
+                lambda p: _process_image(library_id, root_path, p),
+                _on_complete,
+                max_workers=workers,
+                is_cancelled=lambda: _is_cancel_requested(library_id),
+            )
 
             with _scan_lock:
                 if library_id in _cancel_scans:
                     raise RuntimeError("cancelled")
 
-            # Flush remaining ops
-            _flush_ops()
+            # Flush the remaining partial batch.
+            writer.flush()
+            indexed = writer.indexed
 
             # Clean up stale images (images that exist in DB but weren't discovered in current scan)
             with sync_conn() as conn:

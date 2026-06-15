@@ -24,16 +24,28 @@ belongs in this file.
   Owned by `services/image_tags.py` — the single place that mutates tags and
   recomputes the flags, so they can never drift.
 - **Rating** — one of `-`, `general`, `sensitive`, `questionable`, `explicit`.
-  Normalized in one place (`image_tags.normalize_rating`).
+  Normalized in one place (`image_tags.normalize_rating`) and written only
+  through `image_tags.set_rating` (with `set_score` / `set_quarantine` for the
+  other per-image scalars), so the single-owner rule holds — routers never
+  assemble the UPDATE.
 - **Scan** — discovering a library's files, indexing them, and **reconciling**
   away images that vanished from disk. (`services/scanner.py`;
-  `reconcile_stale` is the pure deletion-decision step.)
-- **Thumbnail** — a WebP render of an image stored in MinIO. (`storage_minio.py`)
+  `reconcile_stale` is the pure deletion-decision step.) The scan's batched
+  transactional writer is `services/scan_writer.py` (`ScanWriter` — accumulate,
+  flush every N, flush the remainder); the bounded-concurrency worker loop is
+  `services/batch_pool.py`.
+- **Thumbnail** — a WebP render of an image stored on the local filesystem under
+  `THUMB_ROOT`. (`services/storage_fs.py`)
 - **AI Job** — a queued, cancellable batch tagging unit. (`services/ai_jobs.py`)
 - **Tagger / Model** — the WD ONNX model. Lifecycle (download/load/idle-unload)
   is separate from the pure inference step `select_tags`. (`services/ai_tagger.py`)
 - **AI Settings** — persisted tagger knobs; validation is pure
   (`ai_settings.clean_settings_patch`). (`services/ai_settings.py`)
+- **Image feed (backend)** — how an Image filter becomes SQL. A `FeedFilter`
+  validates its own inputs on construction (`FeedFilterError` → HTTP 422);
+  `feed_where` builds the WHERE clause; `list_feed` / `list_groups` run the
+  cursor-paged feed and the batch-collapsed grouped view. The feed and grouped
+  view share one builder so they can never drift. (`services/image_feed.py`)
 
 ## Frontend
 
