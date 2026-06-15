@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useBlocker } from "react-router-dom";
 import { Workflow, Save, Trash2, Play, X, Plus, Search, AlertTriangle } from "lucide-react";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
@@ -207,6 +208,16 @@ export default function RulesPage() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
+
+  const blocker = useBlocker(isDirty);
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    if (confirm("You have unsaved changes. Leave anyway?")) {
+      blocker.proceed();
+    } else {
+      blocker.reset();
+    }
+  }, [blocker]);
 
   const selectSig = useCallback(
     async (row: SignatureRow) => {
