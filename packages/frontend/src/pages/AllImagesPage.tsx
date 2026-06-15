@@ -39,14 +39,10 @@ import { PAGE_LIMIT, type ImageDoc } from "../lib/imageFilter";
 import { nextFocusIndex, isGridNavKey } from "../lib/gridNav";
 import { gridColumns } from "../lib/masonryLayout";
 import { setScore as apiSetScore, setQuarantine as apiSetQuarantine } from "../lib/gen";
+import { api } from "../lib/api";
+import { postAiTag } from "../lib/ai";
 
 type Library = { _id: string; name?: string; path: string };
-
-async function api<T>(url: string): Promise<T> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
 
 const hasActiveFilter = (f: Filters) =>
   f.tags.length > 0 ||
@@ -503,12 +499,7 @@ export default function AllImagesPage() {
                 );
                 if (!ok) return;
                 try {
-                  const r = await fetch(`/api/ai/tag`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ids }),
-                  });
-                  if (!r.ok) throw new Error(await r.text());
+                  await postAiTag(ids);
                   push(`Queued AI tagging for ${ids.length} images`, "success");
                   setSelectionMode(false);
                 } catch (e) {

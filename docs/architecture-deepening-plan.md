@@ -103,7 +103,7 @@ consumes a single assembled view object.
 **Benefits:** Pure inference testable in isolation; status route stops breaking
 on internal shape changes.
 
-## 6. Frontend: shared API + consistent seams (locality/DRY, not depth)
+## 6. Frontend: shared API + consistent seams (locality/DRY, not depth) — ✅ DONE
 
 **Files:** 5 pages each define their own `api<T>()` (`AllImagesPage`,
 `LibrariesPage`, `AITaggingPage`, `OverviewPage`, `TagsPage`); `lib/gen.ts` has

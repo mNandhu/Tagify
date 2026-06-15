@@ -6,14 +6,9 @@ import { fetchAiCoverage, isStatusBusy } from "../lib/ai";
 import { SettingsProvider, useSettings } from "./settings/SettingsContext";
 import { ModelSection } from "./settings/sections/ModelSection";
 import { JobsSection } from "./settings/sections/JobsSection";
+import { api } from "../lib/api";
 
 type Library = { _id: string; name?: string; path?: string };
-
-async function api<T>(url: string): Promise<T> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
 
 function pct(part: number, whole: number) {
   if (!whole) return 0;

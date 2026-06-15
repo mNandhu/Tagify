@@ -16,6 +16,7 @@ import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { isActiveJob } from "../lib/ai";
+import { api } from "../lib/api";
 
 type Library = {
   _id: string;
@@ -25,12 +26,6 @@ type Library = {
   scanning?: boolean;
 };
 type TagAgg = { _id: string };
-
-async function api<T>(url: string): Promise<T> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
 
 export default function OverviewPage() {
   const navigate = useNavigate();

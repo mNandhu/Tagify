@@ -9,6 +9,7 @@ import { Input, Field } from "../components/ui/Input";
 import { Badge } from "../components/ui/Badge";
 import { Skeleton, Spinner } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
+import { api } from "../lib/api";
 
 type Library = {
   _id: string;
@@ -17,12 +18,6 @@ type Library = {
   indexed_count?: number;
   last_scanned?: string;
 };
-
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
 
 export default function LibrariesPage() {
   const { push } = useToast();

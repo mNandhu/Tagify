@@ -9,6 +9,7 @@ import {
 import { useToast } from "../../components/Toasts";
 import { useAiStatus } from "../../hooks/useAiStatus";
 import type { AISettings, AIStatus, AiJob } from "../../lib/ai";
+import { api } from "../../lib/api";
 
 export function formatBytes(n: number) {
   if (!Number.isFinite(n) || n <= 0) return "0 B";
@@ -20,12 +21,6 @@ export function formatBytes(n: number) {
     i++;
   }
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
 }
 
 type LatestJob = AiJob | null;

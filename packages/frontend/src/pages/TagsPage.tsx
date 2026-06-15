@@ -7,17 +7,12 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { cn } from "../lib/cn";
+import { api } from "../lib/api";
 
 type TagAgg = { _id: string; count: number };
 type Sample = { _id: string; thumb_url: string };
 
 const PAGE = 60;
-
-async function api<T>(url: string): Promise<T> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
 
 const formatTag = (raw: string) => {
   if (raw.startsWith("manual:")) return raw.slice("manual:".length);
