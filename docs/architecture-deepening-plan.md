@@ -87,7 +87,7 @@ a real FS+DB.
 
 **Benefits:** Test surface moves to where the bugs are.
 
-## 5. AI tagger subsystem (two sub-seams)
+## 5. AI tagger subsystem (two sub-seams) — ✅ DONE
 
 **Files:** `services/ai_tagger.py` (766 lines), `api/ai.py:55-74` (status).
 

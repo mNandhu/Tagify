@@ -14,7 +14,8 @@ from ..services.ai_jobs import (
     get_ai_settings,
     update_ai_settings,
 )
-from ..services.ai_tagger import get_download_manager, get_tagger_manager
+from ..services.ai_tagger import get_tagger_manager, model_status_view
+from ..services.ai_tagger_download import get_download_manager, model_target
 
 router = APIRouter()
 
@@ -56,16 +57,8 @@ async def ai_set_settings(patch: SettingsPatch):
 async def ai_status():
     jm = get_ai_job_manager()
     s = await get_ai_settings()
-    repo = str(s.get("model_repo") or "")
-    cache_dir = str(s.get("cache_dir") or ".cache/tagify/models")
-    dl = (
-        get_download_manager().get_state(model_repo=repo, cache_dir=cache_dir).as_dict()
-    )
-
     return {
-        "model": get_tagger_manager().status(),
-        "model_load": get_tagger_manager().load_status(),
-        "model_download": dl,
+        **model_status_view(s),
         "jobs": {
             "recent": [j.public() for j in jm.list_jobs(limit=10)],
             "queue_depth": jm.queue_depth(),
@@ -77,10 +70,8 @@ async def ai_status():
 @router.post("/model/load")
 async def ai_model_load():
     s = await get_ai_settings()
-    started = get_tagger_manager().start_load(
-        model_repo=str(s["model_repo"]),
-        cache_dir=str(s.get("cache_dir") or ".cache/tagify/models"),
-    )
+    repo, cache_dir = model_target(s)
+    started = get_tagger_manager().start_load(model_repo=repo, cache_dir=cache_dir)
     return {
         "ok": True,
         "started": started,
@@ -103,8 +94,7 @@ async def ai_model_load_cancel():
 @router.get("/model/download-status")
 async def ai_model_download_status():
     s = await get_ai_settings()
-    repo = str(s.get("model_repo") or "")
-    cache_dir = str(s.get("cache_dir") or ".cache/tagify/models")
+    repo, cache_dir = model_target(s)
     return (
         get_download_manager().get_state(model_repo=repo, cache_dir=cache_dir).as_dict()
     )
@@ -113,8 +103,7 @@ async def ai_model_download_status():
 @router.post("/model/download-cancel")
 async def ai_model_download_cancel():
     s = await get_ai_settings()
-    repo = str(s.get("model_repo") or "")
-    cache_dir = str(s.get("cache_dir") or ".cache/tagify/models")
+    repo, cache_dir = model_target(s)
     ok = await get_download_manager().cancel(model_repo=repo, cache_dir=cache_dir)
     return {
         "ok": ok,

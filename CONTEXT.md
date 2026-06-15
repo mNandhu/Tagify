@@ -37,8 +37,13 @@ belongs in this file.
 - **Thumbnail** — a WebP render of an image stored on the local filesystem under
   `THUMB_ROOT`. (`services/storage_fs.py`)
 - **AI Job** — a queued, cancellable batch tagging unit. (`services/ai_jobs.py`)
-- **Tagger / Model** — the WD ONNX model. Lifecycle (download/load/idle-unload)
-  is separate from the pure inference step `select_tags`. (`services/ai_tagger.py`)
+- **Tagger / Model** — the WD ONNX model. Load/idle-unload lifecycle and the pure
+  inference step `select_tags` live in `services/ai_tagger.py`; model **download**
+  (HuggingFace fetch, progress, cancel) is its own dependency-free module
+  `services/ai_tagger_download.py` (also home to `model_target`, the one place the
+  `(model_repo, cache_dir)` default is resolved). The API's combined model status
+  is assembled once by `ai_tagger.model_status_view` so routes don't reach into
+  the managers' internals.
 - **AI Settings** — persisted tagger knobs; validation is pure
   (`ai_settings.clean_settings_patch`). (`services/ai_settings.py`)
 - **Image feed (backend)** — how an Image filter becomes SQL. A `FeedFilter`

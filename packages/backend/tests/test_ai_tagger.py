@@ -9,12 +9,23 @@ import numpy as np
 
 from src.services.ai_tagger import (
     LabelIndex,
-    ModelDownloadManager,
     TaggerManager,
-    _expected_paths,
     mcut_threshold,
     select_tags,
 )
+from src.services.ai_tagger_download import (
+    DEFAULT_CACHE_DIR,
+    ModelDownloadManager,
+    _expected_paths,
+    model_target,
+)
+
+
+def test_model_target_applies_default_cache_dir():
+    assert model_target({"model_repo": "a/b"}) == ("a/b", DEFAULT_CACHE_DIR)
+    assert model_target({"model_repo": "a/b", "cache_dir": "/x"}) == ("a/b", "/x")
+    # Missing repo resolves to "" (the display fallback the status route relied on).
+    assert model_target({}) == ("", DEFAULT_CACHE_DIR)
 
 
 def _labels() -> LabelIndex:
