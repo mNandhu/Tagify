@@ -16,11 +16,13 @@ Tagify is purpose-built for organizing and exploring large collections of AI-gen
 
 ## ✨ Features
 
-- **🎨 AI Art Focused**: Optimized for AI-generated image workflows and metadata
-- **🏷️ Smart Tagging**: Manual tagging with optional AI autotagging via external services
-- **📁 Library Management**: Organize images into libraries with automatic scanning
-- **🔍 Powerful Search**: Filter by tags, libraries, or untagged images with AND/OR logic
-- **⚡ Fast Performance**: Cursor-based pagination and pre-signed URL delivery
+- **🎨 AI Art Focused**: Optimized for AI-generated image workflows; extracts generation metadata (prompts, model, workflow) from ComfyUI/A1111 PNGs
+- **🤖 Built-in Autotagger**: Local WD ONNX tagger (`SmilingWolf/wd-vit-tagger-v3` by default) with a queued, cancellable batch job system — no external service required
+- **🏷️ Smart Tagging**: Manual tags, AI tags, and prompt tags (derived from generation prompts)
+- **⭐ Rate & Curate**: 0–5 star quality scores, danbooru-style content ratings, and quarantine to hide images from the feed without deleting them
+- **📁 Library Management**: Organize images into libraries with automatic background scanning and progress tracking
+- **🔍 Powerful Search**: Filter by tags, libraries, untagged, or no-AI-tags with AND/OR logic
+- **⚡ Fast Performance**: Cursor-based pagination, virtualized masonry grid, and pre-signed URL delivery
 - **🖼️ Gallery Views**: Responsive masonry grid with full-screen image viewer
 - **🐳 Docker Ready**: Complete Docker Compose setup for easy deployment
 
@@ -152,34 +154,43 @@ This approach gives you containerized dependencies with fast local code reloadin
 
 ## 🏗 Architecture
 
-- **Backend**: FastAPI app with MongoDB for metadata, MinIO for image storage
+- **Backend**: FastAPI app with MongoDB for metadata, MinIO for thumbnail storage (originals stay on the host filesystem)
 - **Frontend**: Vite + React + TypeScript with TailwindCSS
 - **Storage**:
   - MongoDB: Image metadata, tags, library information
-  - MinIO: Original images and JPEG thumbnails in separate buckets
+  - Original images: served directly from the host filesystem (the library paths you mount); never copied into object storage
+  - MinIO: WebP thumbnails only (single `tagify-thumbs` bucket)
 
-## 🤖 AI Autotagger Integration (Not Yet Implemented)
+## 🤖 AI Autotagger
 
-Tagify supports external AI tagging services for automatic tag generation. While Tagify stores and manages tags internally, you can connect it to autotagging services like [danbooru/autotagger](https://github.com/danbooru/autotagger) for automatic tag suggestions.
-
-**Configuration:**
-
-```bash
-# In packages/backend/.env
-AI_TAGGING_URL=http://your-autotagger-service:port/predict
-```
+Tagify ships with a **built-in** autotagger — a WD ONNX model that runs locally via `onnxruntime`. No external service is required. The default model is `SmilingWolf/wd-vit-tagger-v3`, downloaded from HuggingFace on first use and cached locally.
 
 **How it works:**
 
-1. Tagify sends images to your configured autotagger service
-2. Receives tag suggestions back
-3. You review and accept/reject suggestions before applying
-4. Tags are stored in Tagify's database for future searches
+1. Configure the model and thresholds on the Settings page (or via `POST /ai/settings`).
+2. Load the model (`POST /ai/model/load`) — download and load are tracked, cancellable, and the model idle-unloads to free memory.
+3. Tag a single image, or queue a batch (e.g. all untagged images) via the AI job system (`POST /ai/tag`, `POST /ai/tag-untagged`). Jobs are listed, polled, and cancellable (`GET /ai/jobs`, `POST /ai/jobs/{id}/cancel`).
+4. AI tags are stored alongside manual and prompt tags and become searchable.
 
-**Compatible Services:**
+**Tag kinds** (all share one `tags` array, see [CONTEXT.md](CONTEXT.md)):
 
-- [danbooru/autotagger](https://github.com/danbooru/autotagger) - Deep learning model for anime/artwork tagging
-- Custom APIs that accept image input and return JSON tag arrays
+- **AI tags** — produced by the tagger, stored unprefixed (`1girl`).
+- **Manual tags** — user-applied, `manual:` prefix.
+- **Prompt tags** — extracted from generation prompts by reprojection, `prompt:` prefix.
+
+Tuning knobs (model repo, general/character thresholds, idle-unload timeout, prompt-tag reprojection) live in AI Settings. The legacy `AI_TAGGING_URL` env var refers to an older external-service path and is not the primary tagging route.
+
+## 🧬 Generation Metadata & Extraction Rules
+
+Tagify reads the generation data embedded in AI-art images (ComfyUI `prompt` node graphs, Automatic1111 `parameters` text) during scanning and stores it **verbatim**. From that stored raw it derives structured `gen.*` fields — positive/negative prompt, seed, model, sampler, steps, CFG — plus searchable prompt tags. Because derivation works off the stored raw, fields can be re-derived any time without touching disk again.
+
+**Workflow signatures.** Each ComfyUI image is fingerprinted by a `workflow_sig` — a hash of its node *kinds* (sorted `class_type` multiset), ignoring node ids and widget values. Images from the same workflow share a signature, so they can be grouped and mapped together.
+
+**Why rules exist.** Standard graphs are parsed structurally (walk the sampler's `positive`/`negative` links back to text nodes, the `model` link to the checkpoint loader). Custom and non-standard workflows — exotic samplers, custom text nodes, pass-through wrappers — break those heuristics, leaving prompt/model/seed empty even though the data is present in the raw.
+
+**Extraction rules (rulesets)** fix that. Per `workflow_sig`, you pin **dot-paths** into the raw doc for specific fields (e.g. `prompt.32.inputs.text0` → `prompt`). A resolving pin overrides the structural baseline; the fallback chain is *pinned → structural → class*, so a pin only ever fills or corrects, never erases a working parse.
+
+Author rules on the **Rules page**: pick a signature (the picker surfaces which still need mapping and a sample image), pin paths, and preview resolution live against that sample before saving (`POST /rules/preview`). Rulesets are **sig-global** — saving one **reprojects every image of that signature across all libraries** from their stored raw (`PUT /rules/{sig}` → background reproject), so one mapping retroactively fixes the whole batch. You can also reproject a single library on demand (`POST /libraries/{id}/reproject`).
 
 ## ⚙️ Environment Configuration
 
@@ -197,11 +208,12 @@ Key environment variables (see `.env.example`):
 
 - `MINIO_ROOT_USER/PASSWORD`: MinIO credentials
 - `MONGO_ROOT_USERNAME/PASSWORD`: MongoDB credentials
-- `MINIO_BUCKET_THUMBS/ORIGINALS`: Bucket names for thumbnails and originals
+- `MINIO_BUCKET_THUMBS`: Thumbnail bucket name (default: `tagify-thumbs`). Originals are read from the host filesystem, so there is no originals bucket.
 
 ### Performance
 
-- `THUMB_MAX_SIZE`: Maximum thumbnail size in pixels (default: 512, recommended: 1024)
+- `THUMB_MAX_SIZE`: Maximum thumbnail size in pixels (default: 1080)
+- `THUMB_FORMAT`: Thumbnail format (default: `webp`)
 - `SCANNER_MAX_WORKERS`: Scanner thread count (0 = auto-detect CPU cores)
 
 ## 📁 Project Structure
@@ -237,11 +249,17 @@ See [.github/prompts/tech_guide.md](.github/prompts/tech_guide.md) for detailed 
 
 - `GET /health` - Health check
 - `GET /images` - List images with filtering and pagination
-- `GET /images/{id}/file` - Original image (supports Range requests)
-- `GET /images/{id}/thumb` - Thumbnail image
-- `GET /tags` - Available tags with counts (cached)
-- `POST /libraries` - Create/scan libraries
-- `POST /tags/apply` - Apply tags to images
+- `GET /images/{id}/file` - Original image from host filesystem (supports Range requests)
+- `GET /images/{id}/thumb` - WebP thumbnail
+- `POST /images/{id}/rating` - Set content rating (`general`/`sensitive`/`questionable`/`explicit`/`-`)
+- `POST /images/{id}/score` - Set 0–5 star quality score (distinct from content rating)
+- `POST /images/{id}/quarantine` - Toggle quarantine flag (DB-only; hides from feed, file untouched)
+- `POST /images/{id}/purge` - Permanently delete original from disk + records (`confirm=true` required)
+- `GET /tags` - Available tags with counts (30s TTL cache)
+- `POST /tags/apply/{id}` / `POST /tags/remove/{id}` - Mutate tags on an image
+- `POST /libraries` - Create/scan a library; `POST /libraries/{id}/rescan`, `POST /libraries/{id}/reproject`
+- `GET /ai/status`, `POST /ai/model/load`, `POST /ai/tag`, `GET /ai/jobs` - Built-in autotagger + job queue
+- `GET /rules`, `GET /rules/signatures`, `PUT /rules/{sig}` - Generation-metadata extraction rules, keyed by workflow signature
 
 **Image Filtering:**
 
@@ -249,6 +267,9 @@ See [.github/prompts/tech_guide.md](.github/prompts/tech_guide.md) for detailed 
 - `logic=and|or` - Tag filter logic
 - `library_id=...` - Filter by library
 - `no_tags=1` - Show only untagged images
+- `no_ai_tags=1` - Show only images without AI tags
+- `pterms[]=term&plogic=and|or` - Filter by prompt tags (generation-prompt terms)
+- `quarantined=1` - Show quarantined images (hidden from the default feed)
 - `cursor=...` - Cursor-based pagination for stable results
 
 ## 📚 Documentation & Links
@@ -270,27 +291,15 @@ Docker volumes ensure data persists across container restarts:
 
 To backup your data:
 
-**POSIX (Linux/macOS):**
-
 ```bash
-# Backup MongoDB
+# Backup MongoDB (metadata, tags, libraries)
 docker compose exec mongodb mongodump --out /data/backup
 
-# Backup MinIO (via MinIO client)
-docker compose exec minio mc mirror minio/tagify-originals /data/backup/originals
+# Backup the WebP thumbnail bucket (via MinIO client)
 docker compose exec minio mc mirror minio/tagify-thumbs /data/backup/thumbs
 ```
 
-**Windows PowerShell:**
-
-```powershell
-# Backup MongoDB
-docker compose exec mongodb mongodump --out /data/backup
-
-# Backup MinIO (via MinIO client)
-docker compose exec minio mc mirror minio/tagify-originals /data/backup/originals
-docker compose exec minio mc mirror minio/tagify-thumbs /data/backup/thumbs
-```
+> Original images are **not** stored in MinIO — they live in the host directories you mounted as libraries. Back those directories up with your normal file-backup tooling. Thumbnails can always be regenerated by rescanning, so only MongoDB and your source images are essential.
 
 ## 🔧 Development
 
