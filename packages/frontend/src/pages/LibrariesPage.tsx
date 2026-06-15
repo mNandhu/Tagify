@@ -67,7 +67,7 @@ export default function LibrariesPage() {
     let timer: number | undefined;
     let cancelled = false;
     const tick = async () => {
-      let updates: Record<
+      const updates: Record<
         string,
         { scanning: boolean; scan_total: number; scan_done: number }
       > = {};
@@ -83,7 +83,7 @@ export default function LibrariesPage() {
                 scan_total: j.scan_total || 0,
                 scan_done: j.scan_done || 0,
               };
-            } catch {}
+            } catch { /* network errors silenced — polling will retry */ }
           })
         );
         // Detect scanning -> done transitions to refresh once

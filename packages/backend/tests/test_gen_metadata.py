@@ -163,9 +163,7 @@ def test_tokenize_keeps_numeric_tags():
 def test_tokenize_preserves_balanced_danbooru_qualifier():
     # name_(series) qualifiers are the dominant wd-tagger tag shape: the closing
     # paren is part of the tag and must survive (regression guard).
-    assert gm.tokenize_prompt("hatsune_miku_(vocaloid)") == [
-        "hatsune_miku_(vocaloid)"
-    ]
+    assert gm.tokenize_prompt("hatsune_miku_(vocaloid)") == ["hatsune_miku_(vocaloid)"]
 
 
 def test_tokenize_peels_fully_wrapping_emphasis():

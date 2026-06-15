@@ -88,7 +88,7 @@ def is_any(tag: str) -> bool:
 def any_variants(tag: str) -> list[str]:
     """Concrete tag ids an ``any:<base>`` selection should match: the bare AI
     tag plus its manual/prompt-prefixed siblings."""
-    base = tag[len(ANY_PREFIX):]
+    base = tag[len(ANY_PREFIX) :]
     return [base, to_manual(base), to_prompt(base)]
 
 

@@ -308,7 +308,7 @@ export default function ImageView() {
     [goPrev, goNext],
   );
 
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+  const handleTouchMove = useCallback((_e: React.TouchEvent) => {
     // Optional: could add visual feedback here for swipe in progress
   }, []);
 
@@ -577,7 +577,6 @@ export default function ImageView() {
 function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
   const [val, setVal] = useState("");
   const [adding, setAdding] = useState(false);
-  const { push } = useToast();
   const { start, cancel, submitting, cancelling, jobId, job, canCancel } =
     useAiTagging(onChange);
 

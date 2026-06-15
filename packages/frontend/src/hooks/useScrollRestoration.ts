@@ -69,7 +69,7 @@ export function useScrollRestoration(
     if (!el) return;
     restoredFor.current = storageKey;
 
-    let saved: Saved | null = null;
+    let saved: Saved | null;
     try {
       const raw = sessionStorage.getItem(storageKey);
       saved = raw ? (JSON.parse(raw) as Saved) : null;

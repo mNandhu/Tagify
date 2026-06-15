@@ -1,0 +1,8 @@
+#!/bin/sh
+# Run lint-staged for per-file checks (ruff on .py, eslint on .ts/.tsx)
+pnpm exec lint-staged
+
+# Type-check the frontend if any TS files are staged
+if git diff --cached --name-only | grep -qE '\.(ts|tsx)$'; then
+  pnpm -C packages/frontend exec tsc --noEmit
+fi

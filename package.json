@@ -6,12 +6,24 @@
         "packages/*"
     ],
     "devDependencies": {
-        "concurrently": "^9.1.2"
+        "concurrently": "^9.1.2",
+        "husky": "^9.1.7",
+        "lint-staged": "^17.0.7"
     },
     "scripts": {
         "dev:backend": "uv --directory packages/backend run uvicorn src.main:app --reload --port 8000",
         "dev:frontend": "pnpm -C packages/frontend dev",
         "dev": "concurrently -c auto -n backend,frontend \"pnpm dev:backend\" \"pnpm dev:frontend\"",
-        "perf": "uv --directory packages/backend run python tests/perf_benchmark.py"
+        "perf": "uv --directory packages/backend run python tests/perf_benchmark.py",
+        "prepare": "husky || true"
+    },
+    "lint-staged": {
+        "packages/backend/**/*.py": [
+            "uv --directory packages/backend run ruff check",
+            "uv --directory packages/backend run ruff format --check"
+        ],
+        "packages/frontend/src/**/*.{ts,tsx}": [
+            "pnpm -C packages/frontend exec eslint"
+        ]
     }
 }
