@@ -680,11 +680,11 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
       )}
 
       <Link
-        to="/settings?section=jobs"
+        to="/ai-tagging"
         className="text-xs text-neutral-500 hover:text-neutral-300"
-        title="See all AI tagging jobs and their progress"
+        title="See AI tagging coverage, jobs, and their progress"
       >
-        View all jobs →
+        View AI tagging →
       </Link>
     </div>
   );

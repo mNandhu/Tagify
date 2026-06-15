@@ -60,6 +60,20 @@ export type AIStatus = {
   settings: AISettings;
 };
 
+export type AiLibraryCoverage = {
+  library_id: string;
+  total: number;
+  ai_tagged: number;
+};
+
+/** AI-tag coverage across the collection (and per library). */
+export type AiCoverage = {
+  total: number;
+  ai_tagged: number;
+  untagged: number;
+  per_library: AiLibraryCoverage[];
+};
+
 const TERMINAL = new Set(["done", "error", "cancelled"]);
 const ACTIVE = new Set(["queued", "running", "cancelling"]);
 
@@ -98,6 +112,10 @@ export function fetchAiStatus(signal?: AbortSignal): Promise<AIStatus> {
 
 export function fetchAiJob(id: string, signal?: AbortSignal): Promise<AiJob> {
   return getJson<AiJob>(`/api/ai/jobs/${encodeURIComponent(id)}`, signal);
+}
+
+export function fetchAiCoverage(signal?: AbortSignal): Promise<AiCoverage> {
+  return getJson<AiCoverage>("/api/ai/coverage", signal);
 }
 
 /** Queue an AI tagging job for the given image ids; returns the job id. */

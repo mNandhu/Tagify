@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ..database.motor import acol
 from ..services import image_tags
 
 from ..services.ai_jobs import (
@@ -175,4 +176,44 @@ async def ai_cancel_job(job_id: str):
     return {
         "ok": ok,
         "job": (j.public() if j else None),
+    }
+
+
+@router.get("/coverage")
+async def ai_coverage():
+    """AI-tag coverage: how many images carry AI tags, globally and per library.
+
+    ``has_ai_tags`` is the summary flag maintained by ``image_tags`` and
+    backfilled onto older docs at startup, so a single grouped count is exact.
+    Quarantined images are excluded to match the default gallery.
+    """
+    images = acol("images")
+    pipeline = [
+        {"$match": {"quarantined": {"$ne": True}}},
+        {
+            "$group": {
+                "_id": "$library_id",
+                "total": {"$sum": 1},
+                "ai_tagged": {
+                    "$sum": {"$cond": [{"$eq": ["$has_ai_tags", True]}, 1, 0]}
+                },
+            }
+        },
+        {"$sort": {"total": -1}},
+    ]
+    per_library = [
+        {
+            "library_id": r["_id"],
+            "total": r["total"],
+            "ai_tagged": r["ai_tagged"],
+        }
+        async for r in images.aggregate(pipeline)
+    ]
+    total = sum(r["total"] for r in per_library)
+    ai_tagged = sum(r["ai_tagged"] for r in per_library)
+    return {
+        "total": total,
+        "ai_tagged": ai_tagged,
+        "untagged": total - ai_tagged,
+        "per_library": per_library,
     }

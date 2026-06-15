@@ -1,9 +1,7 @@
 import type { LucideIcon } from "lucide-react";
-import { Cpu, Tags, FileText, ListTodo } from "lucide-react";
-import { ModelSection } from "./sections/ModelSection";
+import { Tags, FileText } from "lucide-react";
 import { TaggingSection } from "./sections/TaggingSection";
 import { PromptTagsSection } from "./sections/PromptTagsSection";
-import { JobsSection } from "./sections/JobsSection";
 
 /**
  * One settings page section: a left-nav entry + the panel it renders.
@@ -31,20 +29,14 @@ export type SettingsGroup = {
 
 export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
-    title: "AI Tagging",
+    title: "Tags",
     items: [
       {
-        id: "model",
-        label: "Model",
-        icon: Cpu,
-        description: "Load, unload, and download the wd-tagger ONNX model.",
-        Component: ModelSection,
-      },
-      {
         id: "tagging",
-        label: "Tagging",
+        label: "AI Tagging",
         icon: Tags,
-        description: "How tags are scored and how many are kept per image.",
+        description:
+          "The wd-tagger model, scoring thresholds, and how many tags are kept per image. Run tagging and track jobs from the AI Tagging page.",
         Component: TaggingSection,
       },
       {
@@ -54,13 +46,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         description:
           "Extract prompt: tags from embedded generation metadata (A1111 / ComfyUI). Separate from AI tagging.",
         Component: PromptTagsSection,
-      },
-      {
-        id: "jobs",
-        label: "Jobs",
-        icon: ListTodo,
-        description: "Run AI tagging in bulk and track recent jobs.",
-        Component: JobsSection,
       },
     ],
   },
