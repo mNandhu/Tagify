@@ -15,6 +15,7 @@ from ..services.ai_jobs import (
     update_ai_settings,
 )
 from ..services.ai_tagger import get_tagger_manager, model_status_view
+from ..core.config import settings as app_settings
 from ..services.ai_tagger_download import get_download_manager, model_target
 
 router = APIRouter()
@@ -71,6 +72,7 @@ async def ai_status():
 async def ai_model_load():
     s = await get_ai_settings()
     repo, cache_dir = model_target(s)
+    cache_dir = str(app_settings.resolve_cache_dir(cache_dir))
     started = get_tagger_manager().start_load(model_repo=repo, cache_dir=cache_dir)
     return {
         "ok": True,
@@ -95,6 +97,7 @@ async def ai_model_load_cancel():
 async def ai_model_download_status():
     s = await get_ai_settings()
     repo, cache_dir = model_target(s)
+    cache_dir = str(app_settings.resolve_cache_dir(cache_dir))
     return (
         get_download_manager().get_state(model_repo=repo, cache_dir=cache_dir).as_dict()
     )
@@ -104,6 +107,7 @@ async def ai_model_download_status():
 async def ai_model_download_cancel():
     s = await get_ai_settings()
     repo, cache_dir = model_target(s)
+    cache_dir = str(app_settings.resolve_cache_dir(cache_dir))
     ok = await get_download_manager().cancel(model_repo=repo, cache_dir=cache_dir)
     return {
         "ok": ok,

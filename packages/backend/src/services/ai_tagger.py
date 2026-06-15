@@ -15,6 +15,7 @@ try:
 except Exception:  # pragma: no cover
     rt = None  # type: ignore[assignment]
 
+from ..core.config import settings as app_settings
 from .ai_tagger_download import (
     download_wd_tagger,
     get_download_manager,
@@ -471,6 +472,7 @@ def model_status_view(settings: dict[str, Any]) -> dict[str, Any]:
     and the download state for the settings' target. One place stitches the two
     managers together so routes don't reach into either's internals."""
     repo, cache_dir = model_target(settings)
+    cache_dir = str(app_settings.resolve_cache_dir(cache_dir))
     mgr = get_tagger_manager()
     return {
         "model": mgr.status(),

@@ -52,6 +52,12 @@ class Settings(BaseSettings):
         p = Path(self.model_cache_dir)
         return p if p.is_absolute() else (_REPO_ROOT / p)
 
+    def resolve_cache_dir(self, cache_dir: str) -> Path:
+        """Resolve an arbitrary cache_dir string (e.g. from UI/DB) the same way
+        as `model_cache_dir_path`: relative values anchor to the repo root."""
+        p = Path(cache_dir)
+        return p if p.is_absolute() else (_REPO_ROOT / p)
+
     @property
     def thumb_root_path(self) -> Path:
         """Absolute thumbnail root. Relative `thumb_root` anchors to the repo
