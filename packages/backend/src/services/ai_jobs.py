@@ -7,7 +7,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..database.motor import acol
+import sqlalchemy as sa
+
+from ..database.db import async_conn
+from ..database import schema as t
 from . import image_tags
 from .ai_settings import DEFAULT_AI_SETTINGS, get_ai_settings, update_ai_settings
 from .ai_tagger import get_tagger_manager
@@ -137,13 +140,12 @@ class AIJobManager:
     async def enqueue_untagged(
         self, *, limit: int = 200, library_id: str | None = None
     ) -> AIJob | None:
-        q: dict[str, Any] = {"has_ai_tags": False}
+        stmt = sa.select(t.images.c._id).where(t.images.c.has_ai_tags.is_(False))
         if library_id:
-            q["library_id"] = library_id
-
-        cur = acol("images").find(q, {"_id": 1}).sort("_id", -1).limit(int(limit))
-        items = await cur.to_list(length=int(limit))
-        ids = [it["_id"] for it in items]
+            stmt = stmt.where(t.images.c.library_id == library_id)
+        stmt = stmt.order_by(t.images.c._id.desc()).limit(int(limit))
+        async with async_conn() as conn:
+            ids = [row._id for row in (await conn.execute(stmt)).fetchall()]
         if not ids:
             return None
         return await self.enqueue(ids=ids)

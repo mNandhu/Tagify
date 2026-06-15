@@ -49,6 +49,9 @@ belongs in this file.
 
 ## Persistence
 
-- One Mongo index/connection definition, shared by the sync and async clients:
-  `database/schema.py`. The sync (`mongo.py`) and async (`motor.py`) clients are
-  thin wrappers over it.
+- Embedded SQLite (via SQLAlchemy Core), one file, no external database server.
+  The schema (tables + indexes) is defined once as a `MetaData` in
+  `database/schema.py`; `database/db.py` owns the async (app) and sync (scanner)
+  engines and creates the schema on startup. `tags` is an ordered JSON array on
+  `images`; `image_tags` / `image_gen_terms` are derived join tables rebuilt
+  transactionally to serve grouped/`$in`/`$all` queries.

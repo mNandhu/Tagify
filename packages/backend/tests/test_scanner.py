@@ -53,19 +53,36 @@ def test_image_id_for_is_library_prefixed_relative_path():
     assert scanner.image_id_for("L1", root, root / "a" / "b.jpg") == "L1:a/b.jpg"
 
 
-def test_upsert_image_op_seeds_tag_state_only_on_insert():
-    op = scanner.upsert_image_op({"_id": "L1:x.jpg", "path": "/data/lib/x.jpg"})
-    assert op._doc["$setOnInsert"] == {
-        "tags": [],
-        "has_tags": False,
-        "has_ai_tags": False,
-        "has_prompt_tags": False,
-        "quarantined": False,
-        "score": 0,
-    }
-    # File metadata is refreshed on every scan; tag-state only seeded on insert.
-    assert "path" in op._doc["$set"]
-    assert op._upsert is True
+def test_image_upsert_values_merges_initial_tag_state():
+    vals = scanner.image_upsert_values({"_id": "L1:x.jpg", "path": "/data/lib/x.jpg"})
+    # Scanner file-metadata is carried through.
+    assert vals["_id"] == "L1:x.jpg"
+    assert vals["path"] == "/data/lib/x.jpg"
+    # Initial tag-state is seeded into the insert payload (the ON CONFLICT clause
+    # leaves these columns untouched on update — verified by an integration test).
+    assert vals["tags"] == []
+    assert vals["has_tags"] is False
+    assert vals["has_ai_tags"] is False
+    assert vals["has_prompt_tags"] is False
+    assert vals["quarantined"] is False
+    assert vals["score"] == 0
+
+
+def test_gen_raw_values_splits_into_row_shape():
+    row = scanner._gen_raw_values(
+        {
+            "_id": "L1:x.jpg",
+            "library_id": "L1",
+            "workflow_sig": "sig1",
+            "source": "comfyui",
+            "prompt": {"a": 1},
+        }
+    )
+    assert row["_id"] == "L1:x.jpg"
+    assert row["library_id"] == "L1"
+    assert row["workflow_sig"] == "sig1"
+    # The variable per-source payload lands in `raw`, sans the promoted keys.
+    assert row["raw"] == {"source": "comfyui", "prompt": {"a": 1}}
 
 
 def test_reconcile_stale_flags_only_undiscovered_images():

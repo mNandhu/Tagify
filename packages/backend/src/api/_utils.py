@@ -15,12 +15,3 @@ def validate_tags(tags: list[str], *, max_count: int = 100) -> list[str]:
             raise HTTPException(status_code=422, detail="tag too long (max 128)")
         cleaned.append(tt)
     return cleaned
-
-
-def parse_object_id(id_str: str):
-    try:
-        from bson.objectid import ObjectId
-
-        return ObjectId(id_str)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid id")

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Tagify is a pnpm monorepo for organizing AI-generated images. FastAPI backend (Python 3.11+, MongoDB for metadata, local filesystem for thumbnail + original storage, WD ONNX model for AI tagging) + Vite/React/TypeScript frontend. Frontend talks to backend via REST; the Vite dev server proxies `/api/*` → `http://127.0.0.1:8000` (stripping `/api`).
+Tagify is a pnpm monorepo for organizing AI-generated images. FastAPI backend (Python 3.11+, embedded SQLite for metadata via SQLAlchemy Core, local filesystem for thumbnail + original storage, WD ONNX model for AI tagging) + Vite/React/TypeScript frontend. Frontend talks to backend via REST; the Vite dev server proxies `/api/*` → `http://127.0.0.1:8000` (stripping `/api`). **No external running dependencies** — no database server, no object store.
 
 ## Commands
 
@@ -12,7 +12,6 @@ Run from repo root unless noted.
 
 ```bash
 pnpm install                 # install frontend deps (backend uses uv, see below)
-docker compose -f docker-compose.dev.yml up -d   # start MongoDB dep
 pnpm dev                     # backend (uvicorn :8000, --reload) + frontend (vite :5173) together
 pnpm perf                    # backend perf benchmark
 
@@ -29,7 +28,7 @@ pnpm -C packages/frontend test src/lib/fuzzy.test.ts   # single test file
 pnpm -C packages/frontend build   # tsc -b && vite build
 ```
 
-Backend needs `packages/backend/.env` (MONGO_URI, optional THUMB_ROOT — defaults to `<repo>/data/thumbs`). Settings load from repo-root `.env` then `packages/backend/.env` (`src/core/config.py`). CI (`.github/workflows/ci.yml`) runs the full stack via `docker-compose.ci.yml` and exercises scan + media endpoints with curl — there is no unit-test step in CI.
+Backend env is optional: `SQLITE_PATH` (defaults to `<repo>/data/tagify.db`) and `THUMB_ROOT` (defaults to `<repo>/data/thumbs`). Settings load from repo-root `.env` then `packages/backend/.env` (`src/core/config.py`). The SQLite schema is created on startup (`ensure_schema` in `main.py` lifespan) — no migration step. Backend tests now include router-level **integration tests** (`tests/test_*_integration.py`) that run against a temp-file SQLite DB via the `client`/`seed` fixtures in `tests/conftest.py`.
 
 ## Domain model
 
@@ -37,8 +36,10 @@ Backend needs `packages/backend/.env` (MONGO_URI, optional THUMB_ROOT — defaul
 
 - **Image `_id` is `{library_id}:{relative/path}`.** ID lookups normalize `/` vs `\` (`api/images.py` `_find_image_doc`).
 - **One `tags[]` array holds three tag kinds:** AI tags unprefixed (`1girl`), manual tags `manual:`-prefixed, prompt tags `prompt:`-prefixed. AI and prompt tags may overlap and are never deduped against each other.
-- **`services/image_tags.py` is the ONLY place that mutates `tags` and recomputes the summary flags** (`has_tags`, `has_ai_tags`, `has_prompt_tags`, `rating`). Mutating tags anywhere else will drift the flags. `normalize_rating` is the single rating normalizer.
-- **Mongo indexes/connection are defined once in `database/schema.py`;** `mongo.py` (sync) and `motor.py` (async) are thin wrappers. Indexes are ensured on startup (`ensure_indexes_async` in `main.py` lifespan), which also backfills new flag fields onto older docs.
+- **`services/image_tags.py` is the ONLY place that mutates `tags` and recomputes the summary flags** (`has_tags`, `has_ai_tags`, `has_prompt_tags`, `rating`). It writes the ordered `tags` JSON array, the flags, and the derived `image_tags(image_id, tag, base)` join rows **in one transaction** so they never drift. `normalize_rating` is the single rating normalizer.
+- **`tags` is a JSON-array column on `images` (ordered, authoritative); `image_tags` + `image_gen_terms` are derived join tables** rebuilt transactionally from it/`gen.prompt_terms` to serve `GROUP BY`/`$in`/`$all` queries. `gen.*` scalars filtered in the feed are promoted to indexed `gen_*` columns; the full `gen` subdoc stays JSON.
+- **The SQLite schema (tables + indexes) is defined once in `database/schema.py`** as a SQLAlchemy `MetaData`. `database/db.py` owns the async (app) and sync (scanner) engines, sets `WAL`/`busy_timeout` PRAGMAs, and creates the schema via `ensure_schema` on startup. **Writer discipline:** SQLite is single-writer — keep scanner write-transactions small (they batch + commit often); the file lock + `busy_timeout` is the real cross-process serializer, not the per-side Python locks.
+- **`_id` columns are `COLLATE BINARY`** (cursor paging compares `_id < cursor` and must match the old byte-order sort).
 
 ## Backend layout
 
@@ -56,7 +57,7 @@ Backend needs `packages/backend/.env` (MONGO_URI, optional THUMB_ROOT — defaul
 
 ## Gotchas
 
-- Use DB helpers (`col()`/`get_db()` sync, `acol()` async) — don't open connections ad hoc.
-- Keep list responses minimal via Mongo projections; return full docs only when needed.
+- Use the engine helpers from `database/db.py` (`async_conn`/`async_tx` async, `sync_conn`/`sync_tx` for scanner/reproject threads) with the table objects in `database/schema.py` (imported as `t`) — don't open connections ad hoc. All writes go through the `*_tx` helpers.
+- Keep list responses minimal via column `select(...)` projections; return full rows only when needed.
 - `tags` GET aggregation is cached with a ~30s TTL — clear it after mutating tags.
 - In `content-visibility:auto` is a known paint-gap hazard in the virtualized grid (see project memory); avoid reintroducing it.

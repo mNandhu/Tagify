@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..database.motor import acol
+import sqlalchemy as sa
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+from ..database.db import async_conn, async_tx
+from ..database import schema as t
 from .ai_tagger import get_tagger_manager
 
 DEFAULT_AI_SETTINGS: dict[str, Any] = {
@@ -61,36 +65,40 @@ def clean_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
-async def get_ai_settings() -> dict[str, Any]:
-    settings = acol("settings")
-    doc = await settings.find_one({"_id": "ai"})
-    if not doc:
-        await settings.insert_one({"_id": "ai", **DEFAULT_AI_SETTINGS})
-        return dict(DEFAULT_AI_SETTINGS)
+async def _read_ai_doc() -> dict[str, Any] | None:
+    """The stored "ai" settings overrides, or None if never written."""
+    async with async_conn() as conn:
+        return (
+            await conn.execute(
+                sa.select(t.app_settings.c.doc).where(t.app_settings.c._id == "ai")
+            )
+        ).scalar()
 
-    merged = dict(DEFAULT_AI_SETTINGS)
-    for k, v in doc.items():
-        if k == "_id":
-            continue
-        merged[k] = v
-    return merged
+
+async def get_ai_settings() -> dict[str, Any]:
+    doc = await _read_ai_doc()
+    if doc is None:
+        async with async_tx() as conn:
+            await conn.execute(
+                sqlite_insert(t.app_settings)
+                .values(_id="ai", doc=dict(DEFAULT_AI_SETTINGS))
+                .on_conflict_do_nothing(index_elements=[t.app_settings.c._id])
+            )
+        return dict(DEFAULT_AI_SETTINGS)
+    return {**DEFAULT_AI_SETTINGS, **doc}
 
 
 async def update_ai_settings(patch: dict[str, Any]) -> dict[str, Any]:
     clean = clean_settings_patch(patch)
-    settings = acol("settings")
 
-    # IMPORTANT: MongoDB rejects updates that try to modify the same field in
-    # multiple operators (e.g. $set and $setOnInsert). Since DEFAULT_AI_SETTINGS
-    # contains all fields, we must omit any keys present in $set from $setOnInsert.
-    on_insert_defaults = {
-        k: v for k, v in DEFAULT_AI_SETTINGS.items() if k not in clean
-    }
-    update_doc: dict[str, Any] = {"$setOnInsert": {"_id": "ai", **on_insert_defaults}}
-    if clean:
-        update_doc["$set"] = clean
-
-    await settings.update_one({"_id": "ai"}, update_doc, upsert=True)
+    existing = await _read_ai_doc() or {}
+    new_doc = {**existing, **clean}
+    async with async_tx() as conn:
+        stmt = sqlite_insert(t.app_settings).values(_id="ai", doc=new_doc)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.app_settings.c._id], set_={"doc": stmt.excluded.doc}
+        )
+        await conn.execute(stmt)
 
     # Apply runtime knobs immediately.
     if "idle_unload_s" in clean:

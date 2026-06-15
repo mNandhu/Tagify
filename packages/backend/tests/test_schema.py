@@ -1,38 +1,49 @@
-"""The sync and async clients must agree on indexes — that's the whole point of
-collapsing the two duplicated definitions into one schema module."""
+"""Schema definition tests: assert the SQLite tables, key columns, and the index
+set exist as the query layer expects. Pure metadata introspection — no DB needed.
+"""
 
 from src.database import schema
 
 
-def _names(models):
-    return sorted(m.document["name"] for m in models)
+def test_expected_tables_exist():
+    assert set(schema.metadata.tables) == {
+        "images",
+        "image_tags",
+        "image_gen_terms",
+        "libraries",
+        "image_gen_raw",
+        "tag_meta",
+        "gen_rulesets",
+        "app_settings",
+    }
 
 
-def test_image_indexes_have_expected_names():
-    assert _names(schema.image_indexes()) == sorted(
-        [
-            "lib_id__id",
-            "tags__id",
-            "lib_id_has_tags__id",
-            "lib_id_tags__id",
-            "lib_id_has_ai_tags__id",
-            "gen_prompt_terms__id",
-            "gen_model__id",
-            "gen_workflow_sig",
-            "gen_group_id",
-        ]
-    )
+def test_images_has_tag_state_and_promoted_gen_columns():
+    cols = set(schema.images.c.keys())
+    # Tag-state summary flags + the ordered tag array.
+    assert {"has_tags", "has_ai_tags", "has_prompt_tags", "tags"} <= cols
+    # Promoted gen.* scalars used by indexed feed filters.
+    assert {"gen_model", "gen_workflow_sig", "gen_group_id", "gen_prompt"} <= cols
 
 
-def test_gen_raw_indexes_have_expected_names():
-    assert _names(schema.gen_raw_indexes()) == sorted(
-        ["gen_raw_library_id", "gen_raw_lib_sig", "gen_raw_sig"]
-    )
+def test_id_columns_collate_binary_for_cursor_pagination():
+    # Cursor paging compares `_id < cursor`; it must match Mongo's byte-order sort.
+    assert schema.images.c._id.type.collation == "BINARY"
 
 
-def test_client_kwargs_are_shared_and_sane():
-    kw = schema.client_kwargs()
-    assert kw["appname"] == "tagify"
-    assert kw["retryReads"] is True
-    assert kw["retryWrites"] is True
-    assert kw["maxPoolSize"] >= 1
+def test_derived_join_tables_have_base_and_term():
+    assert "base" in schema.image_tags.c.keys()
+    assert "term" in schema.image_gen_terms.c.keys()
+
+
+def test_expected_indexes_present():
+    names = {ix.name for tbl in schema.metadata.tables.values() for ix in tbl.indexes}
+    assert {
+        "ix_images_lib_id",
+        "ix_images_lib_has_ai_tags",
+        "ix_images_gen_model",
+        "ix_image_tags_tag",
+        "ix_image_tags_base",
+        "ix_image_gen_terms_term",
+        "ix_gen_raw_sig",
+    } <= names

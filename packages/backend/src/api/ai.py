@@ -3,7 +3,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..database.motor import acol
+import sqlalchemy as sa
+
+from ..database.db import async_conn
+from ..database import schema as t
 from ..services import image_tags
 
 from ..services.ai_jobs import (
@@ -187,27 +190,27 @@ async def ai_coverage():
     backfilled onto older docs at startup, so a single grouped count is exact.
     Quarantined images are excluded to match the default gallery.
     """
-    images = acol("images")
-    pipeline = [
-        {"$match": {"quarantined": {"$ne": True}}},
-        {
-            "$group": {
-                "_id": "$library_id",
-                "total": {"$sum": 1},
-                "ai_tagged": {
-                    "$sum": {"$cond": [{"$eq": ["$has_ai_tags", True]}, 1, 0]}
-                },
-            }
-        },
-        {"$sort": {"total": -1}},
-    ]
+    stmt = (
+        sa.select(
+            t.images.c.library_id,
+            sa.func.count().label("total"),
+            sa.func.coalesce(
+                sa.func.sum(sa.cast(t.images.c.has_ai_tags, sa.Integer)), 0
+            ).label("ai_tagged"),
+        )
+        .where(sa.func.coalesce(t.images.c.quarantined, False).is_(False))
+        .group_by(t.images.c.library_id)
+        .order_by(sa.text("total DESC"))
+    )
+    async with async_conn() as conn:
+        rows = (await conn.execute(stmt)).fetchall()
     per_library = [
         {
-            "library_id": r["_id"],
-            "total": r["total"],
-            "ai_tagged": r["ai_tagged"],
+            "library_id": r.library_id,
+            "total": r.total,
+            "ai_tagged": int(r.ai_tagged),
         }
-        async for r in images.aggregate(pipeline)
+        for r in rows
     ]
     total = sum(r["total"] for r in per_library)
     ai_tagged = sum(r["ai_tagged"] for r in per_library)

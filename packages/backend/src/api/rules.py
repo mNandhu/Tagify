@@ -12,7 +12,11 @@ import time
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..database.motor import acol
+import sqlalchemy as sa
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+from ..database.db import async_conn, async_tx
+from ..database import schema as t
 from ..services import gen_metadata
 from ..services.image_tags import id_variants
 
@@ -28,10 +32,18 @@ class PreviewBody(BaseModel):
     fields: dict[str, list[str]] = {}
 
 
+def _ruleset_doc(sig: str, doc: dict) -> dict:
+    """Reconstruct the public ruleset shape (id + stored fields/updated_at)."""
+    return {"_id": sig, **(doc or {})}
+
+
 @router.get("")
 async def list_rulesets():
-    docs = await acol("gen_rulesets").find({}).to_list(length=10000)
-    return docs
+    async with async_conn() as conn:
+        rows = (
+            await conn.execute(sa.select(t.gen_rulesets.c.sig, t.gen_rulesets.c.doc))
+        ).fetchall()
+    return [_ruleset_doc(r.sig, r.doc) for r in rows]
 
 
 @router.get("/signatures")
@@ -39,61 +51,75 @@ async def list_signatures():
     """Workflow signatures seen in the library, with image counts, how many still
     need mapping, a sample image to author against, and whether a ruleset exists.
     Drives the authoring UI's signature picker."""
-    pipeline = [
-        {"$match": {"gen.workflow_sig": {"$ne": None}}},
+    needs = sa.case((t.images.c.gen_prompt.is_(None), 1), else_=0)
+    stmt = (
+        sa.select(
+            t.images.c.gen_workflow_sig.label("workflow_sig"),
+            sa.func.count().label("count"),
+            sa.func.sum(needs).label("needs_mapping"),
+            sa.func.max(t.images.c._id).label("sample_image_id"),
+        )
+        .where(t.images.c.gen_workflow_sig.isnot(None))
+        .group_by(t.images.c.gen_workflow_sig)
+        .order_by(sa.text("needs_mapping DESC"), sa.text("count DESC"))
+    )
+    async with async_conn() as conn:
+        rows = (await conn.execute(stmt)).fetchall()
+        mapped = {
+            r.sig
+            for r in (
+                await conn.execute(sa.select(t.gen_rulesets.c.sig))
+            ).fetchall()
+        }
+    return [
         {
-            "$group": {
-                "_id": "$gen.workflow_sig",
-                "count": {"$sum": 1},
-                "needs_mapping": {
-                    "$sum": {
-                        "$cond": [
-                            {"$eq": [{"$ifNull": ["$gen.prompt", None]}, None]},
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "sample_image_id": {"$first": "$_id"},
-            }
-        },
-        {"$sort": {"needs_mapping": -1, "count": -1}},
+            "workflow_sig": r.workflow_sig,
+            "count": r.count,
+            "needs_mapping": int(r.needs_mapping or 0),
+            "sample_image_id": r.sample_image_id,
+            "has_ruleset": r.workflow_sig in mapped,
+        }
+        for r in rows
     ]
-    rows = await acol("images").aggregate(pipeline).to_list(length=10000)
-    mapped = {
-        d["_id"]
-        for d in await acol("gen_rulesets").find({}, {"_id": 1}).to_list(length=10000)
-    }
-    for r in rows:
-        r["workflow_sig"] = r.pop("_id")
-        r["has_ruleset"] = r["workflow_sig"] in mapped
-    return rows
 
 
 @router.get("/{sig}")
 async def get_ruleset(sig: str):
-    doc = await acol("gen_rulesets").find_one({"_id": sig})
+    async with async_conn() as conn:
+        doc = (
+            await conn.execute(
+                sa.select(t.gen_rulesets.c.doc).where(t.gen_rulesets.c.sig == sig)
+            )
+        ).scalar()
     if not doc:
         # A signature with no ruleset yet — return an empty editable shell.
         return {"_id": sig, "fields": {}}
-    return doc
+    return _ruleset_doc(sig, doc)
 
 
 @router.put("/{sig}")
 async def put_ruleset(sig: str, body: RulesetBody):
     fields = gen_metadata.clean_rule_fields(body.fields)
-    doc = {"_id": sig, "fields": fields, "updated_at": time.time()}
-    await acol("gen_rulesets").replace_one({"_id": sig}, doc, upsert=True)
+    doc = {"fields": fields, "updated_at": time.time()}
+    async with async_tx() as conn:
+        stmt = sqlite_insert(t.gen_rulesets).values(sig=sig, doc=doc)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.gen_rulesets.c.sig], set_={"doc": stmt.excluded.doc}
+        )
+        await conn.execute(stmt)
     # Re-derive gen.* for every image of this signature (sig-global).
     from ..services.reproject import reproject_by_sig_async
 
     reproject_by_sig_async(sig)
-    return doc
+    return _ruleset_doc(sig, doc)
 
 
 @router.delete("/{sig}")
 async def delete_ruleset(sig: str):
-    await acol("gen_rulesets").delete_one({"_id": sig})
+    async with async_tx() as conn:
+        await conn.execute(
+            sa.delete(t.gen_rulesets).where(t.gen_rulesets.c.sig == sig)
+        )
     from ..services.reproject import reproject_by_sig_async
 
     reproject_by_sig_async(sig)
@@ -106,11 +132,18 @@ async def preview_ruleset(body: PreviewBody):
 
     Returns the final ``gen`` (== what reproject would write) plus per-path
     resolution so the UI can show whether each pin fired."""
-    raw = await acol("image_gen_raw").find_one({"_id": body.sample_image_id})
-    if not raw:
-        for alt in id_variants(body.sample_image_id):
-            raw = await acol("image_gen_raw").find_one({"_id": alt})
-            if raw:
+    async with async_conn() as conn:
+        raw = None
+        for candidate in (body.sample_image_id, *id_variants(body.sample_image_id)):
+            row = (
+                await conn.execute(
+                    sa.select(t.image_gen_raw.c.raw).where(
+                        t.image_gen_raw.c._id == candidate
+                    )
+                )
+            ).first()
+            if row is not None:
+                raw = row.raw
                 break
     if not raw:
         raise HTTPException(status_code=404, detail="No generation data for image")

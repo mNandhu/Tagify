@@ -3,7 +3,11 @@ import os
 from pathlib import Path
 from io import BytesIO
 from PIL import Image as PILImage
-from ..database.mongo import col
+import sqlalchemy as sa
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+from ..database.db import sync_conn, sync_tx
+from ..database import schema as t
 from . import image_tags
 from . import gen_metadata
 from .storage_fs import put_thumb
@@ -18,8 +22,6 @@ import threading
 from threading import Lock
 import time
 
-from pymongo import UpdateOne
-from pymongo.errors import AutoReconnect, NetworkTimeout, PyMongoError
 from ..core.config import settings
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
@@ -157,13 +159,67 @@ def image_id_for(library_id: str, root_path: Path, p: Path) -> str:
     return f"{library_id}:{p.relative_to(root_path)}"
 
 
-def upsert_image_op(doc: dict) -> UpdateOne:
-    """Upsert that refreshes file metadata but seeds tag-state only on insert."""
-    return UpdateOne(
-        {"_id": doc["_id"]},
-        {"$set": doc, "$setOnInsert": image_tags.initial_tag_fields()},
-        upsert=True,
+# File-metadata columns the scanner refreshes on every pass. Tag-state columns
+# (tags/has_*/quarantined/score) are seeded only on insert and left untouched on
+# conflict — the SQLite equivalent of the old `$setOnInsert`.
+_SCANNER_IMG_COLS = (
+    "library_id",
+    "path",
+    "size",
+    "width",
+    "height",
+    "ctime",
+    "mtime",
+    "thumb_key",
+    "blurhash",
+)
+
+
+def image_upsert_values(doc: dict) -> dict:
+    """Insert payload for one scanned image: file metadata + initial tag-state."""
+    return {**doc, **image_tags.initial_tag_fields()}
+
+
+def _image_upsert_stmt():
+    stmt = sqlite_insert(t.images)
+    return stmt.on_conflict_do_update(
+        index_elements=[t.images.c._id],
+        set_={c: stmt.excluded[c] for c in _SCANNER_IMG_COLS},
     )
+
+
+def _gen_raw_upsert_stmt():
+    stmt = sqlite_insert(t.image_gen_raw)
+    return stmt.on_conflict_do_update(
+        index_elements=[t.image_gen_raw.c._id],
+        set_={
+            "library_id": stmt.excluded.library_id,
+            "workflow_sig": stmt.excluded.workflow_sig,
+            "raw": stmt.excluded.raw,
+        },
+    )
+
+
+def _gen_raw_values(gen_raw_doc: dict) -> dict:
+    """Split the captured gen-raw doc into the cold-table row shape."""
+    meta = {"_id", "library_id", "workflow_sig"}
+    raw = {k: v for k, v in gen_raw_doc.items() if k not in meta}
+    return {
+        "_id": gen_raw_doc["_id"],
+        "library_id": gen_raw_doc["library_id"],
+        "workflow_sig": gen_raw_doc.get("workflow_sig"),
+        "raw": raw,
+    }
+
+
+def _lib_set(library_id: str, values: dict) -> None:
+    """Apply a small library-progress update in its own short write transaction."""
+    with sync_tx() as conn:
+        conn.execute(
+            sa.update(t.libraries)
+            .where(t.libraries.c._id == library_id)
+            .values(**values)
+        )
 
 
 def reconcile_stale(
@@ -276,7 +332,6 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
 def scan_library_async(library_id: str, root: str) -> dict:
     """Kick off a background multithreaded scan with progress. Returns status."""
     root_path = Path(root)
-    libraries = col("libraries")
     with _scan_lock:
         if library_id in _current_scans:
             return {"started": False, "status": "already_running"}
@@ -284,17 +339,15 @@ def scan_library_async(library_id: str, root: str) -> dict:
         _cancel_scans.discard(library_id)
 
     # Initialize progress fields
-    libraries.update_one(
-        {"_id": ObjectId_or_str(library_id)},
+    _lib_set(
+        library_id,
         {
-            "$set": {
-                "scanning": True,
-                "scan_total": 0,
-                "scan_done": 0,
-                "scan_error": None,
-                "scan_failed_count": 0,
-                "scan_failed_samples": [],
-            }
+            "scanning": True,
+            "scan_total": 0,
+            "scan_done": 0,
+            "scan_error": None,
+            "scan_failed_count": 0,
+            "scan_failed_samples": [],
         },
     )
 
@@ -326,10 +379,7 @@ def scan_library_async(library_id: str, root: str) -> dict:
                             # Best-effort; path math can fail on unusual inputs
                             pass
             total = len(files)
-            libraries.update_one(
-                {"_id": ObjectId_or_str(library_id)},
-                {"$set": {"scan_total": total, "scan_done": 0}},
-            )
+            _lib_set(library_id, {"scan_total": total, "scan_done": 0})
 
             with _scan_lock:
                 if library_id in _cancel_scans:
@@ -348,53 +398,35 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 settings.scan_progress_update_ms / 1000.0,
             )
             last_progress_write = time.monotonic()
-            mongo_ops: list[UpdateOne] = []
-            gen_raw_ops: list[UpdateOne] = []
+            image_rows: list[dict] = []
+            gen_raw_rows: list[dict] = []
             batch_size = 200
 
             def _flush_ops():
                 nonlocal indexed
-                # Flush raw generation docs alongside image docs (same batching;
-                # per-image writes would be 100k round trips on a big library).
-                if gen_raw_ops:
-                    raw_ops = list(gen_raw_ops)
-                    gen_raw_ops.clear()
-
-                    def _do_raw_bulk():
-                        return col("image_gen_raw").bulk_write(raw_ops, ordered=False)
-
-                    try:
-                        _retry(
-                            _do_raw_bulk,
-                            attempts=3,
-                            base_delay_s=0.2,
-                            retry_exceptions=(
-                                AutoReconnect,
-                                NetworkTimeout,
-                                PyMongoError,
-                            ),
-                        )
-                    except Exception:
-                        # Best-effort: raw metadata is re-derivable on rescan;
-                        # never fail the scan over it.
-                        pass
-
-                if not mongo_ops:
+                # One short write transaction per batch keeps the SQLite write lock
+                # held briefly so concurrent API writes aren't starved. Image rows
+                # and their raw-gen rows commit together.
+                if not image_rows and not gen_raw_rows:
                     return
+                imgs = list(image_rows)
+                raws = list(gen_raw_rows)
+                image_rows.clear()
+                gen_raw_rows.clear()
 
-                ops = list(mongo_ops)
-                mongo_ops.clear()
+                def _do_flush():
+                    with sync_tx() as conn:
+                        if raws:
+                            stmt = _gen_raw_upsert_stmt()
+                            for row in raws:
+                                conn.execute(stmt, row)
+                        if imgs:
+                            stmt = _image_upsert_stmt()
+                            for row in imgs:
+                                conn.execute(stmt, row)
 
-                def _do_bulk():
-                    return col("images").bulk_write(ops, ordered=False)
-
-                _retry(
-                    _do_bulk,
-                    attempts=3,
-                    base_delay_s=0.2,
-                    retry_exceptions=(AutoReconnect, NetworkTimeout, PyMongoError),
-                )
-                indexed += len(ops)
+                _retry(_do_flush, attempts=3, base_delay_s=0.2)
+                indexed += len(imgs)
 
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 # Avoid submitting all tasks at once (can balloon memory on huge libraries).
@@ -424,18 +456,14 @@ def scan_library_async(library_id: str, root: str) -> dict:
                         try:
                             res = fut.result()
                             if isinstance(res, _ScanResult) and res.ok and res.doc:
-                                mongo_ops.append(upsert_image_op(res.doc))
+                                image_rows.append(image_upsert_values(res.doc))
                                 if res.gen_raw_doc is not None:
-                                    gen_raw_ops.append(
-                                        UpdateOne(
-                                            {"_id": res.gen_raw_doc["_id"]},
-                                            {"$set": res.gen_raw_doc},
-                                            upsert=True,
-                                        )
+                                    gen_raw_rows.append(
+                                        _gen_raw_values(res.gen_raw_doc)
                                     )
 
                                 # Flush periodically to keep memory bounded
-                                if len(mongo_ops) >= batch_size:
+                                if len(image_rows) >= batch_size:
                                     _flush_ops()
                             else:
                                 failed += 1
@@ -458,14 +486,12 @@ def scan_library_async(library_id: str, root: str) -> dict:
                         now = time.monotonic()
                         if (now - last_progress_write) >= progress_interval_s:
                             last_progress_write = now
-                            libraries.update_one(
-                                {"_id": ObjectId_or_str(library_id)},
+                            _lib_set(
+                                library_id,
                                 {
-                                    "$set": {
-                                        "scan_done": processed,
-                                        "scan_failed_count": failed,
-                                        "scan_failed_samples": failed_samples,
-                                    }
+                                    "scan_done": processed,
+                                    "scan_failed_count": failed,
+                                    "scan_failed_samples": failed_samples,
                                 },
                             )
 
@@ -488,26 +514,34 @@ def scan_library_async(library_id: str, root: str) -> dict:
             _flush_ops()
 
             # Clean up stale images (images that exist in DB but weren't discovered in current scan)
-            images_col = col("images")
-            existing_docs = list(
-                images_col.find(
-                    {"library_id": library_id},
-                    {"_id": 1, "thumb_key": 1},
-                )
-            )
+            with sync_conn() as conn:
+                existing_docs = [
+                    {"_id": r._id, "thumb_key": r.thumb_key}
+                    for r in conn.execute(
+                        sa.select(t.images.c._id, t.images.c.thumb_key).where(
+                            t.images.c.library_id == library_id
+                        )
+                    ).fetchall()
+                ]
 
             stale_image_ids, stale_thumb_keys = reconcile_stale(
                 discovered_image_ids, existing_docs
             )
 
-            # Remove stale images from MongoDB
+            # Remove stale images (image_tags / image_gen_terms cascade via FK).
             if stale_image_ids:
-                images_col.delete_many({"_id": {"$in": stale_image_ids}})
-                # Drop their raw generation docs too, else they orphan forever.
-                try:
-                    col("image_gen_raw").delete_many({"_id": {"$in": stale_image_ids}})
-                except Exception:
-                    pass
+                with sync_tx() as conn:
+                    conn.execute(
+                        sa.delete(t.images).where(
+                            t.images.c._id.in_(stale_image_ids)
+                        )
+                    )
+                    # Drop their raw generation docs too, else they orphan forever.
+                    conn.execute(
+                        sa.delete(t.image_gen_raw).where(
+                            t.image_gen_raw.c._id.in_(stale_image_ids)
+                        )
+                    )
 
                 # Clean up corresponding thumbnail files on disk
                 if stale_thumb_keys:
@@ -521,17 +555,15 @@ def scan_library_async(library_id: str, root: str) -> dict:
                         pass
 
             # Finalize
-            libraries.update_one(
-                {"_id": ObjectId_or_str(library_id)},
+            _lib_set(
+                library_id,
                 {
-                    "$set": {
-                        "scanning": False,
-                        "scan_done": processed,
-                        "indexed_count": indexed,
-                        "last_scanned": datetime.utcnow(),
-                        "scan_failed_count": failed,
-                        "scan_failed_samples": failed_samples,
-                    }
+                    "scanning": False,
+                    "scan_done": processed,
+                    "indexed_count": indexed,
+                    "last_scanned": datetime.utcnow().isoformat(),
+                    "scan_failed_count": failed,
+                    "scan_failed_samples": failed_samples,
                 },
             )
 
@@ -547,21 +579,19 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 # it fail the scan.
                 pass
         except Exception as e:
-            libraries.update_one(
-                {"_id": ObjectId_or_str(library_id)},
-                {"$set": {"scanning": False, "scan_error": str(e)}},
-            )
+            _lib_set(library_id, {"scanning": False, "scan_error": str(e)})
         finally:
             with _scan_lock:
                 _current_scans.discard(library_id)
                 _cancel_scans.discard(library_id)
                 _scan_threads.pop(library_id, None)
 
-    # Start background thread
-    t = threading.Thread(target=_run, name=f"scan-{library_id}", daemon=True)
+    # Start background thread. NB: named `th` (not `t`) — `t` is the schema-table
+    # module alias used inside `_run`, and a local `t` here would shadow it.
+    th = threading.Thread(target=_run, name=f"scan-{library_id}", daemon=True)
     with _scan_lock:
-        _scan_threads[library_id] = t
-    t.start()
+        _scan_threads[library_id] = th
+    th.start()
     return {"started": True}
 
 
@@ -570,25 +600,15 @@ def cancel_scan(library_id: str, *, join_timeout_s: float = 0.5) -> bool:
 
     Returns True if a scan was running (cancellation requested), False otherwise.
     """
-    t: threading.Thread | None = None
+    th: threading.Thread | None = None
     with _scan_lock:
         running = library_id in _current_scans
         if not running:
             return False
         _cancel_scans.add(library_id)
-        t = _scan_threads.get(library_id)
+        th = _scan_threads.get(library_id)
 
     # Best-effort: give the scan thread a moment to notice cancellation.
-    if t is not None and t.is_alive():
-        t.join(timeout=max(0.0, float(join_timeout_s)))
+    if th is not None and th.is_alive():
+        th.join(timeout=max(0.0, float(join_timeout_s)))
     return True
-
-
-def ObjectId_or_str(id_str: str):
-    """Helper to use ObjectId if valid, else assume stored as string."""
-    try:
-        from bson.objectid import ObjectId
-
-        return ObjectId(id_str)
-    except Exception:
-        return id_str

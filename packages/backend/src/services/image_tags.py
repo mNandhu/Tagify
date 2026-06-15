@@ -1,8 +1,8 @@
-"""Image tag-state: the single owner of how tags live on an image document.
+"""Image tag-state: the single owner of how tags live on an image row.
 
 Conventions enforced here (and nowhere else):
 
-- ``tags`` holds three kinds of tag in one array:
+- ``tags`` is one ordered JSON array holding three kinds of tag:
     * AI tags     — primary, stored unprefixed (e.g. ``"1girl"``)
     * Manual tags — stored with a ``manual:`` prefix (e.g. ``"manual:favourite"``)
     * Prompt tags — extracted from generation prompts, stored with a ``prompt:``
@@ -13,35 +13,34 @@ Conventions enforced here (and nowhere else):
 - ``has_prompt_tags`` — True iff ``tags`` contains at least one ``prompt:`` tag.
 - ``rating``          — one of RATINGS; reset to ``"-"`` when AI tags are cleared.
 
-Every write that touches ``tags`` recomputes the three flags from the resulting
-array via :func:`_recompute_flags_stage`, so the booleans can never drift from the
-array they summarise. Callers hand the repo a high-level intent (apply manual /
-remove / replace AI / clear AI / replace prompt); they never assemble pipelines.
+Every write recomputes the three flags from the resulting array
+(:func:`recompute_flags`) and rebuilds this image's rows in the derived
+``image_tags`` join table — all inside one transaction, so the booleans and the
+index table can never drift from the array they summarise. Callers hand the repo a
+high-level intent (apply manual / remove / replace AI / clear AI / replace prompt);
+they never assemble SQL.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from ..database.motor import acol
+import sqlalchemy as sa
+from sqlalchemy import Connection
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+from ..database.db import async_conn, async_tx
+from ..database import schema as t
 
 MANUAL_PREFIX = "manual:"
 PROMPT_PREFIX = "prompt:"
-_PROMPT_REGEX = r"^prompt:"
-# Tags that are NOT AI tags: anything carrying a kind prefix. AI is the absence
-# of a prefix, so "is an AI tag" == "matches neither of these".
-_NON_AI_REGEX = r"^(manual|prompt):"
 
 # Canonical rating vocabulary used by the API, UI and AI tagger.
 RATINGS = ("-", "general", "sensitive", "questionable", "explicit")
 
 
 def initial_tag_fields() -> dict[str, Any]:
-    """Tag-state fields for a freshly indexed image (``$setOnInsert`` payload).
-
-    Seeds ``quarantined``/``score`` so the curation filters never have to cope
-    with a missing field (``{"$ne": True}`` still guards pre-existing docs).
-    """
+    """Tag-state column defaults for a freshly indexed image (insert payload)."""
     return {
         "tags": [],
         "has_tags": False,
@@ -73,11 +72,18 @@ def to_prompt(tag: str) -> str:
     return tag if is_prompt(tag) else f"{PROMPT_PREFIX}{tag}"
 
 
+def base_of(tag: str) -> str:
+    """Strip the kind prefix so the three sources of a tag share a ``base``."""
+    if is_manual(tag):
+        return tag[len(MANUAL_PREFIX) :]
+    if is_prompt(tag):
+        return tag[len(PROMPT_PREFIX) :]
+    return tag
+
+
 # Gallery-search sentinel: ``any:<base>`` is not a stored tag kind but a *query*
 # marker the gallery tag search emits. It means "match this text from any source"
-# (AI, manual or prompt). Same-text tags from different sources collapse into one
-# ``any:`` suggestion in the dropdown so the user sees a single "tag1" row instead
-# of three near-identical ones. Only the query builder interprets it.
+# (AI, manual or prompt). Only the query builder interprets it.
 ANY_PREFIX = "any:"
 
 
@@ -94,84 +100,40 @@ def any_variants(tag: str) -> list[str]:
 
 def expand_search_tag(tag: str) -> list[str]:
     """Tag ids a single selected search entry matches. An ``any:`` entry fans out
-    to all sources; any other entry matches itself exactly (source-specific deep
-    links stay precise)."""
+    to all sources; any other entry matches itself exactly."""
     return any_variants(tag) if is_any(tag) else [tag]
 
 
-def merged_tag_counts_pipeline() -> list[dict[str, Any]]:
-    """Aggregation that counts *distinct images* per cross-source base tag.
+def tag_match_groups(tags: list[str], logic: str) -> list[list[str]]:
+    """Translate selected search entries into AND-of-EXISTS groups for SQL.
 
-    Strips the manual:/prompt: prefix so the three sources of "cat" collapse to
-    one ``base``, then dedupes (base, image) before counting — so an image
-    carrying both ``manual:cat`` and ``prompt:cat`` counts once, not twice (the
-    naive per-occurrence sum the gallery used before over-counted). Emits
-    ``{_id: "<base>", count: <distinct images>}`` sorted by count; the caller
-    re-prefixes ``any:`` to match the search-tag expansion."""
-    strip_prefix = {
-        "$switch": {
-            "branches": [
-                {
-                    "case": {"$eq": [{"$indexOfBytes": ["$tags", MANUAL_PREFIX]}, 0]},
-                    "then": {
-                        "$substrBytes": [
-                            "$tags",
-                            len(MANUAL_PREFIX),
-                            {"$strLenBytes": "$tags"},
-                        ]
-                    },
-                },
-                {
-                    "case": {"$eq": [{"$indexOfBytes": ["$tags", PROMPT_PREFIX]}, 0]},
-                    "then": {
-                        "$substrBytes": [
-                            "$tags",
-                            len(PROMPT_PREFIX),
-                            {"$strLenBytes": "$tags"},
-                        ]
-                    },
-                },
-            ],
-            "default": "$tags",
-        }
-    }
-    return [
-        {"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": False}},
-        {"$project": {"base": strip_prefix}},
-        # Dedupe each image within a base before counting, so multi-source
-        # duplicates collapse to one distinct image.
-        {"$group": {"_id": {"base": "$base", "img": "$_id"}}},
-        {"$group": {"_id": "$_id.base", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-    ]
+    Each returned group is a list of acceptable tag ids; the caller requires the
+    image to carry at least one id from *every* group (one ``EXISTS`` per group,
+    all ANDed).
 
-
-def build_tags_match(tags: list[str], logic: str) -> dict:
-    """Mongo predicate for a list of selected search entries.
-
-    AND → every entry must be present, OR within each ``any:`` group:
-    ``{"$and": [{"tags": {"$in": [variants]}}, {"tags": exact}, ...]}``.
-    OR  → union of every entry's variants into one ``{"tags": {"$in": [...]}}``.
-
-    A single AND clause is returned unwrapped so callers can attach sibling
-    filter keys (``library_id``, ``quarantined``, cursor) by implicit AND."""
+    - OR  → a single group: the union of every entry's variants (one EXISTS, IN).
+    - AND → one group per entry (the image must satisfy each entry).
+    """
     if logic == "or":
         flat: list[str] = []
         seen: set[str] = set()
-        for t in tags:
-            for v in expand_search_tag(t):
+        for entry in tags:
+            for v in expand_search_tag(entry):
                 if v not in seen:
                     seen.add(v)
                     flat.append(v)
-        return {"tags": {"$in": flat}}
+        return [flat]
+    return [expand_search_tag(entry) for entry in tags]
 
-    clauses: list[dict] = []
-    for t in tags:
-        ids = expand_search_tag(t)
-        clauses.append({"tags": ids[0]} if len(ids) == 1 else {"tags": {"$in": ids}})
-    if len(clauses) == 1:
-        return clauses[0]
-    return {"$and": clauses}
+
+def excluded_prefixes(*, include_manual: bool, include_prompt: bool) -> list[str]:
+    """Tag prefixes the tag browser should hide. Default browse is AI-only."""
+    excluded: list[str] = []
+    if not include_manual:
+        excluded.append(MANUAL_PREFIX)
+    if not include_prompt:
+        excluded.append(PROMPT_PREFIX)
+    return excluded
 
 
 def normalize_rating(raw: str | None) -> str | None:
@@ -207,237 +169,226 @@ def id_variants(image_id: str) -> list[str]:
     return variants
 
 
-# --- Update-spec builders (pure) ----------------------------------------------
+# --- Tag-set transforms (pure) ------------------------------------------------
 #
-# Each returns an aggregation-pipeline update. They are plain data so their shape
-# is unit-testable without a database.
+# Replace the old Mongo aggregation-pipeline updates. Each takes the current tag
+# list and returns the next one; the flag recompute + join-table rebuild happen in
+# the repo layer below.
 
 
-def _recompute_flags_stage() -> dict[str, Any]:
-    """A ``$set`` stage deriving the three flags from the current ``$tags`` array.
+def recompute_flags(tags: list[str]) -> dict[str, bool]:
+    """Derive the three summary flags from a tag list.
 
-    ``has_ai_tags`` is "has a tag carrying no kind prefix" — neither ``manual:``
-    nor ``prompt:`` — so prompt tags never masquerade as AI tags.
+    ``has_ai_tags`` = "has a tag with no kind prefix" (neither manual nor prompt).
+    ``has_tags``    = "has a curatable tag" (any non-prompt tag).
     """
-    tags = {"$ifNull": ["$tags", []]}
     return {
-        "$set": {
-            # "has_tags" means "has a curatable tag" — a non-prompt tag (AI or
-            # manual). Prompt tags are reproject-owned, not curation, so a
-            # prompt-only image still reads as untagged (stays in the Untagged
-            # tile until it gets AI/manual tags). This keeps Untagged ⊂ AI-Untagged.
-            "has_tags": {
-                "$anyElementTrue": {
-                    "$map": {
-                        "input": tags,
-                        "as": "t",
-                        "in": {
-                            "$not": [
-                                {
-                                    "$regexMatch": {
-                                        "input": "$$t",
-                                        "regex": _PROMPT_REGEX,
-                                    }
-                                }
-                            ]
-                        },
-                    }
-                }
-            },
-            "has_ai_tags": {
-                "$anyElementTrue": {
-                    "$map": {
-                        "input": tags,
-                        "as": "t",
-                        "in": {
-                            "$not": [
-                                {
-                                    "$regexMatch": {
-                                        "input": "$$t",
-                                        "regex": _NON_AI_REGEX,
-                                    }
-                                }
-                            ]
-                        },
-                    }
-                }
-            },
-            "has_prompt_tags": {
-                "$anyElementTrue": {
-                    "$map": {
-                        "input": tags,
-                        "as": "t",
-                        "in": {"$regexMatch": {"input": "$$t", "regex": _PROMPT_REGEX}},
-                    }
-                }
-            },
-        }
+        "has_tags": any(not is_prompt(x) for x in tags),
+        "has_ai_tags": any(not is_manual(x) and not is_prompt(x) for x in tags),
+        "has_prompt_tags": any(is_prompt(x) for x in tags),
     }
 
 
-def apply_manual_pipeline(tags: list[str]) -> list[dict[str, Any]]:
-    """Add manual tags (union semantics; existing AI tags untouched)."""
-    manual = [to_manual(t) for t in tags]
-    return [
-        {"$set": {"tags": {"$setUnion": [{"$ifNull": ["$tags", []]}, manual]}}},
-        _recompute_flags_stage(),
-    ]
+def union_tags(existing: list[str], add: list[str]) -> list[str]:
+    """Append tags not already present, preserving existing order (dedup)."""
+    out = list(existing)
+    seen = set(existing)
+    for tag in add:
+        if tag not in seen:
+            seen.add(tag)
+            out.append(tag)
+    return out
 
 
-def remove_tags_pipeline(tags: list[str]) -> list[dict[str, Any]]:
-    """Remove the given tags (exact match, AI or manual) and resync flags."""
-    return [
-        {
-            "$set": {
-                "tags": {
-                    "$filter": {
-                        "input": {"$ifNull": ["$tags", []]},
-                        "as": "t",
-                        "cond": {"$not": [{"$in": ["$$t", tags]}]},
-                    }
-                }
-            }
-        },
-        _recompute_flags_stage(),
-    ]
+def without_tags(existing: list[str], remove: list[str]) -> list[str]:
+    drop = set(remove)
+    return [tag for tag in existing if tag not in drop]
 
 
-def replace_ai_pipeline(
-    *, ai_tags: list[str], ai_meta: dict[str, Any], rating: str
-) -> list[dict[str, Any]]:
-    """Replace AI tags with ``ai_tags``, preserving manual + prompt tags; set AI
-    meta+rating. Only the unprefixed (AI) tags are swapped out."""
-    return [
-        {
-            "$set": {
-                "ai": ai_meta,
-                "rating": rating,
-                "__keep_tags": {
-                    "$filter": {
-                        "input": {"$ifNull": ["$tags", []]},
-                        "as": "t",
-                        "cond": {
-                            "$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}
-                        },
-                    }
-                },
-            }
-        },
-        {"$set": {"tags": {"$concatArrays": ["$__keep_tags", ai_tags]}}},
-        _recompute_flags_stage(),
-        {"$unset": "__keep_tags"},
-    ]
+def with_replaced_ai(existing: list[str], ai_tags: list[str]) -> list[str]:
+    """Swap the unprefixed (AI) tags, keeping manual + prompt tags."""
+    keep = [tag for tag in existing if is_manual(tag) or is_prompt(tag)]
+    return keep + list(ai_tags)
 
 
-def replace_prompt_pipeline(prompt_tags: list[str]) -> list[dict[str, Any]]:
-    """Replace ``prompt:`` tags with ``prompt_tags``, preserving AI + manual tags.
-
-    Owned by reprojection (mirror of :func:`replace_ai_pipeline`). Re-runnable:
-    existing prompt tags are dropped and replaced, never appended. ``prompt_tags``
-    are already prefixed by the caller (see :func:`to_prompt`)."""
-    return [
-        {
-            "$set": {
-                "__keep_tags": {
-                    "$filter": {
-                        "input": {"$ifNull": ["$tags", []]},
-                        "as": "t",
-                        "cond": {
-                            "$not": [
-                                {
-                                    "$regexMatch": {
-                                        "input": "$$t",
-                                        "regex": _PROMPT_REGEX,
-                                    }
-                                }
-                            ]
-                        },
-                    }
-                },
-            }
-        },
-        {"$set": {"tags": {"$concatArrays": ["$__keep_tags", prompt_tags]}}},
-        _recompute_flags_stage(),
-        {"$unset": "__keep_tags"},
-    ]
+def with_replaced_prompt(existing: list[str], prompt_tags: list[str]) -> list[str]:
+    """Swap the ``prompt:`` tags, keeping AI + manual tags. ``prompt_tags`` are
+    already prefixed by the caller."""
+    keep = [tag for tag in existing if not is_prompt(tag)]
+    return keep + list(prompt_tags)
 
 
-def clear_ai_pipeline() -> list[dict[str, Any]]:
-    """Drop AI tags + AI meta from an image, keeping manual + prompt tags. Resets
-    rating."""
-    return [
-        {
-            "$set": {
-                "tags": {
-                    "$filter": {
-                        "input": {"$ifNull": ["$tags", []]},
-                        "as": "t",
-                        "cond": {
-                            "$regexMatch": {"input": "$$t", "regex": _NON_AI_REGEX}
-                        },
-                    }
-                },
-                "rating": "-",
-            }
-        },
-        _recompute_flags_stage(),
-        {"$unset": "ai"},
-    ]
+def with_cleared_ai(existing: list[str]) -> list[str]:
+    """Drop AI tags, keeping manual + prompt tags."""
+    return [tag for tag in existing if is_manual(tag) or is_prompt(tag)]
 
 
-def browse_exclude_match(
-    *, include_manual: bool = False, include_prompt: bool = False
-) -> dict[str, Any] | None:
-    """Match expression for the tag browser: exclude the kinds not opted into.
+def _tag_rows(image_id: str, tags: list[str]) -> list[dict[str, str]]:
+    """Derived ``image_tags`` rows for an image (deduped, with ``base``)."""
+    seen: set[str] = set()
+    rows: list[dict[str, str]] = []
+    for tag in tags:
+        if tag in seen:
+            continue
+        seen.add(tag)
+        rows.append({"image_id": image_id, "tag": tag, "base": base_of(tag)})
+    return rows
 
-    Default browse is AI-only (manual + prompt both excluded). Returns ``None``
-    when nothing is excluded (both kinds opted in), so callers can skip the stage.
+
+# --- Row → document reconstruction --------------------------------------------
+
+
+def row_to_doc(row: Any) -> dict[str, Any]:
+    """Reconstruct the public image document from a row mapping.
+
+    Drops the promoted ``gen_*`` helper columns (redundant with the ``gen`` JSON)
+    so the shape matches what the API returned under Mongo.
     """
-    excluded: list[str] = []
-    if not include_manual:
-        excluded.append("manual")
-    if not include_prompt:
-        excluded.append("prompt")
-    if not excluded:
-        return None
-    regex = rf"^({'|'.join(excluded)}):"
-    return {"tags": {"$not": {"$regex": regex}}}
+    doc = dict(row._mapping)
+    for helper in ("gen_model", "gen_workflow_sig", "gen_group_id", "gen_prompt"):
+        doc.pop(helper, None)
+    if doc.get("tags") is None:
+        doc["tags"] = []
+    return doc
 
 
 # --- Repository (I/O) ---------------------------------------------------------
 
 
-async def find_image(image_id: str, projection: dict | None = None):
-    """Look up an image by id, tolerating slash/backslash id variants."""
-    images = acol("images")
-    doc = await images.find_one({"_id": image_id}, projection)
-    if doc:
-        return doc
-    for alt in id_variants(image_id):
-        doc = await images.find_one({"_id": alt}, projection)
-        if doc:
-            return doc
+async def _resolve(conn: AsyncConnection, image_id: str) -> str | None:
+    """Return the stored ``_id`` matching ``image_id`` (slash/backslash tolerant)."""
+    for candidate in (image_id, *id_variants(image_id)):
+        found = (
+            await conn.execute(
+                sa.select(t.images.c._id).where(t.images.c._id == candidate)
+            )
+        ).scalar()
+        if found is not None:
+            return found
     return None
 
 
+async def find_image(image_id: str, projection: dict | None = None) -> dict | None:
+    """Look up an image by id, tolerating slash/backslash id variants.
+
+    ``projection`` is accepted for call-site compatibility but ignored — a single
+    row fetch is cheap, and callers only read a handful of fields.
+    """
+    async with async_conn() as conn:
+        for candidate in (image_id, *id_variants(image_id)):
+            row = (
+                await conn.execute(
+                    sa.select(t.images).where(t.images.c._id == candidate)
+                )
+            ).first()
+            if row is not None:
+                return row_to_doc(row)
+    return None
+
+
+async def _persist(
+    conn: AsyncConnection,
+    image_id: str,
+    new_tags: list[str],
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Write the tag array + recomputed flags + rebuilt join rows for one image."""
+    values: dict[str, Any] = {"tags": new_tags, **recompute_flags(new_tags)}
+    if extra:
+        values.update(extra)
+    await conn.execute(
+        sa.update(t.images).where(t.images.c._id == image_id).values(**values)
+    )
+    await conn.execute(
+        sa.delete(t.image_tags).where(t.image_tags.c.image_id == image_id)
+    )
+    rows = _tag_rows(image_id, new_tags)
+    if rows:
+        await conn.execute(sa.insert(t.image_tags), rows)
+
+
 async def apply_manual(image_id: str, tags: list[str]) -> None:
-    await acol("images").update_one({"_id": image_id}, apply_manual_pipeline(tags))
+    async with async_tx() as conn:
+        resolved = await _resolve(conn, image_id)
+        if resolved is None:
+            return
+        current = (
+            await conn.execute(
+                sa.select(t.images.c.tags).where(t.images.c._id == resolved)
+            )
+        ).scalar() or []
+        await _persist(conn, resolved, union_tags(current, [to_manual(x) for x in tags]))
 
 
 async def remove_tags(image_id: str, tags: list[str]) -> None:
-    await acol("images").update_one({"_id": image_id}, remove_tags_pipeline(tags))
+    async with async_tx() as conn:
+        resolved = await _resolve(conn, image_id)
+        if resolved is None:
+            return
+        current = (
+            await conn.execute(
+                sa.select(t.images.c.tags).where(t.images.c._id == resolved)
+            )
+        ).scalar() or []
+        await _persist(conn, resolved, without_tags(current, tags))
 
 
 async def replace_ai(
     image_id: str, *, ai_tags: list[str], ai_meta: dict[str, Any], rating: str
 ) -> None:
-    await acol("images").update_one(
-        {"_id": image_id},
-        replace_ai_pipeline(ai_tags=ai_tags, ai_meta=ai_meta, rating=rating),
-    )
+    async with async_tx() as conn:
+        resolved = await _resolve(conn, image_id)
+        if resolved is None:
+            return
+        current = (
+            await conn.execute(
+                sa.select(t.images.c.tags).where(t.images.c._id == resolved)
+            )
+        ).scalar() or []
+        await _persist(
+            conn,
+            resolved,
+            with_replaced_ai(current, ai_tags),
+            extra={"ai": ai_meta, "rating": rating},
+        )
 
 
 async def clear_ai_all() -> tuple[int, int]:
     """Clear AI tags across every image. Returns ``(matched, modified)``."""
-    res = await acol("images").update_many({}, clear_ai_pipeline())
-    return res.matched_count, res.modified_count
+    async with async_tx() as conn:
+        rows = (
+            await conn.execute(sa.select(t.images.c._id, t.images.c.tags))
+        ).fetchall()
+        matched = len(rows)
+        modified = 0
+        for row in rows:
+            current = row.tags or []
+            new = with_cleared_ai(current)
+            if new != current:
+                modified += 1
+            await _persist(conn, row._id, new, extra={"ai": None, "rating": "-"})
+        return matched, modified
+
+
+# --- Sync repo helpers (scanner / reproject threads) --------------------------
+
+
+def replace_prompt_sync(
+    conn: Connection, image_id: str, prompt_tags: list[str]
+) -> None:
+    """Replace ``prompt:`` tags on one image, operating on a caller-owned sync
+    transaction so reprojection can batch many images per commit."""
+    current = (
+        conn.execute(sa.select(t.images.c.tags).where(t.images.c._id == image_id))
+    ).scalar()
+    if current is None:
+        return
+    new_tags = with_replaced_prompt(current, prompt_tags)
+    values: dict[str, Any] = {"tags": new_tags, **recompute_flags(new_tags)}
+    conn.execute(
+        sa.update(t.images).where(t.images.c._id == image_id).values(**values)
+    )
+    conn.execute(sa.delete(t.image_tags).where(t.image_tags.c.image_id == image_id))
+    rows = _tag_rows(image_id, new_tags)
+    if rows:
+        conn.execute(sa.insert(t.image_tags), rows)

@@ -12,13 +12,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    mongo_uri: str = "mongodb://localhost:27017"
     ai_tagging_url: str = ""
 
-    mongo_max_pool_size: int = 100
-    mongo_min_pool_size: int = 0
-    mongo_server_selection_timeout_ms: int = 5000
-    mongo_connect_timeout_ms: int = 5000
+    # SQLite database file. Relative values resolve against the repo root (NOT the
+    # process cwd), mirroring `thumb_root`, so the DB lands at `<repo>/data/tagify.db`
+    # regardless of where uvicorn is started.
+    sqlite_path: str = "./data/tagify.db"
+    # How long a blocked writer waits for SQLite's file lock before erroring
+    # (SQLITE_BUSY). WAL + short scanner transactions keep contention rare.
+    sqlite_busy_timeout_ms: int = 5000
 
     # Local filesystem root for generated thumbnails. Must be a persistent
     # volume, kept outside library trees. Keys are `{library_id}/{image_id}.webp`.
@@ -42,6 +44,13 @@ class Settings(BaseSettings):
         """Absolute thumbnail root. Relative `thumb_root` anchors to the repo
         root so the location doesn't depend on the process working directory."""
         p = Path(self.thumb_root)
+        return p if p.is_absolute() else (_REPO_ROOT / p)
+
+    @property
+    def sqlite_file(self) -> Path:
+        """Absolute SQLite file path. Relative `sqlite_path` anchors to the repo
+        root so the location doesn't depend on the process working directory."""
+        p = Path(self.sqlite_path)
         return p if p.is_absolute() else (_REPO_ROOT / p)
 
 

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from .api import libraries, images, tags, ai, rules
-from .database.motor import acol, ensure_indexes_async
+from .database.db import ensure_schema
 from .core.config import settings
 from .services.storage_fs import ensure_thumb_root
 from .services.ai_jobs import get_ai_job_manager, get_ai_settings
@@ -20,25 +20,11 @@ logger = logging.getLogger("tagify")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Ensure required MongoDB indexes exist
-    await ensure_indexes_async()
+    # Startup: create the SQLite schema (tables + indexes) if absent. Declarative
+    # DDL means no flag backfill is needed — columns carry their defaults.
+    await ensure_schema()
     # Ensure the thumbnail root dir exists (run off the event loop)
     await anyio.to_thread.run_sync(ensure_thumb_root)  # type: ignore[attr-defined]
-
-    # Backfill fields introduced after initial releases.
-    # This keeps filters like `no_ai_tags=1` working for older DBs.
-    try:
-        await acol("images").update_many(
-            {"has_ai_tags": {"$exists": False}}, {"$set": {"has_ai_tags": False}}
-        )
-        # `has_prompt_tags` (third tag-kind axis) ships after `has_ai_tags`; seed
-        # it false on older docs so browse/filters never hit a missing field.
-        await acol("images").update_many(
-            {"has_prompt_tags": {"$exists": False}},
-            {"$set": {"has_prompt_tags": False}},
-        )
-    except Exception:
-        logger.exception("Failed to backfill image tag-state flags during startup")
 
     # Start internal AI job worker
     jm = get_ai_job_manager()

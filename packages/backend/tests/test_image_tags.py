@@ -1,8 +1,9 @@
 """Unit tests for the Image tag-state invariant.
 
-These exercise the pure builders/helpers in ``services.image_tags`` — the single
-owner of the manual-prefix convention and the has_tags/has_ai_tags recompute — so
-the invariant has a test surface that needs no database.
+These exercise the pure helpers/transforms in ``services.image_tags`` — the single
+owner of the manual-prefix convention and the has_tags/has_ai_tags/has_prompt_tags
+recompute — so the invariant has a test surface that needs no database. The
+transactional repo writes are covered separately by the DB integration tests.
 """
 
 from src.services import image_tags as it
@@ -32,6 +33,12 @@ def test_is_prompt():
     assert not it.is_prompt("manual:fav")
 
 
+def test_base_of_strips_kind_prefix():
+    assert it.base_of("cat") == "cat"
+    assert it.base_of("manual:cat") == "cat"
+    assert it.base_of("prompt:cat") == "cat"
+
+
 # --- any-source search sentinel ----------------------------------------------
 
 
@@ -48,57 +55,133 @@ def test_expand_search_tag_exact_stays_precise():
     assert it.expand_search_tag("any:cat") == ["cat", "manual:cat", "prompt:cat"]
 
 
-def test_build_tags_match_single_any_unwrapped():
-    # One any: entry → a single $in, no $and wrapper, so sibling keys attach.
-    assert it.build_tags_match(["any:cat"], "and") == {
-        "tags": {"$in": ["cat", "manual:cat", "prompt:cat"]}
+# --- tag_match_groups: AND-of-EXISTS translation for SQL ----------------------
+
+
+def test_tag_match_groups_single_any():
+    # One group whose ids are the any: fan-out.
+    assert it.tag_match_groups(["any:cat"], "and") == [
+        ["cat", "manual:cat", "prompt:cat"]
+    ]
+
+
+def test_tag_match_groups_single_exact():
+    assert it.tag_match_groups(["prompt:cat"], "and") == [["prompt:cat"]]
+
+
+def test_tag_match_groups_two_entries_and_logic():
+    # AND across groups (one group per entry), OR within each group.
+    assert it.tag_match_groups(["any:cat", "any:dog"], "and") == [
+        ["cat", "manual:cat", "prompt:cat"],
+        ["dog", "manual:dog", "prompt:dog"],
+    ]
+
+
+def test_tag_match_groups_mixed_exact_and_any():
+    assert it.tag_match_groups(["any:cat", "prompt:dog"], "and") == [
+        ["cat", "manual:cat", "prompt:cat"],
+        ["prompt:dog"],
+    ]
+
+
+def test_tag_match_groups_or_logic_unions_into_one_group_deduped():
+    # OR flattens every variant into one group; overlapping ids dedupe, order kept.
+    assert it.tag_match_groups(["any:cat", "cat"], "or") == [
+        ["cat", "manual:cat", "prompt:cat"]
+    ]
+
+
+def test_excluded_prefixes_per_kind():
+    # AI-only default excludes both prefixes.
+    assert it.excluded_prefixes(include_manual=False, include_prompt=False) == [
+        "manual:",
+        "prompt:",
+    ]
+    assert it.excluded_prefixes(include_manual=True, include_prompt=False) == [
+        "prompt:"
+    ]
+    assert it.excluded_prefixes(include_manual=False, include_prompt=True) == [
+        "manual:"
+    ]
+    assert it.excluded_prefixes(include_manual=True, include_prompt=True) == []
+
+
+# --- flag recompute ----------------------------------------------------------
+
+
+def test_recompute_flags_axes():
+    # AI tag: all three? has_tags + has_ai_tags, not prompt.
+    assert it.recompute_flags(["1girl"]) == {
+        "has_tags": True,
+        "has_ai_tags": True,
+        "has_prompt_tags": False,
+    }
+    # Manual only: curatable but not AI.
+    assert it.recompute_flags(["manual:fav"]) == {
+        "has_tags": True,
+        "has_ai_tags": False,
+        "has_prompt_tags": False,
+    }
+    # Prompt only: NOT curatable (stays in Untagged tile), not AI.
+    assert it.recompute_flags(["prompt:masterpiece"]) == {
+        "has_tags": False,
+        "has_ai_tags": False,
+        "has_prompt_tags": True,
+    }
+    assert it.recompute_flags([]) == {
+        "has_tags": False,
+        "has_ai_tags": False,
+        "has_prompt_tags": False,
     }
 
 
-def test_build_tags_match_single_exact_unwrapped():
-    assert it.build_tags_match(["prompt:cat"], "and") == {"tags": "prompt:cat"}
+# --- pure tag-set transforms (replace the old Mongo pipelines) ----------------
 
 
-def test_build_tags_match_two_any_and_logic():
-    # AND across groups, OR within each group.
-    assert it.build_tags_match(["any:cat", "any:dog"], "and") == {
-        "$and": [
-            {"tags": {"$in": ["cat", "manual:cat", "prompt:cat"]}},
-            {"tags": {"$in": ["dog", "manual:dog", "prompt:dog"]}},
-        ]
-    }
+def test_union_tags_appends_new_preserves_order_dedupes():
+    assert it.union_tags(["a", "b"], ["b", "manual:fav"]) == ["a", "b", "manual:fav"]
 
 
-def test_build_tags_match_mixed_exact_and_any():
-    assert it.build_tags_match(["any:cat", "prompt:dog"], "and") == {
-        "$and": [
-            {"tags": {"$in": ["cat", "manual:cat", "prompt:cat"]}},
-            {"tags": "prompt:dog"},
-        ]
-    }
+def test_without_tags_exact_match():
+    assert it.without_tags(["cat", "manual:fav", "dog"], ["cat", "manual:fav"]) == [
+        "dog"
+    ]
 
 
-def test_build_tags_match_or_logic_unions_and_dedupes():
-    # OR flattens every variant into one $in; overlapping ids dedupe, order kept.
-    assert it.build_tags_match(["any:cat", "cat"], "or") == {
-        "tags": {"$in": ["cat", "manual:cat", "prompt:cat"]}
-    }
+def test_with_replaced_ai_keeps_manual_and_prompt():
+    existing = ["old_ai", "manual:fav", "prompt:masterpiece"]
+    assert it.with_replaced_ai(existing, ["1girl", "solo"]) == [
+        "manual:fav",
+        "prompt:masterpiece",
+        "1girl",
+        "solo",
+    ]
 
 
-def test_merged_tag_counts_pipeline_dedupes_per_image():
-    # The merge count must be distinct images, not tag occurrences: a per-image
-    # dedupe group ({base, img}) must precede the per-base count group. Without
-    # it an image tagged manual:cat + prompt:cat would count twice.
-    p = it.merged_tag_counts_pipeline()
-    group_keys = [s["$group"]["_id"] for s in p if "$group" in s]
-    assert {"base": "$base", "img": "$_id"} in group_keys
-    assert "$_id.base" in group_keys
-    # dedupe-by-image precedes count-by-base.
-    assert group_keys.index({"base": "$base", "img": "$_id"}) < group_keys.index(
-        "$_id.base"
-    )
-    # Sorted by count so the dropdown leads with the most-used tags.
-    assert p[-1] == {"$sort": {"count": -1}}
+def test_with_replaced_prompt_keeps_ai_and_manual():
+    existing = ["1girl", "manual:fav", "prompt:old"]
+    assert it.with_replaced_prompt(existing, ["prompt:new1", "prompt:new2"]) == [
+        "1girl",
+        "manual:fav",
+        "prompt:new1",
+        "prompt:new2",
+    ]
+
+
+def test_with_cleared_ai_keeps_non_ai():
+    assert it.with_cleared_ai(["1girl", "solo", "manual:fav", "prompt:x"]) == [
+        "manual:fav",
+        "prompt:x",
+    ]
+
+
+def test_tag_rows_dedupes_and_sets_base():
+    rows = it._tag_rows("img1", ["cat", "cat", "manual:fav", "prompt:m"])
+    assert rows == [
+        {"image_id": "img1", "tag": "cat", "base": "cat"},
+        {"image_id": "img1", "tag": "manual:fav", "base": "fav"},
+        {"image_id": "img1", "tag": "prompt:m", "base": "m"},
+    ]
 
 
 # --- rating normalization ----------------------------------------------------
@@ -128,107 +211,3 @@ def test_id_variants_swaps_separators():
 
 def test_id_variants_excludes_primary_when_no_separator():
     assert it.id_variants("lib:flat") == []
-
-
-# --- update pipelines: every tag-mutating build recomputes both flags --------
-
-
-def _flags_stage(pipeline):
-    """Return the $set stage that recomputes has_tags/has_ai_tags, if present."""
-    for stage in pipeline:
-        keys = stage.get("$set", {})
-        if "has_tags" in keys and "has_ai_tags" in keys:
-            return keys
-    return None
-
-
-def test_apply_manual_unions_and_recomputes_flags():
-    pipe = it.apply_manual_pipeline(["fav", "manual:keep"])
-    # tags stage uses setUnion with manualized inputs
-    set_tags = pipe[0]["$set"]["tags"]
-    assert set_tags["$setUnion"][1] == ["manual:fav", "manual:keep"]
-    assert _flags_stage(pipe) is not None
-
-
-def test_remove_filters_and_recomputes_flags():
-    pipe = it.remove_tags_pipeline(["cat", "manual:fav"])
-    cond = pipe[0]["$set"]["tags"]["$filter"]["cond"]
-    assert cond == {"$not": [{"$in": ["$$t", ["cat", "manual:fav"]]}]}
-    assert _flags_stage(pipe) is not None
-
-
-def test_replace_ai_preserves_non_ai_tags_and_recomputes_flags():
-    meta = {"model_repo": "x", "updated_at": 0}
-    pipe = it.replace_ai_pipeline(ai_tags=["1girl"], ai_meta=meta, rating="general")
-    # Non-AI tags (manual AND prompt) are kept, then concatenated with new AI tags.
-    assert pipe[0]["$set"]["ai"] == meta
-    assert pipe[0]["$set"]["rating"] == "general"
-    assert pipe[0]["$set"]["__keep_tags"]["$filter"]["cond"] == {
-        "$regexMatch": {"input": "$$t", "regex": "^(manual|prompt):"}
-    }
-    assert pipe[1]["$set"]["tags"] == {"$concatArrays": ["$__keep_tags", ["1girl"]]}
-    assert _flags_stage(pipe) is not None
-    assert pipe[-1] == {"$unset": "__keep_tags"}
-
-
-def test_replace_prompt_keeps_ai_and_manual_and_recomputes_flags():
-    pipe = it.replace_prompt_pipeline(["prompt:masterpiece", "prompt:1girl"])
-    # Everything that is NOT a prompt tag (AI + manual) is preserved.
-    assert pipe[0]["$set"]["__keep_tags"]["$filter"]["cond"] == {
-        "$not": [{"$regexMatch": {"input": "$$t", "regex": "^prompt:"}}]
-    }
-    assert pipe[1]["$set"]["tags"] == {
-        "$concatArrays": ["$__keep_tags", ["prompt:masterpiece", "prompt:1girl"]]
-    }
-    assert _flags_stage(pipe) is not None
-    assert pipe[-1] == {"$unset": "__keep_tags"}
-
-
-def test_clear_ai_keeps_non_ai_resets_rating_and_recomputes_flags():
-    pipe = it.clear_ai_pipeline()
-    set0 = pipe[0]["$set"]
-    assert set0["rating"] == "-"
-    # tags reduced to non-AI (manual + prompt) only
-    assert set0["tags"]["$filter"]["cond"] == {
-        "$regexMatch": {"input": "$$t", "regex": "^(manual|prompt):"}
-    }
-    assert _flags_stage(pipe) is not None
-    assert {"$unset": "ai"} in pipe
-
-
-def test_recompute_flags_stage_has_prompt_axis():
-    keys = it._recompute_flags_stage()["$set"]
-    assert "has_prompt_tags" in keys
-    # AI = neither manual nor prompt.
-    ai_in = keys["has_ai_tags"]["$anyElementTrue"]["$map"]["in"]
-    assert ai_in == {
-        "$not": [{"$regexMatch": {"input": "$$t", "regex": "^(manual|prompt):"}}]
-    }
-
-
-def test_has_tags_excludes_prompt_only_so_untagged_tile_holds():
-    # has_tags must mean "has a curatable (non-prompt) tag", else prompt-only
-    # images (fresh AI art, post-reproject) would vanish from the Untagged tile.
-    has_tags_in = it._recompute_flags_stage()["$set"]["has_tags"]["$anyElementTrue"][
-        "$map"
-    ]["in"]
-    assert has_tags_in == {
-        "$not": [{"$regexMatch": {"input": "$$t", "regex": "^prompt:"}}]
-    }
-
-
-def test_browse_exclude_match_per_kind():
-    # AI-only default: exclude both prefixes.
-    assert it.browse_exclude_match() == {
-        "tags": {"$not": {"$regex": "^(manual|prompt):"}}
-    }
-    # Manual opted in: only prompt excluded.
-    assert it.browse_exclude_match(include_manual=True) == {
-        "tags": {"$not": {"$regex": "^(prompt):"}}
-    }
-    # Prompt opted in: only manual excluded.
-    assert it.browse_exclude_match(include_prompt=True) == {
-        "tags": {"$not": {"$regex": "^(manual):"}}
-    }
-    # Both opted in: no filter.
-    assert it.browse_exclude_match(include_manual=True, include_prompt=True) is None

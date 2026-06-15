@@ -7,8 +7,8 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi[standard]",
   "uvicorn",
-  "motor",
-  "pymongo",
+  "sqlalchemy>=2.0",
+  "aiosqlite",
   "pillow",
   "python-dotenv",
   "httpx",
