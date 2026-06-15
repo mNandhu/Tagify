@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from .api import libraries, images, tags, ai, rules
 from .database.motor import acol, ensure_indexes_async
 from .core.config import settings
-from .services.storage_minio import ensure_buckets
+from .services.storage_fs import ensure_thumb_root
 from .services.ai_jobs import get_ai_job_manager, get_ai_settings
 from .services.ai_tagger import get_tagger_manager
 
@@ -22,8 +22,8 @@ logger = logging.getLogger("tagify")
 async def lifespan(app: FastAPI):
     # Startup: Ensure required MongoDB indexes exist
     await ensure_indexes_async()
-    # Ensure MinIO buckets exist (run off the event loop)
-    await anyio.to_thread.run_sync(ensure_buckets)  # type: ignore[attr-defined]
+    # Ensure the thumbnail root dir exists (run off the event loop)
+    await anyio.to_thread.run_sync(ensure_thumb_root)  # type: ignore[attr-defined]
 
     # Backfill fields introduced after initial releases.
     # This keeps filters like `no_ai_tags=1` working for older DBs.
@@ -75,7 +75,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static thumbnails mount removed; images served via API backed by MinIO
+# Static thumbnails mount removed; thumbnails served via API from the FS (THUMB_ROOT)
 
 
 _rl_state: dict[tuple[str, str], tuple[float, int]] = {}
@@ -132,6 +132,12 @@ def health():
 
 
 # Include routers (placeholders for now)
+# TODO(nginx): group all API routes under a common `/api/v1` prefix so a reverse
+# proxy can route media vs. JSON cleanly (e.g. a dedicated `location ~ ^/api/v1/
+# images/.+/file$` for Range/originals, separate from the small-thumb traffic).
+# Today routes mount at bare prefixes (/images, /tags, ...) and the Vite dev
+# proxy strips `/api`; unifying on `/api/v1` removes that asymmetry. Coordinate
+# the frontend base URL + Vite proxy when implementing. Deferred.
 app.include_router(libraries.router, prefix="/libraries", tags=["libraries"])
 app.include_router(images.router, prefix="/images", tags=["images"])
 app.include_router(tags.router, prefix="/tags", tags=["tags"])

@@ -220,9 +220,9 @@ export function ImageThumbnail({
         setAssignedSrc(srcAtEnqueue);
         return;
       }
-      // Resolve the real media URL only now (lazy): in presigned-`url` mode
-      // this is a network call, so deferring it to load-time avoids firing one
-      // request per offscreen tile.
+      // Resolve the real media URL only now (lazy). With FS-backed media this is
+      // a passthrough; the deferral is kept cheap and future-proof for any mode
+      // that needs a per-tile network resolve.
       resolveMediaUrl(srcAtEnqueue)
         .then((u) => {
           if (!mountedRef.current || currentSlotTokenRef.current !== token) {

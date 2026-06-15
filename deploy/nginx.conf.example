@@ -1,0 +1,77 @@
+# Example nginx reverse proxy for a self-hosted Tagify deployment.
+#
+# Tagify serves BOTH thumbnails and originals through the FastAPI backend, so a
+# single upstream (the API) is all nginx needs to proxy. Copy/adapt this into
+# your sites-available, point the cert paths at your certs, and reload nginx.
+#
+# Notes on the two media shapes:
+#   - Thumbnails: many small WebP files under one root (THUMB_ROOT). Buffering ON
+#     (the default) is fine and efficient for these.
+#   - Originals: arbitrary absolute paths (library roots can be anywhere on disk).
+#     Served via FileResponse with Range support — give them an unbuffered block
+#     so 206/seek pass straight through.
+
+server {
+    listen 80;
+    server_name tagify.example.com;
+    # Redirect everything to HTTPS.
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name tagify.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/tagify.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tagify.example.com/privkey.pem;
+
+    # Built SPA (output of `pnpm -C packages/frontend build`).
+    root /srv/tagify/frontend/dist;
+    index index.html;
+
+    # SPA routing: serve files if present, else fall back to index.html.
+    location / {
+        try_files $uri /index.html;
+    }
+
+    # IMPORTANT: the backend mounts routes at BARE prefixes (/images, /tags, ...);
+    # the frontend calls them under `/api/*` and the Vite dev proxy strips `/api`.
+    # In production nginx must strip `/api` too, so every proxied block below uses
+    # `rewrite ^/api/(.*)$ /$1 break;`. (For the regex `location` block this rewrite
+    # is mandatory — `proxy_pass` there cannot carry a rewritten URI on its own.)
+    # Once routes are grouped under `/api/v1` (see the TODO in
+    # packages/backend/src/main.py) these rewrites can be dropped.
+
+    # Originals: arbitrary disk paths → proxy through the API. Own block so large
+    # files and Range requests stream unbuffered.
+    location ~ ^/api/images/.+/file$ {
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;          # stream / Range-friendly
+    }
+
+    # All other API routes (JSON + the many small thumbnails). Buffering ON.
+    location /api/ {
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # OPTIONAL scale win — offload thumbnails from Python via X-Accel-Redirect.
+    # Only thumbnails qualify cleanly (single known root). Enable the backend to
+    # emit `X-Accel-Redirect: /_thumbs/{key}` instead of FileResponse, then:
+    # location /_thumbs/ {
+    #     internal;
+    #     alias /srv/tagify/data/thumbs/;   # == THUMB_ROOT
+    # }
+}

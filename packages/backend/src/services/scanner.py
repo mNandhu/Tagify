@@ -6,7 +6,7 @@ from PIL import Image as PILImage
 from ..database.mongo import col
 from . import image_tags
 from . import gen_metadata
-from .storage_minio import put_thumb
+from .storage_fs import put_thumb
 from .blurhash import blurhash_for_image
 import hashlib
 import mimetypes
@@ -205,7 +205,7 @@ class _ScanResult:
 def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
     """Process a single image file.
 
-    This function performs file inspection + thumbnail upload to MinIO.
+    This function performs file inspection + thumbnail write to the FS.
     Mongo writes are performed in batches by the scan coordinator thread.
     Originals are served directly from the filesystem (Local Mount mode).
     """
@@ -336,7 +336,7 @@ def scan_library_async(library_id: str, root: str) -> dict:
                     raise RuntimeError("cancelled")
 
             # Multithreaded processing (cap via config if provided)
-            # Scanning is I/O + CPU heavy and competes with API traffic and Mongo/MinIO pools,
+            # Scanning is I/O + CPU heavy and competes with API traffic and the Mongo pool,
             # so keep auto-concurrency conservative.
             default_workers = max(2, min(16, (cpu_count() or 4)))
             cap = settings.scanner_max_workers
@@ -509,21 +509,15 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 except Exception:
                     pass
 
-                # Clean up corresponding MinIO thumbnail objects
+                # Clean up corresponding thumbnail files on disk
                 if stale_thumb_keys:
                     try:
-                        from minio.deleteobjects import DeleteObject
-                        from .storage_minio import get_minio
+                        from .storage_fs import delete_thumb
 
-                        client = get_minio()
-                        delete_list = [DeleteObject(key) for key in stale_thumb_keys]
-                        for err in client.remove_objects(
-                            settings.minio_bucket_thumbs, delete_list
-                        ):
-                            _ = err
-
+                        for key in stale_thumb_keys:
+                            delete_thumb(key)
                     except Exception:
-                        # Best effort cleanup - don't fail the scan if MinIO cleanup fails
+                        # Best effort cleanup - don't fail the scan if it fails
                         pass
 
             # Finalize

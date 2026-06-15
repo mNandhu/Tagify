@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_ROOT = Path(__file__).parent.parent.parent  # packages/backend/
@@ -21,20 +20,11 @@ class Settings(BaseSettings):
     mongo_server_selection_timeout_ms: int = 5000
     mongo_connect_timeout_ms: int = 5000
 
-    minio_endpoint: str = "127.0.0.1:9000"
-    minio_access_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("MINIO_ACCESS_KEY", "MINIO_ROOT_USER"),
-    )
-    minio_secret_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("MINIO_SECRET_KEY", "MINIO_ROOT_PASSWORD"),
-    )
-    minio_secure: bool = False
-    minio_bucket_thumbs: str = "tagify-thumbs"
-    minio_region: str = "us-east-1"
-
-    media_public_minio_endpoint: str = ""
+    # Local filesystem root for generated thumbnails. Must be a persistent
+    # volume, kept outside library trees. Keys are `{library_id}/{image_id}.webp`.
+    # A relative value is resolved against the repo root (NOT the process cwd),
+    # so it lands at `<repo>/data/thumbs` regardless of where uvicorn is started.
+    thumb_root: str = "./data/thumbs"
 
     scanner_max_workers: int = 0
     scan_progress_update_ms: int = 500
@@ -42,13 +32,17 @@ class Settings(BaseSettings):
     thumb_max_size: int = 1080
     thumb_format: str = "webp"
 
-    media_presigned_mode: str = "redirect"
-    media_presigned_expires: int = 3600
-
     log_slow_requests_ms: int = 1000
 
     rate_limit_enabled: bool = False
     rate_limit_rescan_per_minute: int = 1
+
+    @property
+    def thumb_root_path(self) -> Path:
+        """Absolute thumbnail root. Relative `thumb_root` anchors to the repo
+        root so the location doesn't depend on the process working directory."""
+        p = Path(self.thumb_root)
+        return p if p.is_absolute() else (_REPO_ROOT / p)
 
 
 settings = Settings()

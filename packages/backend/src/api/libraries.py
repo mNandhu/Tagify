@@ -8,7 +8,7 @@ from ..services.scanner import cancel_scan, scan_library_async
 
 from ._utils import parse_object_id
 
-from ..services.storage_minio import delete_by_prefix
+from ..services.storage_fs import delete_by_prefix
 
 router = APIRouter()
 
@@ -71,7 +71,7 @@ async def remove_library(library_id: str):
     await images.delete_many({"library_id": library_id})
     # Drop the library's raw generation docs too (else they orphan).
     await acol("image_gen_raw").delete_many({"library_id": library_id})
-    # remove MinIO objects for this library
+    # remove thumbnail files for this library
     try:
         await anyio.to_thread.run_sync(lambda: delete_by_prefix(f"{library_id}/"))  # type: ignore[attr-defined]
     except Exception:

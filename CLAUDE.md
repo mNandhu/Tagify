@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Tagify is a pnpm monorepo for organizing AI-generated images. FastAPI backend (Python 3.11+, MongoDB for metadata, MinIO for blob storage, WD ONNX model for AI tagging) + Vite/React/TypeScript frontend. Frontend talks to backend via REST; the Vite dev server proxies `/api/*` → `http://127.0.0.1:8000` (stripping `/api`).
+Tagify is a pnpm monorepo for organizing AI-generated images. FastAPI backend (Python 3.11+, MongoDB for metadata, local filesystem for thumbnail + original storage, WD ONNX model for AI tagging) + Vite/React/TypeScript frontend. Frontend talks to backend via REST; the Vite dev server proxies `/api/*` → `http://127.0.0.1:8000` (stripping `/api`).
 
 ## Commands
 
@@ -12,7 +12,7 @@ Run from repo root unless noted.
 
 ```bash
 pnpm install                 # install frontend deps (backend uses uv, see below)
-docker compose -f docker-compose.dev.yml up -d   # start MongoDB + MinIO deps
+docker compose -f docker-compose.dev.yml up -d   # start MongoDB dep
 pnpm dev                     # backend (uvicorn :8000, --reload) + frontend (vite :5173) together
 pnpm perf                    # backend perf benchmark
 
@@ -29,7 +29,7 @@ pnpm -C packages/frontend test src/lib/fuzzy.test.ts   # single test file
 pnpm -C packages/frontend build   # tsc -b && vite build
 ```
 
-Backend needs `packages/backend/.env` (MONGO_URI, MINIO_*, MEDIA_PRESIGNED_MODE). Settings load from repo-root `.env` then `packages/backend/.env` (`src/core/config.py`). CI (`.github/workflows/ci.yml`) runs the full stack via `docker-compose.ci.yml` and exercises scan + media endpoints with curl — there is no unit-test step in CI.
+Backend needs `packages/backend/.env` (MONGO_URI, optional THUMB_ROOT — defaults to `<repo>/data/thumbs`). Settings load from repo-root `.env` then `packages/backend/.env` (`src/core/config.py`). CI (`.github/workflows/ci.yml`) runs the full stack via `docker-compose.ci.yml` and exercises scan + media endpoints with curl — there is no unit-test step in CI.
 
 ## Domain model
 
@@ -42,15 +42,15 @@ Backend needs `packages/backend/.env` (MONGO_URI, MINIO_*, MEDIA_PRESIGNED_MODE)
 
 ## Backend layout
 
-`src/api/` routers (libraries, images, tags, ai, rules) mounted in `main.py` under matching prefixes. `src/services/` holds the logic: `scanner.py` (multithreaded walk → upload original+thumb → upsert + library progress), `storage_minio.py` (MinIO keys, presign, `delete_by_prefix`), `ai_jobs.py` (queued cancellable batch tagging worker, started in lifespan), `ai_tagger.py` (WD ONNX model lifecycle vs pure `select_tags` inference), `ai_settings.py`, `reproject.py` (prompt-tag extraction), `image_tags.py`, `blurhash.py`.
+`src/api/` routers (libraries, images, tags, ai, rules) mounted in `main.py` under matching prefixes. `src/services/` holds the logic: `scanner.py` (multithreaded walk → write thumb to FS → upsert + library progress), `storage_fs.py` (thumbnail FS keys/paths under `THUMB_ROOT`, atomic writes, traversal guard, `delete_by_prefix`), `ai_jobs.py` (queued cancellable batch tagging worker, started in lifespan), `ai_tagger.py` (WD ONNX model lifecycle vs pure `select_tags` inference), `ai_settings.py`, `reproject.py` (prompt-tag extraction), `image_tags.py`, `blurhash.py`.
 
-**Media delivery** honors `MEDIA_PRESIGNED_MODE` on every media endpoint: `redirect` (307 to presigned URL, default), `url` (JSON `{ url }`), `off` (stream through API). Originals support Range requests; HEAD endpoints exist. New media endpoints must implement all three modes + HEAD.
+**Media delivery** streams everything from the local filesystem through the API: thumbnails via `FileResponse` from `THUMB_ROOT`, originals via `FileResponse` from their on-disk library path. Originals support Range requests; both thumb and original have HEAD endpoints. New media endpoints should serve from the FS with a HEAD counterpart. A single exposed port covers remote access; front with nginx for TLS/static offload (see `deploy/nginx.conf.example`).
 
 ## Frontend layout
 
 - **`lib/imageFilter.ts`** (`parseFilters`/`serializeFilters`) is the single source of truth for the gallery filter ⇄ URL round-trip — keep URL and query key in sync through it.
 - **`hooks/useImageFeed.ts`** — one shared TanStack `useInfiniteQuery` keyed by the filter; `AllImagesPage` and `ImageView` read the same cache (cursor-paged by `_id` desc), so paging in one is visible in the other.
-- **`lib/media.ts`** resolves presigned modes: HEAD to detect JSON, GET to extract `{ url }`, else let the browser follow the 307.
+- **`lib/media.ts`** lazily resolves a media URL; with FS-backed thumbnails it is effectively a passthrough (the HEAD probe detects a plain image response and returns the endpoint as-is). Kept for future modes that need a per-tile resolve.
 - Pure logic lives in `lib/` with colocated `*.test.ts` (fuzzy, gen, gridNav, masonryLayout, imageFilter, ai). Prefer adding pure functions there with tests over logic inside components.
 - `components/VirtualizedGrid.tsx` + `masonryLayout.ts` compute row spans from width/height for a stable, reflow-free grid.
 

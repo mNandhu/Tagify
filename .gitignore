@@ -8,6 +8,9 @@ node_modules/
 __pycache__/
 *.pyc
 
+# Generated thumbnails (default THUMB_ROOT)
+/data/
+
 # Env
 .env
 .env.local

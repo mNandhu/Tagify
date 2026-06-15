@@ -60,7 +60,7 @@ jobs:
           # HEAD thumb & file
           curl -sI http://localhost:8000/images/$IMG_ID/thumb | tee head_thumb.txt
           curl -sI http://localhost:8000/images/$IMG_ID/file | tee head_file.txt
-          # GET thumb and file (CI presigned mode is off, so streaming works directly)
+          # GET thumb and file (both served straight from the local filesystem)
           curl -sfL http://localhost:8000/images/$IMG_ID/thumb -o thumb.jpg
           curl -sfL http://localhost:8000/images/$IMG_ID/file -o original.bin
           file thumb.jpg || true

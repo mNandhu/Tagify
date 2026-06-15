@@ -16,45 +16,6 @@ services:
       retries: 5
       start_period: 30s
 
-  # MinIO object storage
-  minio:
-    image: minio/minio:latest
-    container_name: tagify-minio
-    restart: "no"  # Changed from unless-stopped for CI compatibility
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
-    ports:
-      - "9000:9000"  # API
-      - "9001:9001"  # Console
-    volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
-  # MinIO bucket initialization
-  minio-init:
-    image: minio/mc:latest
-    container_name: tagify-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set minio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
-      mc mb minio/tagify-thumbs --ignore-existing;
-      echo 'Buckets created successfully';
-      "
-    restart: "no"
-
   # FastAPI backend
   backend:
     build:
@@ -62,23 +23,14 @@ services:
       dockerfile: Dockerfile
     container_name: tagify-backend
     restart: "no"  # Changed from unless-stopped for CI compatibility
+    volumes:
+      - thumb_data:/data/thumbs
     depends_on:
       mongodb:
         condition: service_healthy
-      minio:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
     environment:
       MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-password}@mongodb:27017/
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-password123}
-      MINIO_SECURE: "false"
-      MINIO_BUCKET_THUMBS: ${MINIO_BUCKET_THUMBS:-tagify-thumbs}
-      MEDIA_PRESIGNED_MODE: ${MEDIA_PRESIGNED_MODE:-redirect}
-      MEDIA_PRESIGNED_EXPIRES: ${MEDIA_PRESIGNED_EXPIRES:-3600}
-      MEDIA_PUBLIC_MINIO_ENDPOINT: ${MEDIA_PUBLIC_MINIO_ENDPOINT:-localhost:9000}
+      THUMB_ROOT: /data/thumbs
       THUMB_MAX_SIZE: ${THUMB_MAX_SIZE:-1080}
       SCANNER_MAX_WORKERS: ${SCANNER_MAX_WORKERS:-0}
       AI_TAGGING_URL: ${AI_TAGGING_URL:-}
@@ -113,5 +65,5 @@ services:
 volumes:
   mongodb_data:
     driver: local
-  minio_data:
+  thumb_data:
     driver: local

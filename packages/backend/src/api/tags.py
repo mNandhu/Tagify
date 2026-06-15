@@ -2,8 +2,6 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from urllib.parse import quote
 from ..database.motor import acol
-from ..services.storage_minio import presign_thumb
-from ..core.config import settings
 import time
 import asyncio
 
@@ -23,11 +21,8 @@ router = APIRouter()
 
 
 def _thumb_url(image_id: str, thumb_key: str | None) -> str:
-    """Mirror images.list: a presigned MinIO URL when enabled, else the
-    streaming /thumb route. Lets the grid render <img src> with no extra hop."""
-    presign_mode = settings.media_presigned_mode in ("redirect", "url")
-    if thumb_key and presign_mode:
-        return presign_thumb(thumb_key)
+    """The streaming /thumb route. Lets the grid render <img src> with no extra
+    hop. `thumb_key` is accepted for call-site parity but no longer needed."""
     return f"/api/images/{quote(image_id, safe='')}/thumb"
 
 

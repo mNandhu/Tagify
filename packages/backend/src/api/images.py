@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query, Request, Header, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import mimetypes
 import anyio  # type: ignore[import-not-found]
@@ -7,13 +7,9 @@ import os
 from urllib.parse import quote
 
 from ..database.motor import acol
-from ..services.storage_minio import (
-    get_thumb,
-    presign_thumb,
-)
+from ..services.storage_fs import thumb_path, delete_thumb
 from ..services import gen_metadata, image_tags
 from ..services.image_tags import find_image as _find_image_doc  # type: ignore
-from ..core.config import settings
 
 
 router = APIRouter()
@@ -123,14 +119,9 @@ def _build_feed_query(
 
 
 def _attach_thumb_url(it: dict) -> None:
-    """Replace the doc's thumb_key with a ready-to-use thumb_url (presigned MinIO
-    URL or the streaming route)."""
-    presign_mode = settings.media_presigned_mode in ("redirect", "url")
-    thumb_key = it.pop("thumb_key", None)
-    if thumb_key and presign_mode:
-        it["thumb_url"] = presign_thumb(thumb_key)
-    else:
-        it["thumb_url"] = f"/api/images/{quote(it['_id'], safe='')}/thumb"
+    """Replace the doc's thumb_key with the streaming thumb route."""
+    it.pop("thumb_key", None)
+    it["thumb_url"] = f"/api/images/{quote(it['_id'], safe='')}/thumb"
 
 
 @router.get("")
@@ -271,22 +262,14 @@ async def get_image_thumb(image_id: str):
     # Determine media type from the key extension
     media_type = "image/webp" if thumb_key.endswith(".webp") else "image/jpeg"
 
-    if settings.media_presigned_mode in ("redirect", "url"):
-        url = presign_thumb(thumb_key)
-        if settings.media_presigned_mode == "redirect":
-            resp = Response(status_code=307)
-            resp.headers["Location"] = url
-            return resp
-        else:
-            return {"url": url}
-    obj = await anyio.to_thread.run_sync(lambda: get_thumb(thumb_key))  # type: ignore[attr-defined]
-    headers = {}
-    etag = obj.headers.get("ETag")
-    if etag:
-        headers["ETag"] = etag
-        headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    return StreamingResponse(
-        obj.stream(32 * 1024), media_type=media_type, headers=headers
+    path = await anyio.to_thread.run_sync(lambda: thumb_path(thumb_key))  # type: ignore[attr-defined]
+    if path is None:
+        raise HTTPException(status_code=404, detail="Thumbnail not found on disk")
+    # FileResponse handles ETag/Content-Length/sendfile natively.
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 
 
@@ -295,8 +278,6 @@ async def head_image_thumb(image_id: str):
     img = await _find_image_doc(image_id, {"thumb_key": 1})
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
-    if settings.media_presigned_mode == "url":
-        return Response(status_code=200, media_type="application/json")
     thumb_key = img.get("thumb_key", "")
     media_type = "image/webp" if thumb_key.endswith(".webp") else "image/jpeg"
     headers = {"Accept-Ranges": "bytes"}
@@ -514,11 +495,8 @@ async def purge_image(image_id: str, body: PurgeBody):
     thumb_key = img.get("thumb_key")
     if thumb_key:
         try:
-            from ..services.storage_minio import get_minio
-
-            client = get_minio()
             await anyio.to_thread.run_sync(  # type: ignore[attr-defined]
-                lambda: client.remove_object(settings.minio_bucket_thumbs, thumb_key)
+                lambda: delete_thumb(thumb_key)
             )
         except Exception:
             pass
