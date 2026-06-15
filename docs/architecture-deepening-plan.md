@@ -121,13 +121,14 @@ private `getJson`/`postJson` not exported; query keys hand-written as
 Done: pure logic extracted to `lib/` with colocated tests —
 `lib/rating.ts` (`pickRating`, `ratingBadgeClass`), `lib/tags.ts` (`formatTag`),
 `lib/blurhash.ts` (`accentFromBlurhash`), `lib/imageFilter.hasActiveFilter`, and
-`lib/dom.ts` (`isFormField`, the 3× copy-paste, now one).
+`lib/dom.ts` (`isFormField`, the 3× copy-paste, now one). Plus `useSelectionMode`
+(`hooks/useSelectionMode.ts`) — the selection-Set + mode + toggle/clear +
+auto-clear-on-exit, with a `renderHook` test.
 
-Deferred (deliberately): extracting `useSelectionMode` / `useGridFocus` from
-AllImagesPage. `useGridFocus` wraps focusedIndex + scroll-into-view + DOM focus,
-whose correctness is interaction behaviour a unit test can't fully cover and
-which I can't verify here without running the app. Worth doing when the app can
-be exercised live; the index math is already pure (`lib/gridNav`).
+Deferred (deliberately): `useGridFocus`. It wraps focusedIndex + scroll-into-view
++ DOM focus, whose correctness is interaction behaviour a unit test can't cover
+and which can't be verified here without running the app. Worth doing when the app
+can be exercised live; the index math is already pure (`lib/gridNav`).
 
 **Files:** `pages/ImageView.tsx` (1028), `pages/AllImagesPage.tsx` (820).
 

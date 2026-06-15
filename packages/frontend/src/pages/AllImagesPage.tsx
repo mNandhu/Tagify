@@ -29,6 +29,7 @@ import {
   type TagSuggestion,
 } from "../components/TagSearchInput";
 import { useFilters } from "../hooks/useFilters";
+import { useSelectionMode } from "../hooks/useSelectionMode";
 import {
   useImageFeed,
   useImageGroups,
@@ -68,8 +69,14 @@ export default function AllImagesPage() {
   const [modelOptions, setModelOptions] = useState<
     { model: string; count: number }[]
   >([]);
-  const [selection, setSelection] = useState<Set<string>>(new Set());
-  const [selectionMode, setSelectionMode] = useState(false);
+  const {
+    selection,
+    selectionMode,
+    setSelectionMode,
+    selectionActive,
+    toggle: toggleSelection,
+    clear: clearSelection,
+  } = useSelectionMode();
   // Keyboard triage: index of the focused tile (-1 = none). Disabled in
   // selection mode and in the grouped view (tiles there are batch reps).
   const [focusedIndex, setFocusedIndex] = useState(-1);
@@ -226,14 +233,6 @@ export default function AllImagesPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [push, filters, setFilters]);
 
-  const toggleSelection = useCallback((id: string) => {
-    setSelection((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id); else n.add(id);
-      return n;
-    });
-  }, []);
-
   const openImage = useCallback(
     (id: string) => {
       saveScroll();
@@ -243,13 +242,6 @@ export default function AllImagesPage() {
     [filters, navigate, saveScroll],
   );
 
-  const clearSelection = () => setSelection(new Set());
-  const selectionActive = selection.size > 0;
-
-  // When leaving selection mode, drop the current selection.
-  useEffect(() => {
-    if (!selectionMode && selectionActive) setSelection(new Set());
-  }, [selectionMode, selectionActive]);
 
   // Infinite scroll: fetch the next page (feed or grouped view) on sentinel view.
   useEffect(() => {
