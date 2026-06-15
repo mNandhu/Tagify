@@ -5,7 +5,12 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -673,6 +678,14 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
           ) : null}
         </div>
       )}
+
+      <Link
+        to="/settings?section=jobs"
+        className="text-xs text-neutral-500 hover:text-neutral-300"
+        title="See all AI tagging jobs and their progress"
+      >
+        View all jobs →
+      </Link>
     </div>
   );
 }

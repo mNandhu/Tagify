@@ -16,6 +16,9 @@ export type AISettings = {
   prompt_positive_only: boolean;
 };
 
+/** A single failure recorded while an AI Job processed one image. */
+export type AiJobError = { image_id: string; error: string };
+
 export type AiJob = {
   id: string;
   created_at: number;
@@ -25,6 +28,7 @@ export type AiJob = {
   failed: number;
   skipped?: number;
   current?: string | null;
+  errors?: AiJobError[];
 };
 
 export type AIStatus = {

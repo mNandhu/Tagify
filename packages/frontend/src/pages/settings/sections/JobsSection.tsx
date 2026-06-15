@@ -1,8 +1,30 @@
 import { Card } from "../../../components/ui/Card";
 import { Button } from "../../../components/ui/Button";
 import { Input, Field } from "../../../components/ui/Input";
-import { isActiveJob } from "../../../lib/ai";
+import { isActiveJob, type AiJobError } from "../../../lib/ai";
 import { useSettings } from "../SettingsContext";
+
+/** Expandable per-job failure list. The backend records one entry per image
+ * that threw during tagging ({@link AiJobError}); the status poll already
+ * carries these, so this is purely a disclosure over data we have. */
+function JobErrors({ errors }: { errors: AiJobError[] }) {
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-red-300 hover:text-red-200">
+        {errors.length} {errors.length === 1 ? "error" : "errors"}
+      </summary>
+      <div className="mt-1 max-h-40 overflow-auto space-y-1 rounded border border-red-900/50 bg-red-950/20 p-2">
+        {errors.map((e, i) => (
+          <div key={`${e.image_id}:${i}`} className="text-neutral-300">
+            <span className="font-mono text-neutral-400">{e.image_id}</span>
+            <span className="text-neutral-500"> — </span>
+            <span className="text-red-300">{e.error}</span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
 
 export function JobsSection() {
   const {
@@ -93,6 +115,10 @@ export function JobsSection() {
                 </Button>
               </div>
             )}
+
+            {latestJob.errors && latestJob.errors.length > 0 && (
+              <JobErrors errors={latestJob.errors} />
+            )}
           </div>
         )}
       </Card>
@@ -103,42 +129,47 @@ export function JobsSection() {
           {(status?.jobs?.recent || []).map((j) => (
             <div
               key={j.id}
-              className="rounded border border-neutral-800 bg-neutral-950/40 px-3 py-2 flex items-center justify-between"
+              className="rounded border border-neutral-800 bg-neutral-950/40 px-3 py-2 space-y-2"
             >
-              <div className="text-sm">
-                <span
-                  className="font-mono"
-                  title="Job ID: used to track progress (polling), debug issues, and cancel jobs"
-                >
-                  {j.id.slice(0, 8)}
-                </span>
-                <span className="text-neutral-500"> · {j.status}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-neutral-400">
-                  {j.done + j.failed}/{j.total}
-                  {typeof j.skipped === "number" && j.skipped > 0 ? (
-                    <span className="text-neutral-500">
-                      {" "}
-                      · {j.skipped} skipped
-                    </span>
-                  ) : null}
-                  {j.failed ? (
-                    <span className="text-red-300"> · {j.failed} failed</span>
-                  ) : null}
-                </div>
-                {isActiveJob(j.status) && (
-                  <Button
-                    size="sm"
-                    variant="dangerSoft"
-                    onClick={() => cancelJob(j.id)}
-                    disabled={running}
-                    title="Cancel job"
+              <div className="flex items-center justify-between">
+                <div className="text-sm">
+                  <span
+                    className="font-mono"
+                    title="Job ID: used to track progress (polling), debug issues, and cancel jobs"
                   >
-                    Cancel
-                  </Button>
-                )}
+                    {j.id.slice(0, 8)}
+                  </span>
+                  <span className="text-neutral-500"> · {j.status}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-neutral-400">
+                    {j.done + j.failed}/{j.total}
+                    {typeof j.skipped === "number" && j.skipped > 0 ? (
+                      <span className="text-neutral-500">
+                        {" "}
+                        · {j.skipped} skipped
+                      </span>
+                    ) : null}
+                    {j.failed ? (
+                      <span className="text-red-300"> · {j.failed} failed</span>
+                    ) : null}
+                  </div>
+                  {isActiveJob(j.status) && (
+                    <Button
+                      size="sm"
+                      variant="dangerSoft"
+                      onClick={() => cancelJob(j.id)}
+                      disabled={running}
+                      title="Cancel job"
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </div>
               </div>
+              {j.errors && j.errors.length > 0 && (
+                <JobErrors errors={j.errors} />
+              )}
             </div>
           ))}
           {!status?.jobs?.recent?.length && (
