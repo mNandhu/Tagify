@@ -13,6 +13,7 @@ import {
   Sparkles,
   Layers,
   ArrowLeft,
+  ShieldOff,
 } from "lucide-react";
 import {
   DEFAULT_FILTERS,
@@ -22,6 +23,7 @@ import {
 } from "../lib/imageFilter";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
+import { DropdownMenu } from "../components/ui/DropdownMenu";
 import { Input, Select } from "../components/ui/Input";
 import { EmptyState } from "../components/ui/EmptyState";
 import {
@@ -454,26 +456,50 @@ export default function AllImagesPage() {
             {selectionMode ? <CheckSquare size={18} /> : <Square size={18} />}
           </Button>
           {selectionMode && selectionActive && (
-            <Button
-              variant="primary"
-              onClick={async () => {
-                const ids = Array.from(selection);
-                if (!ids.length) return;
-                const ok = confirm(
-                  `Run AI tagging for ${ids.length} selected images?`,
-                );
-                if (!ok) return;
-                try {
-                  await postAiTag(ids);
-                  push(`Queued AI tagging for ${ids.length} images`, "success");
-                  setSelectionMode(false);
-                } catch (e) {
-                  push(`Failed to start AI job: ${String(e)}`, "error");
-                }
-              }}
-            >
-              <Sparkles size={16} /> Tag {selection.size}
-            </Button>
+            <DropdownMenu
+              label={<>{selection.size} selected</>}
+              items={[
+                {
+                  label: "Tag",
+                  icon: <Sparkles size={15} />,
+                  onClick: async () => {
+                    const ids = Array.from(selection);
+                    if (!ids.length) return;
+                    const ok = confirm(
+                      `Run AI tagging for ${ids.length} selected images?`,
+                    );
+                    if (!ok) return;
+                    try {
+                      await postAiTag(ids);
+                      push(`Queued AI tagging for ${ids.length} images`, "success");
+                      setSelectionMode(false);
+                    } catch (e) {
+                      push(`Failed to start AI job: ${String(e)}`, "error");
+                    }
+                  },
+                },
+                {
+                  label: "Quarantine",
+                  icon: <ShieldOff size={15} />,
+                  variant: "danger",
+                  onClick: async () => {
+                    const ids = Array.from(selection);
+                    if (!ids.length) return;
+                    const ok = confirm(
+                      `Quarantine ${ids.length} selected image${ids.length === 1 ? "" : "s"}?`,
+                    );
+                    if (!ok) return;
+                    try {
+                      await Promise.all(ids.map((id) => apiSetQuarantine(id, true)));
+                      push(`Quarantined ${ids.length} image${ids.length === 1 ? "" : "s"}`, "success");
+                      setSelectionMode(false);
+                    } catch (e) {
+                      push(`Failed to quarantine: ${String(e)}`, "error");
+                    }
+                  },
+                },
+              ]}
+            />
           )}
         </div>
 

@@ -19,24 +19,29 @@ export function ModelSection() {
     <Card className="p-5 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <Badge tone={status?.model?.loaded ? "success" : "neutral"}>
-            {status?.model?.loaded ? "loaded" : "unloaded"}
+          <Badge
+            tone={
+              isModelLoading
+                ? "warning"
+                : status?.model?.loaded
+                  ? "success"
+                  : "neutral"
+            }
+          >
+            {isModelLoading
+              ? "loading"
+              : status?.model?.loaded
+                ? "loaded"
+                : "unloaded"}
           </Badge>
           <div className="text-xs text-neutral-400">
             {status?.model?.repo ? status.model.repo : ""}
           </div>
-          {status?.model_load?.status &&
-            status.model_load.status !== "idle" && (
-              <div className="text-xs text-neutral-500 mt-1">
-                Load state: {status.model_load.status}
-                {status.model_load.error ? (
-                  <span className="text-red-300">
-                    {" "}
-                    · {status.model_load.error}
-                  </span>
-                ) : null}
-              </div>
-            )}
+          {status?.model_load?.error && (
+            <div className="text-xs text-red-300 mt-1">
+              {status.model_load.error}
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           {!isModelLoaded && !isModelLoading && (

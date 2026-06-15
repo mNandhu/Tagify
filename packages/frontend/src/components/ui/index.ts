@@ -8,3 +8,5 @@ export { Skeleton, Spinner } from "./Skeleton";
 export { PageHeader } from "./PageHeader";
 export { EmptyState } from "./EmptyState";
 export { StatCard } from "./StatCard";
+export { DropdownMenu } from "./DropdownMenu";
+export type { DropdownItem } from "./DropdownMenu";

@@ -100,7 +100,20 @@ export function TaggingSection() {
               Model &amp; storage
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Field label="Model repo" htmlFor="ai_model_repo">
+              <Field
+                label="Model repo"
+                htmlFor="ai_model_repo"
+                hint={
+                  <a
+                    href="https://huggingface.co/SmilingWolf/models"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-neutral-300 underline underline-offset-2"
+                  >
+                    Browse available models ↗
+                  </a>
+                }
+              >
                 <Input
                   id="ai_model_repo"
                   value={settings.model_repo}
