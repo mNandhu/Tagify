@@ -144,7 +144,7 @@ export function TaggingSection() {
               <Field
                 label="Model cache dir"
                 htmlFor="ai_cache_dir"
-                hint="Relative to backend working directory."
+                hint="Relative paths resolve from the repo root."
                 className="md:col-span-2"
               >
                 <Input
