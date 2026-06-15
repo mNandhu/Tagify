@@ -201,3 +201,21 @@ export async function fetchImage(
   if (!r.ok) throw new Error(await r.text());
   return (await r.json()) as ImageDoc;
 }
+
+/** Whether any filter axis is set (vs the empty default feed). */
+export function hasActiveFilter(f: Filters): boolean {
+  return (
+    f.tags.length > 0 ||
+    !!f.libraryId ||
+    f.noTags ||
+    f.noAiTags ||
+    f.quarantined ||
+    f.promptTerms.length > 0 ||
+    !!f.model ||
+    f.minW != null ||
+    f.maxW != null ||
+    f.minH != null ||
+    f.maxH != null ||
+    !!f.groupId
+  );
+}

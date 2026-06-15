@@ -25,21 +25,7 @@ import {
   PanelRight,
   Image as ImageIcon,
 } from "lucide-react";
-import { decode } from "blurhash";
 import { resolveMediaUrl } from "../lib/media";
-
-// Primary colour of an image, taken from its BlurHash DC term (the average
-// colour) by decoding to a single pixel. Cheap, CORS-free, available before
-// the full image loads. Returns an `rgb(...)` string or null when absent.
-function accentFromBlurhash(hash?: string): string | null {
-  if (!hash) return null;
-  try {
-    const [r, g, b] = decode(hash, 1, 1);
-    return `rgb(${r}, ${g}, ${b})`;
-  } catch {
-    return null;
-  }
-}
 import { useToast } from "../components/Toasts";
 import {
   parseFilters,
@@ -55,41 +41,10 @@ import {
   fetchWorkflow,
   workflowClipboardText,
 } from "../lib/gen";
-
-function pickRating(doc: ImageDoc | null | undefined): string {
-  const r = (doc?.rating || "").trim();
-  if (r) return r;
-  const m = doc?.ai?.rating;
-  if (m && typeof m === "object") {
-    let bestKey: string | null = null;
-    let bestVal = -Infinity;
-    for (const [k, v] of Object.entries(m)) {
-      const n = typeof v === "number" ? v : Number(v);
-      if (Number.isFinite(n) && n > bestVal) {
-        bestVal = n;
-        bestKey = k;
-      }
-    }
-    if (bestKey) return bestKey;
-  }
-  return "-";
-}
-
-function ratingBadgeClass(rating: string): string {
-  switch (rating) {
-    case "general":
-    case "safe":
-      return "bg-emerald-900/30 border-emerald-800 text-emerald-100";
-    case "sensitive":
-      return "bg-amber-900/30 border-amber-800 text-amber-100";
-    case "questionable":
-      return "bg-orange-900/30 border-orange-800 text-orange-100";
-    case "explicit":
-      return "bg-red-900/30 border-red-800 text-red-100";
-    default:
-      return "bg-neutral-800 border-neutral-700 text-neutral-100";
-  }
-}
+import { accentFromBlurhash } from "../lib/blurhash";
+import { pickRating, ratingBadgeClass } from "../lib/rating";
+import { formatTag } from "../lib/tags";
+import { isFormField } from "../lib/dom";
 
 export default function ImageView() {
   const { id } = useParams<{ id: string }>();
@@ -248,15 +203,7 @@ export default function ImageView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Don't trigger global shortcuts when typing in form fields
-      const target = e.target as HTMLElement;
-      const isFormField =
-        target &&
-        (target.tagName.toLowerCase() === "input" ||
-          target.tagName.toLowerCase() === "textarea" ||
-          target.tagName.toLowerCase() === "select" ||
-          target.isContentEditable);
-
-      if (isFormField) {
+      if (isFormField(e.target)) {
         return;
       }
 
@@ -329,12 +276,6 @@ export default function ImageView() {
 
   const handleTouchMove = useCallback((_e: React.TouchEvent) => {
     // Optional: could add visual feedback here for swipe in progress
-  }, []);
-
-  const formatTag = useCallback((raw: string) => {
-    if (raw.startsWith("manual:")) return raw.slice("manual:".length);
-    if (raw.startsWith("prompt:")) return raw.slice("prompt:".length);
-    return raw;
   }, []);
 
   const openTag = useCallback(

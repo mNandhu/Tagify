@@ -17,6 +17,7 @@ import {
 import {
   DEFAULT_FILTERS,
   serializeFilters,
+  hasActiveFilter,
   type Filters,
 } from "../lib/imageFilter";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -40,23 +41,10 @@ import { nextFocusIndex, isGridNavKey } from "../lib/gridNav";
 import { gridColumns } from "../lib/masonryLayout";
 import { setScore as apiSetScore, setQuarantine as apiSetQuarantine } from "../lib/gen";
 import { api } from "../lib/api";
+import { isFormField } from "../lib/dom";
 import { postAiTag } from "../lib/ai";
 
 type Library = { _id: string; name?: string; path: string };
-
-const hasActiveFilter = (f: Filters) =>
-  f.tags.length > 0 ||
-  !!f.libraryId ||
-  f.noTags ||
-  f.noAiTags ||
-  f.quarantined ||
-  f.promptTerms.length > 0 ||
-  !!f.model ||
-  f.minW != null ||
-  f.maxW != null ||
-  f.minH != null ||
-  f.maxH != null ||
-  !!f.groupId;
 
 export default function AllImagesPage() {
   const { push } = useToast();
@@ -204,14 +192,7 @@ export default function AllImagesPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const target = e.target as HTMLElement;
-      const isFormField =
-        target &&
-        (target.tagName.toLowerCase() === "input" ||
-          target.tagName.toLowerCase() === "textarea" ||
-          target.tagName.toLowerCase() === "select" ||
-          target.isContentEditable);
-      if (isFormField) return;
+      if (isFormField(e.target)) return;
 
       const k = e.key.toLowerCase();
       if (k === "s") {
@@ -359,15 +340,7 @@ export default function AllImagesPage() {
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const t = e.target as HTMLElement;
-      if (
-        t &&
-        (t.tagName.toLowerCase() === "input" ||
-          t.tagName.toLowerCase() === "textarea" ||
-          t.tagName.toLowerCase() === "select" ||
-          t.isContentEditable)
-      )
-        return;
+      if (isFormField(e.target)) return;
       if (isGridNavKey(e.key)) {
         e.preventDefault();
         const key = e.key; // narrowed to GridNavKey before the closure

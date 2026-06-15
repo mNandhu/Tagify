@@ -5,6 +5,7 @@ import {
   serializeFilters,
   buildImagesQuery,
   nextCursorOf,
+  hasActiveFilter,
   type Filters,
   type ImageDoc,
 } from "./imageFilter";
@@ -110,5 +111,23 @@ describe("nextCursorOf", () => {
 
   it("returns null for an empty page", () => {
     expect(nextCursorOf([])).toBeNull();
+  });
+});
+
+describe("hasActiveFilter", () => {
+  it("is false for the default (empty) filter", () => {
+    expect(hasActiveFilter(DEFAULT_FILTERS)).toBe(false);
+  });
+
+  it("is true when any axis is set", () => {
+    expect(hasActiveFilter({ ...DEFAULT_FILTERS, tags: ["cat"] })).toBe(true);
+    expect(hasActiveFilter({ ...DEFAULT_FILTERS, libraryId: "L1" })).toBe(true);
+    expect(hasActiveFilter({ ...DEFAULT_FILTERS, noTags: true })).toBe(true);
+    expect(hasActiveFilter({ ...DEFAULT_FILTERS, minW: 100 })).toBe(true);
+    expect(hasActiveFilter({ ...DEFAULT_FILTERS, groupId: "g" })).toBe(true);
+  });
+
+  it("ignores the grouped-view toggle (group) which is not a filter", () => {
+    expect(hasActiveFilter({ ...DEFAULT_FILTERS, group: true })).toBe(false);
   });
 });
