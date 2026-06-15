@@ -119,7 +119,7 @@ export default function OverviewPage() {
           tone="neutral"
           value={modelState}
           hint={ai?.model?.repo ?? undefined}
-          onClick={() => navigate("/settings")}
+          onClick={() => navigate("/ai-tagging")}
         />
       </div>
 
@@ -160,9 +160,9 @@ export default function OverviewPage() {
               No AI jobs yet. Head to{" "}
               <button
                 className="text-purple-300 hover:underline"
-                onClick={() => navigate("/settings")}
+                onClick={() => navigate("/ai-tagging")}
               >
-                Settings
+                AI Tagging
               </button>{" "}
               to tag your images.
             </p>
