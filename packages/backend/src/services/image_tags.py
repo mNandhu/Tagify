@@ -169,6 +169,13 @@ def id_variants(image_id: str) -> list[str]:
     return variants
 
 
+def id_candidates(image_id: str) -> list[str]:
+    """The ordered ``_id`` spellings to try for a lookup: the primary id first,
+    then its slash/backslash variants. The single source of this ordering — every
+    id lookup iterates this, so the resolution order can never drift."""
+    return [image_id, *id_variants(image_id)]
+
+
 # --- Tag-set transforms (pure) ------------------------------------------------
 #
 # Replace the old Mongo aggregation-pipeline updates. Each takes the current tag
@@ -255,9 +262,13 @@ def row_to_doc(row: Any) -> dict[str, Any]:
 # --- Repository (I/O) ---------------------------------------------------------
 
 
-async def _resolve(conn: AsyncConnection, image_id: str) -> str | None:
-    """Return the stored ``_id`` matching ``image_id`` (slash/backslash tolerant)."""
-    for candidate in (image_id, *id_variants(image_id)):
+async def resolve_image_id(conn: AsyncConnection, image_id: str) -> str | None:
+    """Return the stored ``_id`` matching ``image_id`` (slash/backslash tolerant).
+
+    The one async resolver: any caller holding a connection that needs the
+    canonical ``_id`` for a possibly-variant spelling delegates here.
+    """
+    for candidate in id_candidates(image_id):
         found = (
             await conn.execute(
                 sa.select(t.images.c._id).where(t.images.c._id == candidate)
@@ -275,7 +286,7 @@ async def find_image(image_id: str, projection: dict | None = None) -> dict | No
     row fetch is cheap, and callers only read a handful of fields.
     """
     async with async_conn() as conn:
-        for candidate in (image_id, *id_variants(image_id)):
+        for candidate in id_candidates(image_id):
             row = (
                 await conn.execute(
                     sa.select(t.images).where(t.images.c._id == candidate)
@@ -309,7 +320,7 @@ async def _persist(
 
 async def apply_manual(image_id: str, tags: list[str]) -> None:
     async with async_tx() as conn:
-        resolved = await _resolve(conn, image_id)
+        resolved = await resolve_image_id(conn, image_id)
         if resolved is None:
             return
         current = (
@@ -322,7 +333,7 @@ async def apply_manual(image_id: str, tags: list[str]) -> None:
 
 async def remove_tags(image_id: str, tags: list[str]) -> None:
     async with async_tx() as conn:
-        resolved = await _resolve(conn, image_id)
+        resolved = await resolve_image_id(conn, image_id)
         if resolved is None:
             return
         current = (
@@ -337,7 +348,7 @@ async def replace_ai(
     image_id: str, *, ai_tags: list[str], ai_meta: dict[str, Any], rating: str
 ) -> None:
     async with async_tx() as conn:
-        resolved = await _resolve(conn, image_id)
+        resolved = await resolve_image_id(conn, image_id)
         if resolved is None:
             return
         current = (

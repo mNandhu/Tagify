@@ -9,6 +9,22 @@ transactional repo writes are covered separately by the DB integration tests.
 from src.services import image_tags as it
 
 
+# --- id candidates -----------------------------------------------------------
+
+
+def test_id_candidates_primary_first_then_variants():
+    # POSIX-spelled id tries itself, then the backslash variant.
+    assert it.id_candidates("L1:a/b") == ["L1:a/b", "L1:a\\b"]
+
+
+def test_id_candidates_no_separator_is_just_the_id():
+    assert it.id_candidates("L1:plain") == ["L1:plain"]
+
+
+def test_id_candidates_backslash_spelling():
+    assert it.id_candidates("L1:a\\b") == ["L1:a\\b", "L1:a/b"]
+
+
 # --- prefix helpers ----------------------------------------------------------
 
 

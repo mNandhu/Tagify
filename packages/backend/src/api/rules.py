@@ -18,7 +18,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from ..database.db import async_conn, async_tx
 from ..database import schema as t
 from ..services import gen_metadata
-from ..services.image_tags import id_variants
+from ..services.image_tags import id_candidates
 
 router = APIRouter()
 
@@ -134,7 +134,7 @@ async def preview_ruleset(body: PreviewBody):
     resolution so the UI can show whether each pin fired."""
     async with async_conn() as conn:
         raw = None
-        for candidate in (body.sample_image_id, *id_variants(body.sample_image_id)):
+        for candidate in id_candidates(body.sample_image_id):
             row = (
                 await conn.execute(
                     sa.select(t.image_gen_raw.c.raw).where(

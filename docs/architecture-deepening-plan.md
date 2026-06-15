@@ -33,7 +33,7 @@ object → calls it. Projection / `thumb_url` decoration move with it.
 **Benefits:** Small interface (filter → rows) over lots of SQL = depth + leverage.
 Filter→WHERE becomes unit-testable. Feed/groups/export can't drift.
 
-## 2. Canonical image-id resolution seam
+## 2. Canonical image-id resolution seam — ✅ DONE
 
 **Files:** `api/images.py:471-480` (`_resolve_id`), `:433-443` (inline in
 workflow); `services/image_tags.py:258-268` (`_resolve`), `:271-286`

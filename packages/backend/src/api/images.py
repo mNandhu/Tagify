@@ -263,7 +263,7 @@ async def get_image_workflow(image_id: str):
     """
     async with async_conn() as conn:
         raw = None
-        for candidate in (image_id, *image_tags.id_variants(image_id)):
+        for candidate in image_tags.id_candidates(image_id):
             row = (
                 await conn.execute(
                     sa.select(t.image_gen_raw.c.raw).where(
@@ -301,18 +301,6 @@ async def get_image(image_id: str):
     return img
 
 
-async def _resolve_id(conn, image_id: str) -> str | None:
-    for candidate in (image_id, *image_tags.id_variants(image_id)):
-        found = (
-            await conn.execute(
-                sa.select(t.images.c._id).where(t.images.c._id == candidate)
-            )
-        ).scalar()
-        if found is not None:
-            return found
-    return None
-
-
 @router.post("/{image_id:path}/rating")
 async def set_image_rating(image_id: str, body: RatingPatch):
     rating = image_tags.normalize_rating(body.rating)
@@ -322,7 +310,7 @@ async def set_image_rating(image_id: str, body: RatingPatch):
             detail="rating must be one of '-', 'general', 'sensitive', 'questionable', 'explicit'",
         )
     async with async_tx() as conn:
-        rid = await _resolve_id(conn, image_id)
+        rid = await image_tags.resolve_image_id(conn, image_id)
         if rid is None:
             raise HTTPException(status_code=404, detail="Image not found")
         await conn.execute(
@@ -337,7 +325,7 @@ async def set_image_score(image_id: str, body: ScorePatch):
     if not (0 <= body.score <= 5):
         raise HTTPException(status_code=422, detail="score must be 0-5")
     async with async_tx() as conn:
-        rid = await _resolve_id(conn, image_id)
+        rid = await image_tags.resolve_image_id(conn, image_id)
         if rid is None:
             raise HTTPException(status_code=404, detail="Image not found")
         await conn.execute(
@@ -350,7 +338,7 @@ async def set_image_score(image_id: str, body: ScorePatch):
 async def set_image_quarantine(image_id: str, body: QuarantinePatch):
     """Toggle the DB-only quarantine flag (hides from default feed; no disk I/O)."""
     async with async_tx() as conn:
-        rid = await _resolve_id(conn, image_id)
+        rid = await image_tags.resolve_image_id(conn, image_id)
         if rid is None:
             raise HTTPException(status_code=404, detail="Image not found")
         await conn.execute(
