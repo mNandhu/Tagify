@@ -36,10 +36,13 @@ def _safe_path(key: str) -> Path:
 def put_thumb(library_id: str, image_id: str, data: bytes) -> str:
     """Write thumbnail bytes to disk atomically; returns the object key.
 
-    Key scheme matches the historical MinIO layout (`{library_id}/{image_id}.webp`)
-    so existing `thumb_key` values stay valid across the migration.
+    The image id is ``{library_id}:{relpath}``; the ``:`` separator was fine for
+    the old MinIO object store but is reserved on Windows (the NTFS Alternate-
+    Data-Stream separator), so it's replaced here. The returned key is the literal
+    on-disk path, so readers (`thumb_path`/`delete_thumb`) use it verbatim with no
+    matching transform to keep in sync.
     """
-    key = f"{library_id}/{image_id}.webp"
+    key = f"{library_id}/{image_id}.webp".replace(":", "_")
     dst = _safe_path(key)
     dst.parent.mkdir(parents=True, exist_ok=True)
     # Temp file in the SAME dir → same filesystem → os.replace is atomic.
