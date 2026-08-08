@@ -28,6 +28,8 @@ packages/**/.env
 .vscode/
 .idea/
 
+# Downloaded models
+.cache/tagify/
 
 # Misc
 *.swp

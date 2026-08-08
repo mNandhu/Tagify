@@ -27,11 +27,7 @@ import {
 } from "lucide-react";
 import { resolveMediaUrl } from "../lib/media";
 import { useToast } from "../components/Toasts";
-import {
-  parseFilters,
-  serializeFilters,
-  fetchImage,
-} from "../lib/imageFilter";
+import { parseFilters, serializeFilters, fetchImage } from "../lib/imageFilter";
 import { useImageFeed } from "../hooks/useImageFeed";
 import { useAiTagging } from "../hooks/useAiTagging";
 import { fetchWorkflow, workflowClipboardText } from "../lib/gen";
@@ -48,16 +44,46 @@ import { formatTag, partitionTags } from "../lib/tags";
 import { isFormField } from "../lib/dom";
 import { invalidateFeeds, removeImageFromFeeds } from "../lib/feedCache";
 
+// How long a fetched image doc stays fresh. Shared by the current-image query
+// and the neighbour prefetch so stepping through the feed reuses prefetched
+// docs rather than refetching them.
+const IMAGE_DOC_STALE_MS = 30_000;
+
+// Longest the view will hold the previous image while waiting on the next one
+// to decode. Past this we show it regardless rather than appear stuck.
+const MAX_HOLD_MS = 2000;
+
 export default function ImageView() {
-  const { id } = useParams<{ id: string }>();
+  // `routeId` is where the URL points; `id` is the image actually on screen.
+  // They diverge only while a not-yet-decoded image is being waited on — see
+  // the commit-on-decode effect below.
+  const { id: routeId } = useParams<{ id: string }>();
+  const [displayId, setDisplayId] = useState<string | undefined>(routeId);
+  const id = displayId ?? routeId;
+  const [pending, setPending] = useState(false);
+  // Start of the current divergence between route and display, so the hold
+  // ceiling is measured from the first keypress rather than restarted by each
+  // one — otherwise a held arrow key defers it forever.
+  const holdStartRef = useRef<number | null>(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { push } = useToast();
   const queryClient = useQueryClient();
   const [infoOpen, setInfoOpen] = useState(true);
-  const [imgLoaded, setImgLoaded] = useState(false);
-  const [fileUrl, setFileUrl] = useState<string | null>(null);
+  // Which image has actually painted. Tracked by id rather than as a boolean
+  // so it resets with every navigation (a write-once flag would let one failed
+  // load disable the glow for the rest of the session) and so a fresh mount,
+  // where there is no previous frame to hold, still reads as loading.
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  // Resolved media URLs keyed by image id (only non-passthrough modes populate
+  // this). Kept as a map so an id change never renders the *previous* image's
+  // URL for a frame — the endpoint below is always derivable synchronously.
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  // Holds decoded neighbour bitmaps alive so the browser keeps them in its
+  // decoded-image cache; without a live reference they are collectable and the
+  // preload buys nothing but the HTTP hit.
+  const preloadedRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
   // Image filter carried in the URL — drives the shared Image feed so the
   // pages the gallery already fetched are reused here (no separate paging code).
@@ -77,6 +103,9 @@ export default function ImageView() {
     queryKey: ["image", id],
     queryFn: ({ signal }) => fetchImage(id!, { signal }),
     enabled: !!id,
+    // Matches the neighbour prefetch below, so arriving on a prefetched image
+    // reuses the doc instead of refetching it.
+    staleTime: IMAGE_DOC_STALE_MS,
   });
   const refreshImage = useCallback(() => {
     void refetch();
@@ -133,46 +162,164 @@ export default function ImageView() {
   const feed = useImageFeed(filters);
   const list = feed.items;
   const index = useMemo(
-    () => (id ? list.findIndex((x) => x._id === id) : -1),
-    [id, list],
+    () => (routeId ? list.findIndex((x) => x._id === routeId) : -1),
+    [routeId, list],
   );
 
-  useEffect(() => {
-    setImgLoaded(false);
-  }, [id]);
-
-  // Resolve the actual file URL (supports pre-signed URL mode)
-  useEffect(() => {
-    if (!id) return;
+  // The file URL is derived synchronously from the id, so the very first render
+  // after an arrow-key navigation already points at the right image. The async
+  // resolve only *overrides* it for modes that need a per-image resolve.
+  const fileUrl = useMemo(() => {
+    if (!id) return null;
     const ep = `/api/images/${encodeURIComponent(id)}/file`;
-    setFileUrl(ep);
+    return resolvedUrls[id] ?? ep;
+  }, [id, resolvedUrls]);
+
+  useEffect(() => {
+    if (!id || resolvedUrls[id]) return;
+    const ep = `/api/images/${encodeURIComponent(id)}/file`;
+    let cancelled = false;
     resolveMediaUrl(ep)
-      .then((u) => setFileUrl(u))
-      .catch(() => setFileUrl(ep));
-  }, [id]);
+      .then((u) => {
+        if (cancelled || u === ep) return;
+        setResolvedUrls((prev) => ({ ...prev, [id]: u }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [id, resolvedUrls]);
+
+  // Commit-on-decode. Navigating only *requests* an image; the view keeps
+  // showing the current one — image and details panel together — until the
+  // requested image has decoded and can be painted in the same frame. Warm
+  // (preloaded) images resolve immediately, so stepping stays instant; cold
+  // ones hold the last good frame instead of tearing the stage away from the
+  // panel. Holding the arrow key through a cold stretch coalesces naturally:
+  // each new request supersedes the last, so only the final image is awaited.
+  useEffect(() => {
+    if (!routeId || routeId === displayId) {
+      holdStartRef.current = null;
+      setPending(false);
+      return;
+    }
+    let cancelled = false;
+    const commit = () => {
+      if (cancelled) return;
+      holdStartRef.current = null;
+      setDisplayId(routeId);
+      setPending(false);
+    };
+    // Nothing on screen yet (first mount / deep link): show it straight away.
+    if (!displayId) {
+      commit();
+      return;
+    }
+    setPending(true);
+    // Never hold the old frame hostage. The deadline is anchored to when the
+    // route first ran ahead of the display, so holding a key cannot push it
+    // back indefinitely.
+    if (holdStartRef.current === null) holdStartRef.current = Date.now();
+    const elapsed = Date.now() - holdStartRef.current;
+    const timer = window.setTimeout(commit, Math.max(0, MAX_HOLD_MS - elapsed));
+    const ep = `/api/images/${encodeURIComponent(routeId)}/file`;
+    const img = new Image();
+    void resolveMediaUrl(ep)
+      .catch(() => ep)
+      .then((u) => {
+        img.src = u;
+        return img.decode().then(() => u);
+      })
+      .then((u) => {
+        // Hand the resolved URL to the render path, so the <img> points at the
+        // exact URL that was just decoded rather than re-resolving it.
+        if (u && u !== ep && !cancelled) {
+          setResolvedUrls((prev) => ({ ...prev, [routeId]: u }));
+        }
+        commit();
+      }, commit);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [routeId, displayId]);
 
   // If the current id isn't in the loaded feed pages yet, keep paging until
   // it appears or the feed is exhausted. fetchNextPage reads the shared cache.
   useEffect(() => {
-    if (!id || index !== -1) return;
+    if (!routeId || index !== -1) return;
     if (feed.hasNextPage && !feed.isFetchingNextPage) feed.fetchNextPage();
-  }, [id, index, feed.hasNextPage, feed.isFetchingNextPage, feed.fetchNextPage]);
+  }, [
+    routeId,
+    index,
+    feed.hasNextPage,
+    feed.isFetchingNextPage,
+    feed.fetchNextPage,
+  ]);
 
-  // Preload previous/next images for snappier navigation (works with redirect & url modes)
+  // Preload the neighbourhood around the current image so arrow-stepping never
+  // waits on the network *or* the decoder. Forward-biased and three deep in
+  // that direction, because a held arrow key outruns a +-1 window.
   useEffect(() => {
     if (!list.length || index < 0) return;
-    const preload = (idx: number) => {
-      const it = list[idx];
-      if (!it) return;
+    const offsets = [1, -1, 2, 3, -2];
+    const wanted = new Set<string>();
+
+    for (const off of offsets) {
+      const it = list[index + off];
+      if (!it) continue;
+      wanted.add(it._id);
+
+      // The full doc: prefetching it is what removes the `data === undefined`
+      // phase on arrival, so the sidebar never blanks either.
+      void queryClient.prefetchQuery({
+        queryKey: ["image", it._id],
+        queryFn: ({ signal }) => fetchImage(it._id, { signal }),
+        // Without this the prefetch is stale on arrival and every step would
+        // refetch the neighbours it already fetched one step ago.
+        staleTime: IMAGE_DOC_STALE_MS,
+      });
+
+      if (preloadedRef.current.has(it._id)) continue;
       const img = new Image();
+      // Never let a neighbour compete with the image actually on screen.
+      img.fetchPriority = "low";
+      preloadedRef.current.set(it._id, img);
       const ep = `/api/images/${encodeURIComponent(it._id)}/file`;
       resolveMediaUrl(ep)
-        .then((u) => (img.src = u))
-        .catch(() => (img.src = ep));
-    };
-    preload(index - 1);
-    preload(index + 1);
-  }, [index, list]);
+        .catch(() => ep)
+        .then((u) => {
+          img.src = u;
+          // Decode off the main navigation path; without this the bitmap is
+          // only decoded when it is first painted, which is the stall we see.
+          return img.decode();
+        })
+        .catch(() => {});
+    }
+
+    // Keep the retained set small — holding every visited bitmap alive would
+    // grow unbounded over a long browsing session.
+    wanted.add(list[index]._id);
+    for (const [key, img] of preloadedRef.current) {
+      if (wanted.has(key)) continue;
+      // Abort anything still downloading: an original the user has already
+      // blown past should not keep competing for bandwidth.
+      if (!img.complete) img.src = "";
+      preloadedRef.current.delete(key);
+    }
+  }, [index, list, queryClient]);
+
+  // Page ahead before hitting the tail, so `goNext` never has to await a fetch.
+  useEffect(() => {
+    if (index < 0 || !feed.hasNextPage || feed.isFetchingNextPage) return;
+    if (index >= list.length - 3) void feed.fetchNextPage();
+  }, [
+    index,
+    list.length,
+    feed.hasNextPage,
+    feed.isFetchingNextPage,
+    feed.fetchNextPage,
+  ]);
 
   const goPrev = useCallback(() => {
     if (index > 0) navigate(toImage(list[index - 1]._id));
@@ -191,7 +338,15 @@ export default function ImageView() {
       const nextItem = all[index + 1];
       if (nextItem) navigate(toImage(nextItem._id));
     }
-  }, [index, list, navigate, toImage, feed.hasNextPage, feed.isFetchingNextPage, feed.fetchNextPage]);
+  }, [
+    index,
+    list,
+    navigate,
+    toImage,
+    feed.hasNextPage,
+    feed.isFetchingNextPage,
+    feed.fetchNextPage,
+  ]);
 
   const hasMore = feed.hasNextPage;
 
@@ -214,6 +369,11 @@ export default function ImageView() {
         e.preventDefault();
         navigate(`/${filterQuery ? `?${filterQuery}` : ""}`);
       }
+      // Curation acts on the image on screen. While the view is held mid-swap
+      // that is not the one the URL has moved to, so ignore these until the
+      // stage and the route agree — better than scoring an image you have
+      // already stepped past.
+      if (pending) return;
       // Curation: 1-5 set score, 0 clears, X quarantines/restores.
       if (e.key >= "0" && e.key <= "5") {
         e.preventDefault();
@@ -226,7 +386,15 @@ export default function ImageView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [goPrev, goNext, navigate, filterQuery, applyScore, toggleQuarantine]);
+  }, [
+    goPrev,
+    goNext,
+    navigate,
+    filterQuery,
+    applyScore,
+    toggleQuarantine,
+    pending,
+  ]);
 
   // Touch/swipe navigation
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -303,6 +471,12 @@ export default function ImageView() {
   } = partitionTags(data?.tags);
   const rating = pickRating(data);
   const accent = accentFromBlurhash(data?.blurhash);
+  // Has the image currently on screen painted?
+  const imgLoaded = !!id && loadedId === id;
+  // Show the busy hint whenever the stage is not showing a painted copy of the
+  // image the URL points at: either holding the previous frame while the next
+  // one decodes (`pending`), or a fresh mount with nothing painted yet.
+  const busy = pending || !imgLoaded;
 
   return (
     <div
@@ -333,33 +507,48 @@ export default function ImageView() {
             <PanelRight />
           </button>
         )}
-        {data ? (
-          <div className="relative flex items-center justify-center">
-            {/* Ambient glow — a blurred accent panel matching the image box.
+        {/* The stage renders off `id` alone, never off the fetched doc: keeping
+            this <img> element mounted across navigations is what makes the
+            browser hold the previous frame on screen until the next one has
+            decoded, instead of flashing an empty stage. */}
+        <div className="relative flex items-center justify-center">
+          {/* Ambient glow — a blurred accent panel matching the image box.
                 The blur spreads the primary colour outward from every edge, so
                 the whole image acts as the light source (not a centre point).
                 Blooms in only once the image has loaded. */}
-            {accent && (
-              <div
-                aria-hidden="true"
-                className={`pointer-events-none absolute inset-0 z-0 blur-[80px] transition-all duration-1000 ease-out ${
-                  imgLoaded ? "opacity-60 scale-110" : "opacity-0 scale-90"
-                }`}
-                style={{ background: accent }}
-              />
-            )}
-            <img
-              src={fileUrl || `/api/images/${encodeURIComponent(data._id)}/file`}
-              alt="image"
-              onLoad={() => setImgLoaded(true)}
-              className={`relative z-10 max-w-full max-h-dvh w-auto h-auto object-contain transition-opacity duration-300 ${
-                imgLoaded ? "opacity-100" : "opacity-0"
+          {accent && (
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-0 z-0 blur-[80px] transition-all duration-1000 ease-out ${
+                imgLoaded ? "opacity-60 scale-110" : "opacity-0 scale-90"
               }`}
+              style={{ background: accent }}
             />
+          )}
+          <img
+            src={fileUrl ?? undefined}
+            alt="image"
+            onLoad={() => setLoadedId(id ?? null)}
+            // Gated on `pending`, not on `imgLoaded`: when stepping, the src
+            // only changes once the image has already decoded, so fading it
+            // in would hide a frame that is ready to paint. The dim marks a
+            // frame that is *stale* — held while the next one loads.
+            className={`relative z-10 max-w-full max-h-dvh w-auto h-auto object-contain transition-opacity duration-200 ${
+              pending ? "opacity-40" : "opacity-100"
+            }`}
+          />
+          {/* Busy hint for the cases that can still make you wait: opening
+                the view cold, or stepping past the preload window. The delayed
+                transition means an instant swap never flashes a spinner. */}
+          <div
+            aria-hidden={!busy}
+            className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-200 ${
+              busy ? "opacity-100 delay-200" : "opacity-0 delay-0"
+            }`}
+          >
+            <div className="h-8 w-8 rounded-full border-2 border-white/25 border-t-white/90 animate-spin" />
           </div>
-        ) : (
-          <div className="text-neutral-400">Loading…</div>
-        )}
+        </div>
         <div className="pointer-events-none absolute inset-0 flex items-center justify-between px-2">
           <button
             disabled={index <= 0}
@@ -618,7 +807,10 @@ function ScoreStars({
   onSet: (n: number) => void;
 }) {
   return (
-    <div className="inline-flex items-center gap-0.5" title="Quality score (1-5, 0 to clear)">
+    <div
+      className="inline-flex items-center gap-0.5"
+      title="Quality score (1-5, 0 to clear)"
+    >
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n}
@@ -713,13 +905,7 @@ function TagChip({
 }
 
 // A small uppercase key/value pill for the "Other metadata" row.
-function MetaChip({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}) {
+function MetaChip({ label, value }: { label: string; value: React.ReactNode }) {
   if (value == null || value === "") return null;
   return (
     <span className="px-2 py-1 rounded bg-neutral-800/80 border border-neutral-700 text-[11px] inline-flex items-center gap-1">
@@ -753,13 +939,7 @@ function ResourceRow({
   );
 }
 
-function CopyButton({
-  text,
-  label,
-}: {
-  text?: string | null;
-  label: string;
-}) {
+function CopyButton({ text, label }: { text?: string | null; label: string }) {
   const { push } = useToast();
   if (!text) return null;
   return (
