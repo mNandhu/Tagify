@@ -1,25 +1,92 @@
 import { describe, it, expect } from "vitest";
 import {
   gridColumns,
+  targetTileWidth,
+  DENSITY_STEPS,
+  MIN_COLUMNS,
+  MAX_COLUMNS,
   columnWidth,
+  gapForDensity,
   aspectHeight,
   estimateItemHeight,
   lowerBoundByBottom,
   packColumns,
-  rowSpan,
   visibleSlice,
   LOAD_AHEAD_PX,
   OVERSCAN_PX,
 } from "./masonryLayout";
 
 describe("gridColumns", () => {
-  it("maps width to Tailwind breakpoints", () => {
-    expect(gridColumns(500)).toBe(2);
-    expect(gridColumns(767)).toBe(2);
-    expect(gridColumns(768)).toBe(3);
-    expect(gridColumns(1023)).toBe(3);
-    expect(gridColumns(1024)).toBe(4);
-    expect(gridColumns(2000)).toBe(4);
+  it("derives columns from the target tile width", () => {
+    // DEFAULT_DENSITY targets 250px tiles.
+    expect(gridColumns(1000)).toBe(4);
+    expect(gridColumns(1500)).toBe(6);
+    expect(gridColumns(2000)).toBe(8);
+  });
+
+  it("packs more columns as density increases", () => {
+    const coarse = gridColumns(1600, 0);
+    const dense = gridColumns(1600, DENSITY_STEPS.length - 1);
+    expect(dense).toBeGreaterThan(coarse);
+    expect(coarse).toBe(3); // 1600 / 460
+    expect(dense).toBe(11); // 1600 / 140
+  });
+
+  it("never returns zero columns for a narrow or unmeasured container", () => {
+    expect(gridColumns(0)).toBe(MIN_COLUMNS);
+    expect(gridColumns(-10)).toBe(MIN_COLUMNS);
+    expect(gridColumns(80, DENSITY_STEPS.length - 1)).toBe(MIN_COLUMNS);
+  });
+
+  it("caps columns so an ultrawide display stays legible", () => {
+    expect(gridColumns(100_000, DENSITY_STEPS.length - 1)).toBe(MAX_COLUMNS);
+  });
+
+  it("clamps out-of-range density indices instead of returning NaN", () => {
+    expect(targetTileWidth(-5)).toBe(DENSITY_STEPS[0]);
+    expect(targetTileWidth(99)).toBe(DENSITY_STEPS[DENSITY_STEPS.length - 1]);
+  });
+});
+
+describe("column count as keyboard navigation sees it", () => {
+  // The gallery's arrow keys step a row by asking gridColumns for the column
+  // count. It has to be the same question the grid packs with — same width,
+  // same density — or Up/Down jumps by the wrong number of tiles. This broke
+  // once already, when the grid derived columns from density and the keyboard
+  // handler was still calling gridColumns with the default.
+  it("agrees with the packing at every density", () => {
+    const width = 1600;
+    for (let d = 0; d < DENSITY_STEPS.length; d++) {
+      const cols = gridColumns(width, d);
+      const packing = packColumns(
+        Array.from({ length: 40 }, () => ({ width: 100, height: 100 })),
+        cols,
+        columnWidth(width, cols, gapForDensity(d)),
+        gapForDensity(d),
+      );
+      expect(packing.columns).toHaveLength(cols);
+    }
+  });
+
+  it("returns a different count once the density changes", () => {
+    // Guards against a caller that silently rides the default parameter.
+    const atDefault = gridColumns(1600);
+    expect(gridColumns(1600, DENSITY_STEPS.length - 1)).not.toBe(atDefault);
+    expect(gridColumns(1600, 0)).not.toBe(atDefault);
+  });
+});
+
+describe("gapForDensity", () => {
+  it("tightens the gutter as tiles get smaller", () => {
+    const gaps = DENSITY_STEPS.map((_, i) => gapForDensity(i));
+    for (let i = 1; i < gaps.length; i++) {
+      expect(gaps[i]).toBeLessThan(gaps[i - 1]);
+    }
+  });
+
+  it("clamps out-of-range indices", () => {
+    expect(gapForDensity(-3)).toBe(gapForDensity(0));
+    expect(gapForDensity(50)).toBe(gapForDensity(DENSITY_STEPS.length - 1));
   });
 });
 
@@ -55,25 +122,11 @@ describe("estimateItemHeight", () => {
   });
 });
 
-describe("rowSpan", () => {
-  it("computes spans covering the pixel height", () => {
-    // (404 + 12) / (4 + 12) = 26
-    expect(rowSpan(404, 4, 12)).toBe(26);
-  });
-  it("never drops below 1", () => {
-    expect(rowSpan(0, 4, 12)).toBe(1);
-    expect(rowSpan(-50, 4, 12)).toBe(1);
-  });
-  it("guards against a zero row unit", () => {
-    expect(rowSpan(400, 0, 12)).toBe(1);
-  });
-});
-
 // --- Packing + windowing ------------------------------------------------------
 //
-// This is the algorithm the virtualized gallery runs on any library over 150
-// items. It lived inside the component, where "does a 3-column pack put item 4
-// under item 1" needed jsdom, a ResizeObserver stub and a fake scroll container.
+// This is the algorithm the gallery runs on every library. It lived inside the
+// component, where "does a 3-column pack put item 4 under item 1" needed jsdom,
+// a ResizeObserver stub and a fake scroll container.
 
 // 100x200 at colWidth 100 gives a 200px tile — comfortably above
 // estimateItemHeight's 150px floor, so packed geometry is exact.

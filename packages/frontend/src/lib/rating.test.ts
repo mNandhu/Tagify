@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickRating, ratingBadgeClass } from "./rating";
+import { pickRating, ratingBadgeClass, ratingDotClass } from "./rating";
 import type { ImageDoc } from "./imageFilter";
 
 const doc = (d: Partial<ImageDoc>): ImageDoc => d as ImageDoc;
@@ -34,5 +34,20 @@ describe("ratingBadgeClass", () => {
     expect(ratingBadgeClass("explicit")).toContain("red");
     expect(ratingBadgeClass("-")).toContain("neutral");
     expect(ratingBadgeClass("???")).toContain("neutral");
+  });
+});
+
+describe("ratingDotClass", () => {
+  it("colours the ratings worth flagging", () => {
+    expect(ratingDotClass("sensitive")).toContain("amber");
+    expect(ratingDotClass("questionable")).toContain("orange");
+    expect(ratingDotClass("explicit")).toContain("red");
+  });
+
+  it("draws nothing for the unremarkable or unrated cases", () => {
+    expect(ratingDotClass("general")).toBeNull();
+    expect(ratingDotClass("-")).toBeNull();
+    expect(ratingDotClass("")).toBeNull();
+    expect(ratingDotClass(undefined)).toBeNull();
   });
 });

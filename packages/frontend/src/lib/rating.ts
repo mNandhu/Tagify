@@ -40,3 +40,25 @@ export function ratingBadgeClass(rating: string): string {
       return "bg-neutral-800 border-neutral-700 text-neutral-100";
   }
 }
+
+/**
+ * Tailwind background for the small rating dot drawn on a gallery tile. A
+ * badge with text is too heavy at thumbnail scale, so the tile shows colour
+ * only and puts the label in the tooltip; the palette matches
+ * `ratingBadgeClass` so the two readings of the same field agree.
+ *
+ * Returns null for ratings that aren't worth marking ("general" is the
+ * unremarkable default, "-" means unrated) — the tile draws nothing.
+ */
+export function ratingDotClass(rating: string | null | undefined): string | null {
+  switch ((rating || "").trim()) {
+    case "sensitive":
+      return "bg-amber-400";
+    case "questionable":
+      return "bg-orange-400";
+    case "explicit":
+      return "bg-red-400";
+    default:
+      return null;
+  }
+}

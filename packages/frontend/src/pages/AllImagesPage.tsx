@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { GalleryGrid } from "../components/GalleryGrid";
+import { VirtualizedGrid } from "../components/VirtualizedGrid";
+import { GallerySkeleton } from "../components/GallerySkeleton";
+import { DensityControl } from "../components/DensityControl";
+import { ShortcutOverlay } from "../components/ShortcutOverlay";
 import { useToast } from "../components/Toasts";
 import {
   Filter,
+  Keyboard,
   CheckSquare,
   Square,
   Tag as TagIcon,
@@ -33,6 +37,7 @@ import {
 } from "../components/TagSearchInput";
 import { useFilters } from "../hooks/useFilters";
 import { useSelectionMode } from "../hooks/useSelectionMode";
+import { useDensity } from "../hooks/useDensity";
 import {
   useImageFeed,
   useImageGroups,
@@ -42,6 +47,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ImageDoc } from "../lib/imageFilter";
 import { nextFocusIndex, isGridNavKey } from "../lib/gridNav";
 import { gridColumns } from "../lib/masonryLayout";
+import { runBulk } from "../lib/bulk";
 import {
   setScore as apiSetScore,
   setQuarantine as apiSetQuarantine,
@@ -87,12 +93,21 @@ export default function AllImagesPage() {
     toggle: toggleSelection,
     clear: clearSelection,
   } = useSelectionMode();
+  const density = useDensity();
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
   // Keyboard triage: index of the focused tile (-1 = none). Disabled in
   // selection mode and in the grouped view (tiles there are batch reps).
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const queryClient = useQueryClient();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // The grid's own box, not the padded page wrapper. Arrow-key row jumps have
+  // to step by the number of columns the grid actually packed, which means
+  // measuring the same element at the same density the grid measures — a
+  // padded parent's clientWidth is ~48px wider and rounds to a different
+  // column count at some widths.
+  const gridWrapRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Filter popover (kept inside the sticky header so it stays accessible while scrolling)
@@ -205,11 +220,50 @@ export default function AllImagesPage() {
       .catch(() => setModelOptions([]));
   }, []);
 
-  // Keyboard shortcuts: S toggle selection, F focus search, N no-tags, A no-AI-tags.
+  // Global shortcuts: S selection mode, F/"/" focus search, N no-tags,
+  // A no-AI-tags, Q quarantined, +/- zoom, ? help.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isFormField(e.target)) return;
+
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowShortcuts((v) => !v);
+        return;
+      }
+      if (e.key === "Escape" && showShortcuts) {
+        setShowShortcuts(false);
+        return;
+      }
+      // Everything past here mutates state the help overlay is covering. The
+      // triage handler already bailed on `showShortcuts`; this one did not, so
+      // reading "Q — quarantined" in the overlay and pressing Q switched the
+      // feed underneath it, invisibly.
+      if (showShortcuts) return;
+
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        density.zoomIn();
+        return;
+      }
+      if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        density.zoomOut();
+        return;
+      }
+      if (e.key === "/") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (e.key === "Escape") {
+        // One key backs out of whatever is engaged, outermost first. The
+        // overlay is handled above, before the bail.
+        if (selectionMode) setSelectionMode(false);
+        else setFocusedIndex(-1);
+        return;
+      }
 
       const k = e.key.toLowerCase();
       if (k === "s") {
@@ -241,7 +295,27 @@ export default function AllImagesPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [push, filters, setFilters]);
+  }, [
+    push,
+    filters,
+    setFilters,
+    density,
+    selectionMode,
+    setSelectionMode,
+    showShortcuts,
+  ]);
+
+  // A selection belongs to the feed it was made in: changing the filter swaps
+  // the feed under it, leaving a count over tiles that are no longer on screen
+  // and a Quarantine action aimed at images the user can't see. Leaving
+  // selection mode is what drops the selection (see useSelectionMode).
+  const filterKey = serializeFilters(filters).toString();
+  const lastFilterKeyRef = useRef(filterKey);
+  useEffect(() => {
+    if (lastFilterKeyRef.current === filterKey) return;
+    lastFilterKeyRef.current = filterKey;
+    setSelectionMode(false);
+  }, [filterKey, setSelectionMode]);
 
   const openImage = useCallback(
     (id: string) => {
@@ -286,7 +360,7 @@ export default function AllImagesPage() {
   );
 
   // --- Keyboard triage on the focused tile -----------------------------------
-  const triageEnabled = !selectionMode && !groupMode;
+  const triageEnabled = !selectionMode && !groupMode && !showShortcuts;
 
   // Optimistically patch the feed cache so a score/quarantine shows instantly.
   // Patches every cached feed, not just the current filter — the same image can
@@ -343,7 +417,10 @@ export default function AllImagesPage() {
       if (isGridNavKey(e.key)) {
         e.preventDefault();
         const key = e.key; // narrowed to GridNavKey before the closure
-        const cols = gridColumns(containerRef.current?.clientWidth || 0);
+        const cols = gridColumns(
+          gridWrapRef.current?.clientWidth || 0,
+          density.density,
+        );
         setFocusedIndex((prev) => nextFocusIndex(prev, key, cols, items.length));
       } else if (e.key >= "0" && e.key <= "5") {
         if (focusedIndex >= 0) {
@@ -355,15 +432,84 @@ export default function AllImagesPage() {
           e.preventDefault();
           void triageQuarantine();
         }
+      } else if (e.key === "Enter") {
+        // The tile that receives focus is ThumbnailTile's wrapper <div
+        // tabIndex={-1}>, not the inner <button>, so there is no default
+        // activation to fall back on — arrowing to a tile and pressing Enter
+        // did nothing at all.
+        if (focusedIndex >= 0) {
+          const it = items[focusedIndex];
+          if (it) {
+            e.preventDefault();
+            openTile(it._id);
+          }
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [triageEnabled, items.length, focusedIndex, triageScore, triageQuarantine]);
+  }, [
+    triageEnabled,
+    items,
+    focusedIndex,
+    triageScore,
+    triageQuarantine,
+    openTile,
+    density.density,
+  ]);
 
-  // Keep the focused tile in view + actually DOM-focused (so the app's arrow-key
-  // scroll handler defers to us). Retry once after a tick for the virtualized
-  // grid, where an off-screen tile mounts only after its scroll lands.
+  // --- Bulk actions ----------------------------------------------------------
+  //
+  // These still go through runBulk rather than Promise.all: a thousand selected
+  // images used to mean a thousand simultaneous requests at a single-writer
+  // SQLite backend, and one rejection hid which writes had already landed.
+  // Bounded concurrency plus a per-id account is strictly better, and costs the
+  // caller nothing.
+  const runBulkQuarantine = useCallback(
+    async (ids: string[], next: boolean) => {
+      const verb = next ? "Quarantine" : "Restore";
+      const ok = confirm(
+        `${verb} ${ids.length} selected image${ids.length === 1 ? "" : "s"}?`,
+      );
+      if (!ok) return;
+      // Either way the tiles leave the current list, so drop them from the
+      // cached feeds and the grid updates without a refresh, the way
+      // single-image triage does.
+      removeImagesFromFeeds(queryClient, ids);
+      const res = await runBulk(ids, (id) => apiSetQuarantine(id, next));
+      invalidateFeeds(queryClient);
+
+      if (res.failed.length) {
+        // Stay in selection mode on a partial failure. Leaving it drops the
+        // selection (see useSelectionMode), which would report "912 done, 88
+        // failed" and simultaneously throw away the only handle on those 88.
+        push(`${res.ok.length} done, ${res.failed.length} failed`, "error");
+        return;
+      }
+      setSelectionMode(false);
+      push(
+        `${next ? "Quarantined" : "Restored"} ${ids.length} image${ids.length === 1 ? "" : "s"}`,
+        "success",
+      );
+    },
+    [queryClient, setSelectionMode, push],
+  );
+
+  const runBulkTag = useCallback(
+    async (ids: string[]) => {
+      const ok = confirm(`Run AI tagging for ${ids.length} selected images?`);
+      if (!ok) return;
+      try {
+        await postAiTag(ids);
+        push(`Queued AI tagging for ${ids.length} images`, "success");
+        setSelectionMode(false);
+      } catch (e) {
+        push(`Failed to start AI job: ${String(e)}`, "error");
+      }
+    },
+    [push, setSelectionMode],
+  );
+
   useEffect(() => {
     if (focusedIndex < 0) return;
     const sc = getScrollContainer();
@@ -400,11 +546,34 @@ export default function AllImagesPage() {
                   ? "Filtered Images"
                   : "All Images"
         }
+        // Not a total: the feed is cursor-paged and the API exposes no count,
+        // so this is what has been loaded so far. Labelling it plainly beats a
+        // bare number that climbs as you scroll and looks like a bug.
         count={items.length}
+        countLabel="loaded"
         description={
           selectionMode
             ? `${selection.size} selected`
             : "Browse, filter, and tag your library."
+        }
+        actions={
+          <>
+            <DensityControl
+              onZoomIn={density.zoomIn}
+              onZoomOut={density.zoomOut}
+              atMin={density.atMin}
+              atMax={density.atMax}
+            />
+            <Button
+              size="icon"
+              variant="secondary"
+              onClick={() => setShowShortcuts(true)}
+              aria-label="Keyboard shortcuts"
+              title="Keyboard shortcuts (?)"
+            >
+              <Keyboard size={18} />
+            </Button>
+          </>
         }
       />
       <div
@@ -456,7 +625,7 @@ export default function AllImagesPage() {
             aria-label={
               selectionMode ? "Exit selection mode" : "Enter selection mode"
             }
-            title={selectionMode ? "Done selecting" : "Select"}
+            title={selectionMode ? "Done selecting" : "Select (S)"}
           >
             {selectionMode ? <CheckSquare size={18} /> : <Square size={18} />}
           </Button>
@@ -467,21 +636,7 @@ export default function AllImagesPage() {
                 {
                   label: "Tag",
                   icon: <Sparkles size={15} />,
-                  onClick: async () => {
-                    const ids = Array.from(selection);
-                    if (!ids.length) return;
-                    const ok = confirm(
-                      `Run AI tagging for ${ids.length} selected images?`,
-                    );
-                    if (!ok) return;
-                    try {
-                      await postAiTag(ids);
-                      push(`Queued AI tagging for ${ids.length} images`, "success");
-                      setSelectionMode(false);
-                    } catch (e) {
-                      push(`Failed to start AI job: ${String(e)}`, "error");
-                    }
-                  },
+                  onClick: () => void runBulkTag(Array.from(selection)),
                 },
                 {
                   // Mirrors single-image triage: the default feed quarantines,
@@ -493,31 +648,11 @@ export default function AllImagesPage() {
                     <ShieldOff size={15} />
                   ),
                   variant: filters.quarantined ? "default" : "danger",
-                  onClick: async () => {
-                    const ids = Array.from(selection);
-                    if (!ids.length) return;
-                    const next = !filters.quarantined;
-                    const verb = next ? "Quarantine" : "Restore";
-                    const ok = confirm(
-                      `${verb} ${ids.length} selected image${ids.length === 1 ? "" : "s"}?`,
-                    );
-                    if (!ok) return;
-                    try {
-                      await Promise.all(ids.map((id) => apiSetQuarantine(id, next)));
-                      // Either way the tiles leave the current list, so drop
-                      // them from the cached feeds and the grid updates without
-                      // a refresh, the way single-image triage does.
-                      removeImagesFromFeeds(queryClient, ids);
-                      invalidateFeeds(queryClient);
-                      push(
-                        `${next ? "Quarantined" : "Restored"} ${ids.length} image${ids.length === 1 ? "" : "s"}`,
-                        "success",
-                      );
-                      setSelectionMode(false);
-                    } catch (e) {
-                      push(`Failed to ${verb.toLowerCase()}: ${String(e)}`, "error");
-                    }
-                  },
+                  onClick: () =>
+                    void runBulkQuarantine(
+                      Array.from(selection),
+                      !filters.quarantined,
+                    ),
                 },
               ]}
             />
@@ -767,6 +902,10 @@ export default function AllImagesPage() {
         )}
       </div>
 
+      {activeFeed.isLoading && items.length === 0 && (
+        <GallerySkeleton density={density.density} />
+      )}
+
       {!activeFeed.isLoading && items.length === 0 && (
         <EmptyState
           icon={ImageOff}
@@ -806,7 +945,8 @@ export default function AllImagesPage() {
       )}
 
       {items.length > 0 && (
-        <GalleryGrid
+        <div ref={gridWrapRef}>
+        <VirtualizedGrid
           items={items}
           selection={selection}
           onToggle={toggleSelection}
@@ -814,10 +954,22 @@ export default function AllImagesPage() {
           getScrollContainer={getScrollContainer}
           selectionMode={selectionMode}
           focusedIndex={focusedIndex}
+          density={density.density}
+          // In the quarantined view every tile is quarantined, so dimming them
+          // all just makes the one screen where you have to look closely to
+          // decide on a restore the hardest one to see. The badge carries the
+          // meaning there; the dimming is only informative in a mixed feed.
+          dimQuarantined={!filters.quarantined}
+          className="min-h-screen"
         />
+        </div>
       )}
 
       <div ref={sentinelRef} className="h-8" />
+
+      {showShortcuts && (
+        <ShortcutOverlay onClose={() => setShowShortcuts(false)} />
+      )}
     </div>
   );
 }

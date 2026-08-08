@@ -1,16 +1,32 @@
-import React from "react";
+import React, { useState } from "react";
+import { Check, Layers, ShieldOff, Sparkles } from "lucide-react";
 import { ImageThumbnail } from "./ImageThumbnail";
+import { cn } from "../lib/cn";
+import { ratingDotClass } from "../lib/rating";
+import { useBatchScrub } from "../hooks/useBatchScrub";
 import type { ImageDoc } from "../lib/imageFilter";
 
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
 
 /**
- * One gallery tile: resolves the thumbnail URL (supports pre-signed URL mode),
- * renders the image, and overlays the selection checkbox in selection mode.
+ * One gallery tile: the thumbnail plus every piece of triage state the user
+ * needs to see without opening the image.
  *
- * Shared by both the CSS-grid gallery and the virtualized gallery — previously
- * duplicated as ThumbnailItem / VirtualThumbnailItem. Each grid wraps this with
- * its own positioning (row-span vs absolute row).
+ * The gallery is where scoring, quarantining and tagging actually happen, so a
+ * tile that renders only the picture makes the work invisible — you score an
+ * image, nothing changes on screen, and you can't tell what you've already
+ * been through when you come back. The overlays here are that feedback:
+ * score pips, an untagged marker, a rating dot, quarantine state.
+ *
+ * Overlay visibility follows one rule: **state that is set is always visible;
+ * affordances appear on hover.** A scored image shows its score at rest; an
+ * unscored one shows nothing until you point at it. That keeps a wall of
+ * already-triaged images readable while leaving the untouched ones clean.
+ *
+ * The selection checkbox is not one of those overlays — it exists only in
+ * selection mode. A picking affordance sitting on every tile is visual noise
+ * on a screen whose entire job is looking at pictures, so entering the mode is
+ * the deliberate opt-in that puts it there.
  */
 export const ThumbnailTile = React.memo(function ThumbnailTile({
   item,
@@ -22,16 +38,21 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   getRoot,
   eager = false,
   focused = false,
+  dimQuarantined = true,
 }: {
   item: ImageDocWithDims;
   index: number;
   selected: boolean;
+  /** Selection mode is on — the checkbox is shown and clicks pick rather than open. */
   selectionMode: boolean;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
   getRoot?: () => HTMLElement | null;
   eager?: boolean;
   focused?: boolean;
+  /** Hold a quarantined tile back visually. Off in the quarantined view, where
+   * every tile is quarantined and the badge alone carries the meaning. */
+  dimQuarantined?: boolean;
 }) {
   // Prefer the ready-to-use URL embedded in the list payload (no per-tile
   // resolve request). Fall back to the endpoint, which ImageThumbnail resolves
@@ -39,16 +60,35 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   const embedded = item.thumb_url;
   const src = embedded ?? `/api/images/${encodeURIComponent(item._id)}/thumb`;
 
+  const groupCount = item.group_count ?? 1;
+  const isBatch = groupCount > 1;
+  const [scrubbing, setScrubbing] = useState(false);
+  const scrub = useBatchScrub(item.group_id, isBatch && scrubbing && !selectionMode);
+
+  const score = item.score ?? 0;
+  const hasScore = score > 0;
+  const quarantined = !!item.quarantined;
+  // has_ai_tags is only meaningful when the feed actually sent it; an older
+  // payload without the field must not paint every tile as untagged.
+  const untagged = item.has_ai_tags === false;
+  const ratingDot = ratingDotClass(item.rating);
+
+  const chipVisibility = (always: boolean) =>
+    always
+      ? "opacity-100"
+      : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100";
+
   return (
     <div
-      className={
-        "relative group h-full rounded-lg" +
-        (focused
-          ? " ring-2 ring-purple-400 ring-offset-2 ring-offset-neutral-900"
-          : "")
-      }
+      className={cn(
+        "relative group h-full rounded-xl transition-shadow duration-150",
+        focused && "ring-2 ring-purple-400 ring-offset-2 ring-offset-neutral-900",
+        selected && "ring-2 ring-purple-500",
+      )}
       data-tile-index={index}
       tabIndex={-1}
+      onMouseEnter={isBatch && !selectionMode ? () => setScrubbing(true) : undefined}
+      onMouseLeave={isBatch && !selectionMode ? () => setScrubbing(false) : undefined}
     >
       <ImageThumbnail
         src={src}
@@ -58,11 +98,27 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
         width={item.width}
         height={item.height}
         selected={selected}
+        dimmed={quarantined && dimQuarantined}
         onClick={() => (selectionMode ? onToggle(item._id) : onOpen(item._id))}
         priority={index < 12} // First 12 items get high priority
         getRoot={getRoot}
         eager={eager}
       />
+
+      {/* Batch peek: while the pointer rests on a collapsed batch, its other
+          members cross-fade over the representative. Layered on top rather than
+          swapped into ImageThumbnail's src so the tile's own load state, and
+          the BlurHash it already resolved, are left alone. */}
+      {scrub.src && (
+        <img
+          src={scrub.src}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 h-full w-full rounded-xl object-cover motion-safe:animate-fade-in"
+        />
+      )}
+
+      {/* Selection checkbox — only in selection mode. */}
       {selectionMode && (
         <button
           onClick={(e) => {
@@ -70,24 +126,104 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
             onToggle(item._id);
           }}
           aria-label={selected ? "Deselect" : "Select"}
-          className="absolute top-2 right-2 w-6 h-6 rounded border border-white/60 bg-black/40 flex items-center justify-center"
-        >
-          {selected ? (
-            <span className="w-3 h-3 bg-purple-500 block rounded-sm" />
-          ) : (
-            <span className="w-3 h-3 block rounded-sm" />
+          aria-pressed={selected}
+          className={cn(
+            "absolute top-2 right-2 w-6 h-6 rounded-md flex items-center justify-center",
+            "border transition-[background-color,border-color] duration-150",
+            selected
+              ? "bg-purple-500 border-purple-300 text-white"
+              : "bg-black/50 border-white/50 text-transparent hover:bg-black/70 backdrop-blur-sm",
           )}
+        >
+          <Check size={14} strokeWidth={3} />
         </button>
       )}
+
       {/* Batch-stack indicator: this tile represents N grouped variations. */}
-      {!selectionMode && (item.group_count ?? 1) > 1 && (
+      {isBatch && !selectionMode && (
         <span
-          className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-black/70 border border-white/15 text-white pointer-events-none"
-          title={`${item.group_count} variations in this batch`}
+          className={cn(
+            "absolute top-2 left-2 px-1.5 py-0.5 rounded-md text-[11px] font-medium",
+            "bg-black/70 border border-white/15 text-white pointer-events-none",
+            "inline-flex items-center gap-1 backdrop-blur-sm",
+            scrubbing && "bg-purple-600/80 border-purple-300/40",
+          )}
+          title={`${groupCount} variations in this batch`}
         >
-          ⧉ {item.group_count}
+          <Layers size={11} />{" "}
+          {/* Denominator is the batch size, not scrub.total — the peek only
+              fetches the first MAX_MEMBERS, so showing its length turned a
+              40-image batch into "3/12" the moment you hovered it. */}
+          {scrub.total > 1 && scrubbing
+            ? `${scrub.position + 1}/${groupCount}`
+            : groupCount}
         </span>
       )}
+
+      {/* Triage state, bottom edge. The scrim keeps it legible over a bright
+          thumbnail without dimming the image itself. */}
+      <div
+        className={cn(
+          "pointer-events-none absolute inset-x-0 bottom-0 px-2 pb-1.5 pt-6 rounded-b-xl",
+          "flex items-end justify-between gap-2",
+          "bg-gradient-to-t from-black/75 via-black/35 to-transparent",
+          "transition-opacity duration-150",
+          // `untagged` belongs here with the rest: finding what still needs
+          // tagging by scanning a wall of tiles is the entire job the marker
+          // exists for, and it can't do that from behind a hover.
+          chipVisibility(hasScore || quarantined || untagged || !!ratingDot),
+        )}
+      >
+        <ScorePips score={score} />
+        <div className="flex items-center gap-1.5">
+          {untagged && (
+            <span
+              className="text-neutral-400/90"
+              title="No AI tags yet"
+              aria-label="Untagged"
+            >
+              <Sparkles size={13} />
+            </span>
+          )}
+          {ratingDot && (
+            <span
+              className={cn("h-2 w-2 rounded-full", ratingDot)}
+              title={`Rating: ${item.rating}`}
+            />
+          )}
+          {quarantined && (
+            <span className="text-red-300" title="Quarantined">
+              <ShieldOff size={13} />
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 });
+
+/**
+ * The 0-5 quality score as five pips. Chosen over a number because it is
+ * readable at a glance across a wall of tiles — you can see "mostly 4s and 5s"
+ * in a column without reading anything.
+ */
+function ScorePips({ score }: { score: number }) {
+  const n = Math.max(0, Math.min(5, Math.round(score)));
+  return (
+    <span
+      className="flex items-center gap-[3px]"
+      title={n > 0 ? `Score ${n}/5` : "Unscored"}
+      aria-label={n > 0 ? `Score ${n} of 5` : "Unscored"}
+    >
+      {[1, 2, 3, 4, 5].map((i) => (
+        <span
+          key={i}
+          className={cn(
+            "h-1 w-3 rounded-full",
+            i <= n ? "bg-amber-300" : "bg-white/25",
+          )}
+        />
+      ))}
+    </span>
+  );
+}

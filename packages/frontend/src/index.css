@@ -17,13 +17,19 @@ body {
   background: radial-gradient(1200px 800px at 10% -10%, rgba(139, 92, 246, 0.05), transparent 60%),
               radial-gradient(1000px 700px at 110% 10%, rgba(59, 130, 246, 0.04), transparent 60%),
               linear-gradient(180deg, #0b0b0f 0%, #0a0a0d 100%);
+  background-attachment: fixed;
 }
 
-/* Focus rings aligned to brand accent */
+/* Focus rings aligned to brand accent.
+ *
+ * `border-radius` is deliberately NOT set here. It used to be, which forced a
+ * 6px radius onto every focused element regardless of its own shape — the round
+ * lightbox nav buttons squared off the moment you tabbed to them. `inherit`
+ * would be a no-op at best; letting the element keep its own radius is the
+ * whole point, and box-shadow follows it automatically. */
 *:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.6);
-  border-radius: 6px;
 }
 
 /* Card hover glow helper */
@@ -35,11 +41,24 @@ body {
   transform: translateY(-1px);
 }
 
-/* Performance helpers (avoid inline styles to keep lint happy) */
-.content-visibility-auto {
-  content-visibility: auto;
-}
-/* A reasonable placeholder size for content-visibility; actual <img> still has width/height. */
-.contain-intrinsic-thumb {
-  contain-intrinsic-size: 320px 240px;
+/* Respect the OS "reduce motion" setting globally: transitions and animations
+ * collapse to something effectively instant rather than being removed, so
+ * anything relying on transitionend/animationend still fires.
+ *
+ * Note what `motion-safe:` does and doesn't do here. It compiles to
+ * `prefers-reduced-motion: no-preference`, so a `motion-safe:` utility applies
+ * only when reduce is OFF — it is a way to *scope motion to users who want it*,
+ * never a way to exempt an animation from this rule. Exempting one means
+ * writing a more specific selector that beats these !important declarations,
+ * and should be reserved for motion that carries information no static state
+ * conveys. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -1,0 +1,125 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { ThumbnailTile } from "./ThumbnailTile";
+import type { ImageDoc } from "../lib/imageFilter";
+
+const doc = (d: Partial<ImageDoc>): ImageDoc =>
+  ({ _id: "L1:a.png", path: "a.png", ...d }) as ImageDoc;
+
+function renderTile(item: ImageDoc, props: Partial<Parameters<typeof ThumbnailTile>[0]> = {}) {
+  const onToggle = vi.fn();
+  const onOpen = vi.fn();
+  const utils = render(
+    <ThumbnailTile
+      item={item}
+      index={3}
+      selected={false}
+      selectionMode={false}
+      onToggle={onToggle}
+      onOpen={onOpen}
+      eager
+      {...props}
+    />,
+  );
+  return { onToggle, onOpen, ...utils };
+}
+
+describe("ThumbnailTile triage state", () => {
+  it("shows the score as pips when the image has been scored", () => {
+    renderTile(doc({ score: 4 }));
+    expect(screen.getByLabelText("Score 4 of 5")).toBeInTheDocument();
+  });
+
+  it("reports an unscored image as unscored rather than as a zero", () => {
+    renderTile(doc({ score: 0 }));
+    expect(screen.getByLabelText("Unscored")).toBeInTheDocument();
+  });
+
+  it("marks an image with no AI tags", () => {
+    renderTile(doc({ has_ai_tags: false }));
+    expect(screen.getByLabelText("Untagged")).toBeInTheDocument();
+  });
+
+  it("does not claim an image is untagged when the feed omitted the flag", () => {
+    // An older payload without has_ai_tags must not paint every tile untagged.
+    renderTile(doc({}));
+    expect(screen.queryByLabelText("Untagged")).not.toBeInTheDocument();
+  });
+
+  it("shows quarantine state", () => {
+    renderTile(doc({ quarantined: true }));
+    expect(screen.getByTitle("Quarantined")).toBeInTheDocument();
+  });
+
+  it("flags a rating worth noticing but stays quiet for 'general'", () => {
+    const { unmount } = renderTile(doc({ rating: "explicit" }));
+    expect(screen.getByTitle("Rating: explicit")).toBeInTheDocument();
+    unmount();
+    renderTile(doc({ rating: "general" }));
+    expect(screen.queryByTitle("Rating: general")).not.toBeInTheDocument();
+  });
+
+  it("shows the batch size for a collapsed batch", () => {
+    renderTile(doc({ group_count: 7, group_id: "g1" }));
+    expect(screen.getByTitle("7 variations in this batch")).toBeInTheDocument();
+  });
+});
+
+/** The thumbnail itself — the first button in the tile, before the checkbox. */
+const pictureButton = () => screen.getAllByRole("button")[0];
+
+describe("ThumbnailTile selection", () => {
+  it("shows no checkbox outside selection mode", () => {
+    // The whole reason selection is mode-gated: a picking affordance on every
+    // tile is noise on a screen whose job is looking at pictures.
+    renderTile(doc({}));
+    expect(screen.queryByLabelText("Select")).not.toBeInTheDocument();
+  });
+
+  it("opens the image on a click outside selection mode", () => {
+    const { onOpen, onToggle } = renderTile(doc({ _id: "L1:x.png" }));
+    fireEvent.click(pictureButton());
+    expect(onOpen).toHaveBeenCalledWith("L1:x.png");
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  it("shows a checkbox in selection mode", () => {
+    renderTile(doc({}), { selectionMode: true });
+    expect(screen.getByLabelText("Select")).toBeInTheDocument();
+  });
+
+  it("selects from the checkbox in selection mode", () => {
+    const { onToggle, onOpen } = renderTile(doc({ _id: "L1:x.png" }), {
+      selectionMode: true,
+    });
+    fireEvent.click(screen.getByLabelText("Select"));
+    expect(onToggle).toHaveBeenCalledWith("L1:x.png");
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("clicking the picture in selection mode picks rather than opens", () => {
+    const { onToggle, onOpen } = renderTile(doc({ _id: "L1:x.png" }), {
+      selectionMode: true,
+    });
+    fireEvent.click(pictureButton());
+    expect(onToggle).toHaveBeenCalledWith("L1:x.png");
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("labels the checkbox for its current state", () => {
+    const { unmount } = renderTile(doc({}), {
+      selectionMode: true,
+      selected: true,
+    });
+    expect(screen.getByLabelText("Deselect")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    unmount();
+    renderTile(doc({}), { selectionMode: true });
+    expect(screen.getByLabelText("Select")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+});

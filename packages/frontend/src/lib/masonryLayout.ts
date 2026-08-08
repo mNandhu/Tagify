@@ -1,15 +1,61 @@
-// Masonry layout math, shared by the CSS-grid gallery (row spans) and the
-// virtualized gallery (estimated row heights). Pure functions — the test
-// surface that both grids previously open-coded with slightly different
-// formulas.
+// Masonry layout math for the virtualized gallery: how many columns to show at
+// a given density, how tall each tile packs, and which tiles a viewport needs
+// mounted. Pure functions — the arithmetic that decides whether the grid shows
+// a blank band while scrolling belongs somewhere a test can reach.
 
 export type Dims = { width?: number; height?: number };
 
-/** Tailwind grid breakpoints used by the gallery: 2 / 3 / 4 columns. */
-export function gridColumns(containerWidth: number): number {
-  if (containerWidth >= 1024) return 4;
-  if (containerWidth >= 768) return 3;
-  return 2;
+/**
+ * Gallery density, as the target on-screen width of one tile in px. Columns are
+ * derived from it rather than from fixed breakpoints, so a wide display packs
+ * more tiles instead of stretching four of them across 2000px.
+ *
+ * Ordered coarse -> dense; the index is what gets persisted (see useDensity),
+ * because the px values are a tuning detail that should be free to change
+ * without invalidating everyone's stored preference.
+ */
+export const DENSITY_STEPS = [460, 340, 250, 185, 140] as const;
+
+/** Index into DENSITY_STEPS used when nothing is stored. */
+export const DEFAULT_DENSITY = 2;
+
+/** Hard bounds on the derived column count. */
+export const MIN_COLUMNS = 1;
+export const MAX_COLUMNS = 14;
+
+/** Target tile width for a density index, clamped to the available steps. */
+export function targetTileWidth(density: number): number {
+  const i = Math.max(0, Math.min(DENSITY_STEPS.length - 1, Math.round(density)));
+  return DENSITY_STEPS[i];
+}
+
+/**
+ * Column count for a container width at a given density.
+ *
+ * This is the single source of truth for "how many columns is the gallery
+ * showing" — the grid packs with it and the keyboard navigation steps rows by
+ * it. They used to disagree: the CSS grid used viewport-based Tailwind
+ * breakpoints (which could yield 1 column) while this returned 2/3/4 from the
+ * container width, so arrow-key row jumps were wrong at narrow widths.
+ */
+export function gridColumns(
+  containerWidth: number,
+  density: number = DEFAULT_DENSITY,
+): number {
+  if (containerWidth <= 0) return MIN_COLUMNS;
+  const target = targetTileWidth(density);
+  const cols = Math.round(containerWidth / target);
+  return Math.max(MIN_COLUMNS, Math.min(MAX_COLUMNS, cols));
+}
+
+/**
+ * Gutter between tiles at a given density. Tight grids want tight gutters: a
+ * fixed 12px gap that looks right around 250px tiles reads as a chasm at 140px
+ * and as a cramped seam at 460px.
+ */
+export function gapForDensity(density: number): number {
+  const i = Math.max(0, Math.min(DENSITY_STEPS.length - 1, Math.round(density)));
+  return [16, 14, 12, 10, 8][i];
 }
 
 /** Width of one column given the container width, column count, and gap. */
@@ -44,18 +90,6 @@ export function estimateItemHeight(
   return Math.max(minHeight, aspectHeight(item, colWidth));
 }
 
-/**
- * Number of CSS grid rows an item should span, given the auto-row unit and
- * row gap, so that N*rowUnit + (N-1)*rowGap covers `pxHeight`. Always >= 1.
- */
-export function rowSpan(
-  pxHeight: number,
-  rowUnit: number,
-  rowGap: number,
-): number {
-  if (rowUnit <= 0) return 1;
-  return Math.max(1, Math.ceil((pxHeight + rowGap) / (rowUnit + rowGap)));
-}
 
 /**
  * How far ahead of the viewport a tile starts loading its image

@@ -18,15 +18,19 @@ export type ImageDoc = {
   // never show a grey loading skeleton. See services/blurhash.py.
   blurhash?: string;
   tags?: string[];
-  rating?: string;
+  // Null, not undefined, when unset: these come straight from SQL columns.
+  rating?: string | null;
   // 0-5 quality score (distinct from `rating`, the content-safety axis).
-  score?: number;
+  score?: number | null;
   // Batch grouping (grouped view only): the representative's group + member
   // count. group_count > 1 means this tile stands for a batch of variations.
   group_id?: string;
   group_count?: number;
   // DB-only curation flag; quarantined images leave the default feed.
   quarantined?: boolean;
+  // Summary flag maintained by services/image_tags.py. The grid draws an
+  // "untagged" marker from it so an un-AI-tagged image is visible at a glance.
+  has_ai_tags?: boolean;
   // Structured generation metadata (extracted from embedded AI-art data).
   gen?: import("./gen").GenMeta;
   ai?: {

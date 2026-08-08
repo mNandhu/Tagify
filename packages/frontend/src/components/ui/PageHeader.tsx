@@ -10,6 +10,7 @@ export function PageHeader({
   icon: Icon,
   title,
   count,
+  countLabel,
   description,
   actions,
   className,
@@ -18,6 +19,9 @@ export function PageHeader({
   icon?: LucideIcon;
   title: React.ReactNode;
   count?: number;
+  /** Qualifier rendered after the count, e.g. "loaded" for a paged feed whose
+   * total isn't known. Without it a growing number reads as a wrong total. */
+  countLabel?: string;
   description?: React.ReactNode;
   actions?: React.ReactNode;
   className?: string;
@@ -39,6 +43,9 @@ export function PageHeader({
               {typeof count === "number" && (
                 <span className="text-sm font-medium text-neutral-500 tabular-nums">
                   {count.toLocaleString()}
+                  {countLabel && (
+                    <span className="ml-1 font-normal">{countLabel}</span>
+                  )}
                 </span>
               )}
             </h2>

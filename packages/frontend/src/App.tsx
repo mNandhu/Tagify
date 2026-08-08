@@ -99,7 +99,10 @@ export default function App() {
   }, []);
 
   return (
-    <div className="h-dvh bg-neutral-900 text-white">
+    // Transparent, not `bg-neutral-900`: index.css paints the app's radial
+    // gradients on <body>, and an opaque root covered every one of them — the
+    // designed background was in the stylesheet but had never been visible.
+    <div className="h-dvh text-white">
       {/* Fixed sidebar */}
       <div
         className={
