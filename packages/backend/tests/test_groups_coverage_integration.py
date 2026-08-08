@@ -27,6 +27,38 @@ async def test_groups_collapse_to_newest_representative(client, seed):
     assert len(rows) == 2
 
 
+async def test_groups_project_the_same_columns_as_the_flat_feed(client, seed):
+    """The grid draws the same triage state in both gallery views.
+
+    `list_groups` built its result dicts from a hand-written key list, so a
+    column added to FEED_COLUMNS reached `/images` and silently skipped
+    `/images/groups`: the grouped view rendered tiles with no rating dot, no
+    quarantine badge and no untagged marker.
+    """
+    seed("L1:g1", gen={"group_id": "G", "workflow_sig": "s"})
+    seed(
+        "L1:g2",
+        gen={"group_id": "G", "workflow_sig": "s"},
+        tags=("1girl",),
+        score=4,
+        rating="explicit",
+    )
+
+    flat = (await client.get("/images")).json()
+    grouped = (await client.get("/images/groups")).json()
+    assert flat and grouped
+
+    # Every key the flat feed offers is present on the grouped representative.
+    assert set(flat[0]) - {"thumb_url"} <= set(grouped[0])
+
+    # And the values actually arrive, rather than arriving as None.
+    rep = next(r for r in grouped if r["_id"] == "L1:g2")
+    assert rep["score"] == 4
+    assert rep["rating"] == "explicit"
+    assert rep["has_ai_tags"] is True
+    assert rep["quarantined"] is False
+
+
 async def test_groups_span_page_order_desc(client, seed):
     seed("L1:a", gen={"group_id": "GA", "workflow_sig": "s"})
     seed("L1:b", gen={"group_id": "GB", "workflow_sig": "s"})

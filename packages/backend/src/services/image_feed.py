@@ -28,6 +28,12 @@ class FeedFilterError(ValueError):
 
 
 # Columns the grid needs (kept minimal for payload size).
+#
+# The triage flags (rating / quarantined / has_ai_tags) are here because the
+# grid draws them on every tile: the gallery is where images get scored,
+# quarantined and tagged, so "what have I already done to this one" has to be
+# visible without opening it. They are indexed scalars on `images` — a bool and
+# a short string per row — so the payload cost is far below a second request.
 FEED_COLUMNS = (
     t.images.c._id,
     t.images.c.path,
@@ -36,7 +42,17 @@ FEED_COLUMNS = (
     t.images.c.thumb_key,
     t.images.c.blurhash,
     t.images.c.score,
+    t.images.c.rating,
+    t.images.c.quarantined,
+    t.images.c.has_ai_tags,
 )
+
+# Names of the projected columns, so callers that build result dicts by hand
+# stay in step with FEED_COLUMNS. `list_groups` used to enumerate its nine keys
+# literally, which meant a column added here reached the flat feed and silently
+# skipped the grouped view — the grid then drew tiles with no rating, no
+# quarantine badge and no untagged marker in one of the two gallery views.
+FEED_KEYS = tuple(c.name for c in FEED_COLUMNS)
 
 
 @dataclass(frozen=True)
@@ -203,13 +219,7 @@ async def list_groups(f: FeedFilter, *, offset: int, limit: int) -> list[dict]:
     for r in rows:
         out.append(
             {
-                "_id": r._id,
-                "path": r.path,
-                "width": r.width,
-                "height": r.height,
-                "thumb_key": r.thumb_key,
-                "blurhash": r.blurhash,
-                "score": r.score,
+                **{k: getattr(r, k) for k in FEED_KEYS},
                 "group_id": r.group_id,
                 "group_count": r.group_count,
             }
