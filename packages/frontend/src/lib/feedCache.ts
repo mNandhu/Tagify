@@ -46,7 +46,20 @@ export function patchImageInFeeds(
 
 /** Drop one image from every cached feed (quarantine, purge). */
 export function removeImageFromFeeds(qc: QueryClient, id: string): void {
-  patchFeeds(qc, (pages) => pages.map((page) => page.filter((d) => d._id !== id)));
+  removeImagesFromFeeds(qc, [id]);
+}
+
+/**
+ * Drop several images from every cached feed in one pass — the batch-selection
+ * counterpart to removeImageFromFeeds.
+ */
+export function removeImagesFromFeeds(
+  qc: QueryClient,
+  ids: readonly string[],
+): void {
+  if (!ids.length) return;
+  const drop = new Set(ids);
+  patchFeeds(qc, (pages) => pages.map((page) => page.filter((d) => !drop.has(d._id))));
 }
 
 /** Refetch the feed and the grouped view after a mutation. */

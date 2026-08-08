@@ -5,6 +5,7 @@ import {
   invalidateFeeds,
   patchImageInFeeds,
   removeImageFromFeeds,
+  removeImagesFromFeeds,
 } from "./feedCache";
 
 const doc = (id: string, score = 0) => ({ _id: id, score }) as ImageDoc;
@@ -83,5 +84,30 @@ describe("invalidateFeeds", () => {
     invalidateFeeds(qc);
 
     expect(seen).toEqual([["images"], ["image-groups"]]);
+  });
+});
+
+describe("removeImagesFromFeeds", () => {
+  it("drops every listed image from every cached feed in one pass", () => {
+    // The batch-selection case: the dropdown quarantined N images but never
+    // touched the cache, so the grid kept showing them until a manual refresh.
+    const qc = seededClient();
+
+    removeImagesFromFeeds(qc, ["a", "b"]);
+
+    expect(pagesOf(qc, ["images", 60, { tags: [] }])[0]).toEqual([]);
+    expect(pagesOf(qc, ["images", 60, { tags: ["cat"] }])[0]).toEqual([]);
+  });
+
+  it("keeps images that were not selected", () => {
+    const qc = seededClient();
+    removeImagesFromFeeds(qc, ["a"]);
+    expect(pagesOf(qc, ["images", 60, { tags: [] }])[0].map((d) => d._id)).toEqual(["b"]);
+  });
+
+  it("is a no-op for an empty selection", () => {
+    const qc = seededClient();
+    removeImagesFromFeeds(qc, []);
+    expect(pagesOf(qc, ["images", 60, { tags: [] }])[0]).toHaveLength(2);
   });
 });

@@ -48,7 +48,11 @@ import {
 import { api } from "../lib/api";
 import { isFormField } from "../lib/dom";
 import { postAiTag } from "../lib/ai";
-import { patchFeeds } from "../lib/feedCache";
+import {
+  invalidateFeeds,
+  patchFeeds,
+  removeImagesFromFeeds,
+} from "../lib/feedCache";
 
 type Library = { _id: string; name?: string; path: string };
 
@@ -491,6 +495,13 @@ export default function AllImagesPage() {
                     if (!ok) return;
                     try {
                       await Promise.all(ids.map((id) => apiSetQuarantine(id, true)));
+                      // Drop them from the cached feeds so the grid updates
+                      // without a refresh, the way single-image triage does.
+                      // Skipped in the quarantined view, where they belong.
+                      if (!filters.quarantined) {
+                        removeImagesFromFeeds(queryClient, ids);
+                      }
+                      invalidateFeeds(queryClient);
                       push(`Quarantined ${ids.length} image${ids.length === 1 ? "" : "s"}`, "success");
                       setSelectionMode(false);
                     } catch (e) {
