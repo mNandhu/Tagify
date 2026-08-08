@@ -14,6 +14,7 @@ import {
   Layers,
   ArrowLeft,
   ShieldOff,
+  ShieldCheck,
 } from "lucide-react";
 import {
   DEFAULT_FILTERS,
@@ -483,29 +484,38 @@ export default function AllImagesPage() {
                   },
                 },
                 {
-                  label: "Quarantine",
-                  icon: <ShieldOff size={15} />,
-                  variant: "danger",
+                  // Mirrors single-image triage: the default feed quarantines,
+                  // the quarantined view restores.
+                  label: filters.quarantined ? "Restore" : "Quarantine",
+                  icon: filters.quarantined ? (
+                    <ShieldCheck size={15} />
+                  ) : (
+                    <ShieldOff size={15} />
+                  ),
+                  variant: filters.quarantined ? "default" : "danger",
                   onClick: async () => {
                     const ids = Array.from(selection);
                     if (!ids.length) return;
+                    const next = !filters.quarantined;
+                    const verb = next ? "Quarantine" : "Restore";
                     const ok = confirm(
-                      `Quarantine ${ids.length} selected image${ids.length === 1 ? "" : "s"}?`,
+                      `${verb} ${ids.length} selected image${ids.length === 1 ? "" : "s"}?`,
                     );
                     if (!ok) return;
                     try {
-                      await Promise.all(ids.map((id) => apiSetQuarantine(id, true)));
-                      // Drop them from the cached feeds so the grid updates
-                      // without a refresh, the way single-image triage does.
-                      // Skipped in the quarantined view, where they belong.
-                      if (!filters.quarantined) {
-                        removeImagesFromFeeds(queryClient, ids);
-                      }
+                      await Promise.all(ids.map((id) => apiSetQuarantine(id, next)));
+                      // Either way the tiles leave the current list, so drop
+                      // them from the cached feeds and the grid updates without
+                      // a refresh, the way single-image triage does.
+                      removeImagesFromFeeds(queryClient, ids);
                       invalidateFeeds(queryClient);
-                      push(`Quarantined ${ids.length} image${ids.length === 1 ? "" : "s"}`, "success");
+                      push(
+                        `${next ? "Quarantined" : "Restored"} ${ids.length} image${ids.length === 1 ? "" : "s"}`,
+                        "success",
+                      );
                       setSelectionMode(false);
                     } catch (e) {
-                      push(`Failed to quarantine: ${String(e)}`, "error");
+                      push(`Failed to ${verb.toLowerCase()}: ${String(e)}`, "error");
                     }
                   },
                 },
