@@ -35,17 +35,20 @@ import { useSelectionMode } from "../hooks/useSelectionMode";
 import {
   useImageFeed,
   useImageGroups,
-  imageFeedKey,
 } from "../hooks/useImageFeed";
 import { useScrollRestoration } from "../hooks/useScrollRestoration";
-import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
-import { PAGE_LIMIT, type ImageDoc } from "../lib/imageFilter";
+import { useQueryClient } from "@tanstack/react-query";
+import { type ImageDoc } from "../lib/imageFilter";
 import { nextFocusIndex, isGridNavKey } from "../lib/gridNav";
 import { gridColumns } from "../lib/masonryLayout";
-import { setScore as apiSetScore, setQuarantine as apiSetQuarantine } from "../lib/gen";
+import {
+  setScore as apiSetScore,
+  setQuarantine as apiSetQuarantine,
+} from "../lib/imageMutations";
 import { api } from "../lib/api";
 import { isFormField } from "../lib/dom";
 import { postAiTag } from "../lib/ai";
+import { patchFeeds } from "../lib/feedCache";
 
 type Library = { _id: string; name?: string; path: string };
 
@@ -281,14 +284,11 @@ export default function AllImagesPage() {
   const triageEnabled = !selectionMode && !groupMode;
 
   // Optimistically patch the feed cache so a score/quarantine shows instantly.
+  // Patches every cached feed, not just the current filter — the same image can
+  // be cached under several.
   const patchFeed = useCallback(
-    (mut: (pages: ImageDoc[][]) => ImageDoc[][]) => {
-      queryClient.setQueryData<InfiniteData<ImageDoc[]>>(
-        imageFeedKey(filters, PAGE_LIMIT),
-        (old) => (old ? { ...old, pages: mut(old.pages) } : old),
-      );
-    },
-    [queryClient, filters],
+    (mut: (pages: ImageDoc[][]) => ImageDoc[][]) => patchFeeds(queryClient, mut),
+    [queryClient],
   );
 
   const triageScore = useCallback(

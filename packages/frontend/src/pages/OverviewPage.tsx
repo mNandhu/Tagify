@@ -17,6 +17,7 @@ import { Badge } from "../components/ui/Badge";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { isActiveJob } from "../lib/ai";
 import { api } from "../lib/api";
+import { isManual } from "../lib/tags";
 
 type Library = {
   _id: string;
@@ -54,7 +55,7 @@ export default function OverviewPage() {
     [libs],
   );
   const manualCount = useMemo(
-    () => (tags ? tags.filter((t) => t._id.startsWith("manual:")).length : 0),
+    () => (tags ? tags.filter((t) => isManual(t._id)).length : 0),
     [tags],
   );
   const scanning = useMemo(() => (libs || []).filter((l) => l.scanning), [libs]);

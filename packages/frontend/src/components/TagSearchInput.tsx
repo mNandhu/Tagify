@@ -10,19 +10,9 @@ import { X, Search } from "lucide-react";
 import { fuzzyRank } from "../lib/fuzzy";
 import { Badge } from "./ui/Badge";
 import { cn } from "../lib/cn";
+import { formatSearchTag, isManual, isPrompt } from "../lib/tags";
 
 export type TagSuggestion = { _id: string; count: number };
-
-const formatTag = (raw: string) => {
-  // `any:` is the merged cross-source entry the gallery search emits; manual:/
-  // prompt: are source-specific. All display as the bare tag text.
-  if (raw.startsWith("any:")) return raw.slice("any:".length);
-  if (raw.startsWith("manual:")) return raw.slice("manual:".length);
-  if (raw.startsWith("prompt:")) return raw.slice("prompt:".length);
-  return raw;
-};
-const isManual = (raw: string) => raw.startsWith("manual:");
-const isPrompt = (raw: string) => raw.startsWith("prompt:");
 
 const MAX_SUGGESTIONS = 8;
 
@@ -60,7 +50,7 @@ export const TagSearchInput = forwardRef<HTMLInputElement, Props>(
       const q = text.trim();
       if (!q) return [];
       const pool = suggestions.filter((s) => !selected.has(s._id));
-      return fuzzyRank(q, pool, (s) => formatTag(s._id), MAX_SUGGESTIONS);
+      return fuzzyRank(q, pool, (s) => formatSearchTag(s._id), MAX_SUGGESTIONS);
     }, [text, suggestions, selected]);
 
     // Keep the active row in range whenever the match list changes.
@@ -126,7 +116,7 @@ export const TagSearchInput = forwardRef<HTMLInputElement, Props>(
               key={tag}
               className="inline-flex items-center gap-1 rounded-md bg-purple-900/30 border border-purple-700/60 pl-2 pr-1 py-0.5 text-purple-100"
             >
-              <span className="truncate max-w-[12rem]">{formatTag(tag)}</span>
+              <span className="truncate max-w-[12rem]">{formatSearchTag(tag)}</span>
               <button
                 type="button"
                 onClick={(e) => {
@@ -134,7 +124,7 @@ export const TagSearchInput = forwardRef<HTMLInputElement, Props>(
                   removeTag(tag);
                 }}
                 className="rounded hover:bg-purple-700/40 p-0.5 text-purple-300 hover:text-purple-100"
-                aria-label={`Remove ${formatTag(tag)}`}
+                aria-label={`Remove ${formatSearchTag(tag)}`}
               >
                 <X size={13} />
               </button>
@@ -179,7 +169,7 @@ export const TagSearchInput = forwardRef<HTMLInputElement, Props>(
                 >
                   <span className="flex items-center gap-2 min-w-0">
                     <span className="truncate text-neutral-100">
-                      {formatTag(s._id)}
+                      {formatSearchTag(s._id)}
                     </span>
                     {isManual(s._id) && (
                       <Badge tone="success" className="text-[10px] shrink-0">

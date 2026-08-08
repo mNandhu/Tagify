@@ -21,31 +21,6 @@ export type WorkflowPayload =
   | { source: "a1111"; parameters: string }
   | { source?: string | null };
 
-async function postJson(url: string, body: unknown): Promise<void> {
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(await r.text());
-}
-
-export function setScore(id: string, score: number): Promise<void> {
-  return postJson(`/api/images/${encodeURIComponent(id)}/score`, { score });
-}
-
-export function setQuarantine(id: string, quarantined: boolean): Promise<void> {
-  return postJson(`/api/images/${encodeURIComponent(id)}/quarantine`, {
-    quarantined,
-  });
-}
-
-export function purgeImage(id: string): Promise<void> {
-  return postJson(`/api/images/${encodeURIComponent(id)}/purge`, {
-    confirm: true,
-  });
-}
-
 // --- Extraction rules (v2) ---------------------------------------------------
 
 export const RULE_FIELDS = [

@@ -11,7 +11,7 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -31,20 +31,22 @@ import {
   parseFilters,
   serializeFilters,
   fetchImage,
-  type ImageDoc,
 } from "../lib/imageFilter";
 import { useImageFeed } from "../hooks/useImageFeed";
 import { useAiTagging } from "../hooks/useAiTagging";
+import { fetchWorkflow, workflowClipboardText } from "../lib/gen";
 import {
+  applyTags,
   setScore as apiSetScore,
   setQuarantine as apiSetQuarantine,
-  fetchWorkflow,
-  workflowClipboardText,
-} from "../lib/gen";
+  setRating as apiSetRating,
+  setTagThumbnail as apiSetTagThumbnail,
+} from "../lib/imageMutations";
 import { accentFromBlurhash } from "../lib/blurhash";
 import { pickRating, ratingBadgeClass } from "../lib/rating";
-import { formatTag } from "../lib/tags";
+import { formatTag, partitionTags } from "../lib/tags";
 import { isFormField } from "../lib/dom";
+import { invalidateFeeds, removeImageFromFeeds } from "../lib/feedCache";
 
 export default function ImageView() {
   const { id } = useParams<{ id: string }>();
@@ -103,17 +105,10 @@ export default function ImageView() {
       await apiSetQuarantine(id, next);
       push(next ? "Quarantined" : "Restored", "info");
       refreshImage();
-      // Remove this image from all gallery feed caches so the gallery doesn't
-      // require a refresh to reflect the quarantine change.
-      queryClient.setQueriesData<InfiniteData<ImageDoc[]>>(
-        { queryKey: ["images"] },
-        (old) =>
-          old
-            ? { ...old, pages: old.pages.map((pg) => pg.filter((x) => x._id !== id)) }
-            : old,
-      );
-      queryClient.invalidateQueries({ queryKey: ["images"] });
-      queryClient.invalidateQueries({ queryKey: ["image-groups"] });
+      // Drop it from every cached feed so the gallery reflects the change
+      // without a refresh.
+      removeImageFromFeeds(queryClient, id);
+      invalidateFeeds(queryClient);
     } catch (e) {
       push(`Failed to update quarantine: ${String(e)}`, "error");
     }
@@ -289,15 +284,7 @@ export default function ImageView() {
     async (tagRaw: string) => {
       if (!data?._id) return;
       try {
-        const resp = await fetch(
-          `/api/tags/thumbnail/${encodeURIComponent(tagRaw)}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image_id: data._id }),
-          },
-        );
-        if (!resp.ok) throw new Error(await resp.text());
+        await apiSetTagThumbnail(tagRaw, data._id);
         push(`Set thumbnail for "${formatTag(tagRaw)}"`, "success");
       } catch (e) {
         push(`Failed to set thumbnail: ${String(e)}`, "error");
@@ -309,15 +296,11 @@ export default function ImageView() {
   if (!id) return null;
 
   const fileName = data?.path ? data.path.split(/[\\/]/).pop() : "";
-  const aiTags = (data?.tags || []).filter(
-    (t) => !t.startsWith("manual:") && !t.startsWith("prompt:"),
-  );
-  const manualTagsRaw = (data?.tags || []).filter((t) =>
-    t.startsWith("manual:"),
-  );
-  const promptTagsRaw = (data?.tags || []).filter((t) =>
-    t.startsWith("prompt:"),
-  );
+  const {
+    ai: aiTags,
+    manual: manualTagsRaw,
+    prompt: promptTagsRaw,
+  } = partitionTags(data?.tags);
   const rating = pickRating(data);
   const accent = accentFromBlurhash(data?.blurhash);
 
@@ -545,11 +528,7 @@ function TagEditor({ id, onChange }: { id: string; onChange: () => void }) {
       .filter(Boolean);
     if (!tags.length) return;
     setAdding(true);
-    await fetch(`/api/tags/apply/${encodeURIComponent(id)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(tags),
-    });
+    await applyTags(id, tags);
     setVal("");
     onChange();
     setAdding(false);
@@ -922,12 +901,7 @@ function RatingEditor({
     if (next === v) return;
     setSaving(true);
     try {
-      const resp = await fetch(`/api/images/${encodeURIComponent(id)}/rating`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rating: next }),
-      });
-      if (!resp.ok) throw new Error(await resp.text());
+      await apiSetRating(id, next);
       push("Rating updated", "success");
       onDone();
     } catch (e) {

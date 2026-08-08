@@ -8,19 +8,12 @@ import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { cn } from "../lib/cn";
 import { api } from "../lib/api";
+import { formatTag, isManual, isPrompt } from "../lib/tags";
 
 type TagAgg = { _id: string; count: number };
 type Sample = { _id: string; thumb_url: string };
 
 const PAGE = 60;
-
-const formatTag = (raw: string) => {
-  if (raw.startsWith("manual:")) return raw.slice("manual:".length);
-  if (raw.startsWith("prompt:")) return raw.slice("prompt:".length);
-  return raw;
-};
-const isManual = (raw: string) => raw.startsWith("manual:");
-const isPrompt = (raw: string) => raw.startsWith("prompt:");
 
 export default function TagsPage() {
   const navigate = useNavigate();
