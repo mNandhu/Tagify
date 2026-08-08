@@ -18,7 +18,16 @@ import sqlalchemy as sa
 from src.core.config import settings
 from src.database import db
 from src.database import schema as t
-from src.services import image_tags
+from src.services import image_tags, tag_index
+
+
+@pytest.fixture(autouse=True)
+def fresh_tag_index():
+    """The tag index cache is module-global; drop it around every test so a
+    cached aggregation can't leak across DB fixtures."""
+    tag_index.reset_for_tests()
+    yield
+    tag_index.reset_for_tests()
 
 
 @pytest_asyncio.fixture

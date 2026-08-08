@@ -21,6 +21,7 @@ from ..database.db import sync_conn, sync_tx
 from ..database import schema as t
 from . import gen_metadata
 from . import image_tags
+from . import tag_index
 from .image_tags import to_prompt
 
 _BATCH = 200
@@ -77,6 +78,9 @@ def _flush_batch(batch: list[tuple[str, dict]]) -> None:
             # Mirror the extracted terms into prompt: tags (preserving AI + manual).
             prompt_tags = [to_prompt(term) for term in (g.get("prompt_terms") or [])]
             image_tags.replace_prompt_sync(conn, image_id, prompt_tags)
+    # This batch owns its transaction, so it owns the post-commit invalidation of
+    # the derived tag aggregation — once per batch, not once per image.
+    tag_index.invalidate()
 
 
 def _reproject_where(where) -> int:
@@ -106,9 +110,7 @@ def _reproject_where(where) -> int:
             **(row.raw or {}),
         }
         ruleset = rulesets.get(row.workflow_sig)
-        g = gen_metadata.extract(
-            raw_doc, ruleset, prompt_positive_only=positive_only
-        )
+        g = gen_metadata.extract(raw_doc, ruleset, prompt_positive_only=positive_only)
         if g is None:
             continue
         batch.append((row._id, g))

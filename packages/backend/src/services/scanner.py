@@ -9,6 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from ..database.db import sync_conn, sync_tx
 from ..database import schema as t
 from . import image_tags
+from . import tag_index
 from . import gen_metadata
 from . import batch_pool
 from .scan_writer import ScanWriter
@@ -493,9 +494,7 @@ def scan_library_async(library_id: str, root: str) -> dict:
             if stale_image_ids:
                 with sync_tx() as conn:
                     conn.execute(
-                        sa.delete(t.images).where(
-                            t.images.c._id.in_(stale_image_ids)
-                        )
+                        sa.delete(t.images).where(t.images.c._id.in_(stale_image_ids))
                     )
                     # Drop their raw generation docs too, else they orphan forever.
                     conn.execute(
@@ -503,6 +502,9 @@ def scan_library_async(library_id: str, root: str) -> dict:
                             t.image_gen_raw.c._id.in_(stale_image_ids)
                         )
                     )
+                # This tx owns the reconcile, so it owns the post-commit
+                # invalidation: the cascade dropped those images' tag rows.
+                tag_index.invalidate()
 
                 # Clean up corresponding thumbnail files on disk
                 if stale_thumb_keys:

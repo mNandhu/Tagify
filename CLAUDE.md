@@ -59,5 +59,5 @@ Backend env is optional: `SQLITE_PATH` (defaults to `<repo>/data/tagify.db`) and
 
 - Use the engine helpers from `database/db.py` (`async_conn`/`async_tx` async, `sync_conn`/`sync_tx` for scanner/reproject threads) with the table objects in `database/schema.py` (imported as `t`) — don't open connections ad hoc. All writes go through the `*_tx` helpers.
 - Keep list responses minimal via column `select(...)` projections; return full rows only when needed.
-- `tags` GET aggregation is cached with a ~30s TTL — clear it after mutating tags.
+- `tags` GET aggregation is cached (`services/tag_index.py`, ~30s TTL). **Invalidation is structural — don't clear it from call sites.** Async tag writes dirty it via `image_tags`' transaction owners; the sync path leaves it to whoever owns the transaction (`reproject._flush_batch`, once per batch). A new writer that owns its own transaction must call `tag_index.invalidate()` *after* it commits.
 - In `content-visibility:auto` is a known paint-gap hazard in the virtualized grid (see project memory); avoid reintroducing it.

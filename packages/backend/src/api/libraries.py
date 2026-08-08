@@ -11,6 +11,7 @@ from ..models.library import LibraryIn, LibraryUpdate
 from ..services.scanner import cancel_scan, scan_library_async
 
 from ..services.storage_fs import delete_by_prefix
+from ..services import tag_index
 
 router = APIRouter()
 
@@ -75,10 +76,10 @@ async def remove_library(library_id: str):
             sa.delete(t.images).where(t.images.c.library_id == library_id)
         )
         await conn.execute(
-            sa.delete(t.image_gen_raw).where(
-                t.image_gen_raw.c.library_id == library_id
-            )
+            sa.delete(t.image_gen_raw).where(t.image_gen_raw.c.library_id == library_id)
         )
+    # Every image of this library is gone, so every tag count moved.
+    tag_index.invalidate()
     # remove thumbnail files for this library
     try:
         await anyio.to_thread.run_sync(lambda: delete_by_prefix(f"{library_id}/"))  # type: ignore[attr-defined]

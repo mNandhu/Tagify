@@ -4,16 +4,16 @@ from pydantic import BaseModel
 import mimetypes
 import anyio  # type: ignore[import-not-found]
 import os
-from urllib.parse import quote
 
 import sqlalchemy as sa
 
 from ..database.db import async_conn, async_tx
 from ..database import schema as t
 from ..services.storage_fs import thumb_path, delete_thumb
-from ..services import gen_metadata, image_tags, image_feed
+from ..services import gen_metadata, image_tags, image_feed, tag_index
 from ..services.image_feed import FeedFilter, FeedFilterError
 from ..services.image_tags import find_image as _find_image_doc  # type: ignore
+from ._utils import thumb_url
 
 
 router = APIRouter()
@@ -38,7 +38,7 @@ class PurgeBody(BaseModel):
 def _attach_thumb_url(it: dict) -> None:
     """Replace the row's thumb_key with the streaming thumb route."""
     it.pop("thumb_key", None)
-    it["thumb_url"] = f"/api/images/{quote(it['_id'], safe='')}/thumb"
+    it["thumb_url"] = thumb_url(it["_id"])
 
 
 @router.get("")
@@ -366,6 +366,8 @@ async def purge_image(image_id: str, body: PurgeBody):
         await conn.execute(
             sa.delete(t.image_gen_raw).where(t.image_gen_raw.c._id == rid)
         )
+    # Cascaded away this image's join rows, so the tag counts moved.
+    tag_index.invalidate()
 
     thumb_key = img.get("thumb_key")
     if thumb_key:

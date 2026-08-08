@@ -297,6 +297,41 @@ async def find_image(image_id: str, projection: dict | None = None) -> dict | No
     return None
 
 
+def _dirty_tag_index() -> None:
+    """Mark the derived tag aggregation stale, after our transaction committed.
+
+    Imported here rather than at module scope because :mod:`services.tag_index`
+    depends on this module's prefix helpers; keeping the import local is what
+    breaks the cycle. Every async tag write funnels through the two transaction
+    owners below, so no caller has to remember this.
+    """
+    from . import tag_index
+
+    tag_index.invalidate()
+
+
+def _persist_statements(
+    image_id: str,
+    new_tags: list[str],
+    extra: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[dict[str, str]]]:
+    """The tag-state write for one image, as statements: update the array +
+    recomputed flags, drop this image's join rows, and the rows to reinsert.
+
+    Built once and executed by both the async path (:func:`_persist`) and the
+    caller-owned sync path (:func:`replace_prompt_sync`), so the invariant
+    binding ``tags`` to its flags and its join rows exists in exactly one place.
+    """
+    values: dict[str, Any] = {"tags": new_tags, **recompute_flags(new_tags)}
+    if extra:
+        values.update(extra)
+    statements = [
+        sa.update(t.images).where(t.images.c._id == image_id).values(**values),
+        sa.delete(t.image_tags).where(t.image_tags.c.image_id == image_id),
+    ]
+    return statements, _tag_rows(image_id, new_tags)
+
+
 async def _persist(
     conn: AsyncConnection,
     image_id: str,
@@ -304,16 +339,9 @@ async def _persist(
     extra: dict[str, Any] | None = None,
 ) -> None:
     """Write the tag array + recomputed flags + rebuilt join rows for one image."""
-    values: dict[str, Any] = {"tags": new_tags, **recompute_flags(new_tags)}
-    if extra:
-        values.update(extra)
-    await conn.execute(
-        sa.update(t.images).where(t.images.c._id == image_id).values(**values)
-    )
-    await conn.execute(
-        sa.delete(t.image_tags).where(t.image_tags.c.image_id == image_id)
-    )
-    rows = _tag_rows(image_id, new_tags)
+    statements, rows = _persist_statements(image_id, new_tags, extra)
+    for stmt in statements:
+        await conn.execute(stmt)
     if rows:
         await conn.execute(sa.insert(t.image_tags), rows)
 
@@ -337,6 +365,7 @@ async def _mutate_tags(
             )
         ).scalar() or []
         await _persist(conn, resolved, transform(current), extra=extra)
+    _dirty_tag_index()
 
 
 async def apply_manual(image_id: str, tags: list[str]) -> None:
@@ -406,7 +435,8 @@ async def clear_ai_all() -> tuple[int, int]:
             if new != current:
                 modified += 1
             await _persist(conn, row._id, new, extra={"ai": None, "rating": "-"})
-        return matched, modified
+    _dirty_tag_index()
+    return matched, modified
 
 
 # --- Sync repo helpers (scanner / reproject threads) --------------------------
@@ -416,18 +446,22 @@ def replace_prompt_sync(
     conn: Connection, image_id: str, prompt_tags: list[str]
 ) -> None:
     """Replace ``prompt:`` tags on one image, operating on a caller-owned sync
-    transaction so reprojection can batch many images per commit."""
+    transaction so reprojection can batch many images per commit.
+
+    Deliberately does *not* invalidate the tag index: the caller owns the
+    transaction, so only the caller knows when the write became visible. It
+    invalidates once per committed batch (:func:`services.reproject._flush_batch`)
+    rather than once per image.
+    """
     current = (
         conn.execute(sa.select(t.images.c.tags).where(t.images.c._id == image_id))
     ).scalar()
     if current is None:
         return
-    new_tags = with_replaced_prompt(current, prompt_tags)
-    values: dict[str, Any] = {"tags": new_tags, **recompute_flags(new_tags)}
-    conn.execute(
-        sa.update(t.images).where(t.images.c._id == image_id).values(**values)
+    statements, rows = _persist_statements(
+        image_id, with_replaced_prompt(current, prompt_tags)
     )
-    conn.execute(sa.delete(t.image_tags).where(t.image_tags.c.image_id == image_id))
-    rows = _tag_rows(image_id, new_tags)
+    for stmt in statements:
+        conn.execute(stmt)
     if rows:
         conn.execute(sa.insert(t.image_tags), rows)

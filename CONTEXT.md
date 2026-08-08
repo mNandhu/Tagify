@@ -22,7 +22,19 @@ belongs in this file.
   stay "Untagged"), `has_ai_tags` (any tag that is *neither* `manual:` nor
   `prompt:`), and `has_prompt_tags` (any `prompt:` tag), plus `rating`.
   Owned by `services/image_tags.py` — the single place that mutates tags and
-  recomputes the flags, so they can never drift.
+  recomputes the flags, so they can never drift. Its two transaction owners also
+  dirty the **Tag index**; the sync path (`replace_prompt_sync`) leaves that to the
+  caller that owns the transaction, i.e. `reproject._flush_batch`, once per batch.
+- **Tag index** — the aggregated views *derived* from Tag-state: the grouped tag
+  counts (per stored tag, or collapsed across sources into one `any:<base>`
+  entry counting distinct images) and the per-tag **mosaic samples** (a pinned
+  `tag_meta` thumbnail first, then random fill). Both are memoized with a short
+  TTL. **Invalidation belongs to the index, not its callers**
+  (`services/tag_index.py`): tag writers dirty it once their transaction has
+  committed, so a new writer cannot forget to. A cached entry is valid only
+  within its TTL *and* its generation, which also means a read that started
+  before a write cannot store its stale result afterwards. The mirror of the
+  Tag-state single-owner rule, one level up.
 - **Rating** — one of `-`, `general`, `sensitive`, `questionable`, `explicit`.
   Normalized in one place (`image_tags.normalize_rating`) and written only
   through `image_tags.set_rating` (with `set_score` / `set_quarantine` for the
