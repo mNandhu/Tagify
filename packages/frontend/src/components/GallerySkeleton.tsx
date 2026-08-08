@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   columnWidth,
   gapForDensity,
@@ -30,7 +30,9 @@ export function GallerySkeleton({
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
 
-  useEffect(() => {
+  // Layout effect so the skeleton is sized in the first painted frame rather
+  // than flashing empty for one — the same measure-after-paint gap the grid had.
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const measure = () => setWidth(el.clientWidth);

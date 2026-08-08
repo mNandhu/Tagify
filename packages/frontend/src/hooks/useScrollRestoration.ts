@@ -8,20 +8,41 @@ import { useCallback, useEffect, useRef } from "react";
 const PREFIX = "tagify_scroll_";
 const MAX_AGE_MS = 10 * 60 * 1000;
 const SAVE_DEBOUNCE_MS = 200;
-// Let async thumbnail layout (row spans) settle before restoring height.
-const RESTORE_DELAY_MS = 100;
 
 type Saved = { scrollTop: number; ts: number };
 
+/** A position waiting to be applied, and the storage key it came from. */
+export type PendingRestore = { key: string; top: number };
+
+function readSaved(storageKey: string): PendingRestore | null {
+  let saved: Saved | null;
+  try {
+    const raw = sessionStorage.getItem(storageKey);
+    saved = raw ? (JSON.parse(raw) as Saved) : null;
+  } catch {
+    saved = null;
+  }
+  if (!saved || Date.now() - saved.ts > MAX_AGE_MS) return null;
+  if (!(saved.scrollTop > 0)) return null;
+  return { key: storageKey, top: saved.scrollTop };
+}
+
 /**
- * Persist and restore the scroll position of `getContainer()` keyed by `key`
- * (derive it from the active Image filter). Restoration runs once `ready` is
- * true — i.e. the feed's items are mounted so scrollHeight is meaningful.
+ * Persist the scroll position of `getContainer()` keyed by `key` (derive it
+ * from the active Image filter), and hand back the position to restore.
+ *
+ * Restoration is *not* performed here. Coming back from ImageView remounts the
+ * page, so the scroll container is a brand-new node at scrollTop 0 and the
+ * grid it contains has no height until it has measured itself. This hook used
+ * to scroll on a 100ms `setTimeout`, which meant the browser reliably painted
+ * the top of the gallery first and jumped a beat later — the "snap" was the
+ * restoration itself, not a layout settling. So the offset is returned and the
+ * grid applies it in a layout effect, in the same pre-paint commit where it
+ * first has a real height to scroll within.
  */
 export function useScrollRestoration(
   key: string,
   getContainer: () => HTMLElement | null,
-  ready: boolean,
 ) {
   const storageKey = PREFIX + (key || "default");
 
@@ -61,29 +82,16 @@ export function useScrollRestoration(
     };
   }, [storageKey, getContainer]);
 
-  // Restore once, after items are ready.
-  const restoredFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (!ready || restoredFor.current === storageKey) return;
-    const el = getContainer();
-    if (!el) return;
-    restoredFor.current = storageKey;
+  // The stored offset, read once per key. Read during render rather than in an
+  // effect so the value is available to the grid's first layout pass; re-read
+  // only when the key changes, so it isn't clobbered by our own debounced
+  // saves as the user scrolls.
+  const readKeyRef = useRef<string | null>(null);
+  const pendingRef = useRef<PendingRestore | null>(null);
+  if (readKeyRef.current !== storageKey) {
+    readKeyRef.current = storageKey;
+    pendingRef.current = readSaved(storageKey);
+  }
 
-    let saved: Saved | null;
-    try {
-      const raw = sessionStorage.getItem(storageKey);
-      saved = raw ? (JSON.parse(raw) as Saved) : null;
-    } catch {
-      saved = null;
-    }
-    if (!saved || Date.now() - saved.ts > MAX_AGE_MS) return;
-
-    const target = saved.scrollTop;
-    const timer = window.setTimeout(() => {
-      if (el.scrollHeight > target) el.scrollTo({ top: target, behavior: "auto" });
-    }, RESTORE_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [ready, storageKey, getContainer]);
-
-  return { save };
+  return { save, restore: pendingRef.current };
 }

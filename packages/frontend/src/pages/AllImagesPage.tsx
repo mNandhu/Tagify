@@ -123,11 +123,12 @@ export default function AllImagesPage() {
     );
   }, []);
 
-  // Scroll restoration keyed by the active filter.
-  const { save: saveScroll } = useScrollRestoration(
+  // Scroll restoration keyed by the active filter. The hook only saves and
+  // hands back the offset; the grid applies it, because only the grid knows
+  // when it has packed a height to scroll within.
+  const { save: saveScroll, restore: restoreScroll } = useScrollRestoration(
     serializeFilters(filters).toString(),
     getScrollContainer,
-    items.length > 0,
   );
 
   // Load libraries for the filter dropdown, and keep them polled while any
@@ -960,6 +961,7 @@ export default function AllImagesPage() {
           // decide on a restore the hardest one to see. The badge carries the
           // meaning there; the dimming is only informative in a mixed feed.
           dimQuarantined={!filters.quarantined}
+          restoreScrollTop={restoreScroll}
           className="min-h-screen"
         />
         </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { ThumbnailTile } from "./ThumbnailTile";
 import {
   columnWidth,
@@ -9,6 +9,7 @@ import {
   DEFAULT_DENSITY,
 } from "../lib/masonryLayout";
 import type { ImageDoc } from "../lib/imageFilter";
+import type { PendingRestore } from "../hooks/useScrollRestoration";
 
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
 
@@ -26,6 +27,9 @@ interface VirtualizedGridProps {
   /** Hold quarantined tiles back visually. Off in the quarantined view, where
    * every tile is quarantined and dimming them all helps nobody. */
   dimQuarantined?: boolean;
+  /** Scroll offset to jump to once the grid has packed — see the layout effect
+   * below for why the grid owns this rather than the page. */
+  restoreScrollTop?: PendingRestore | null;
 }
 
 /** Longest entrance stagger, so a 200-item page doesn't trickle in for 4s. */
@@ -56,6 +60,7 @@ export function VirtualizedGrid({
   focusedIndex = -1,
   density = DEFAULT_DENSITY,
   dimQuarantined = true,
+  restoreScrollTop = null,
 }: VirtualizedGridProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const virtualContainerRef = useRef<HTMLDivElement>(null);
@@ -92,7 +97,14 @@ export function VirtualizedGrid({
   };
 
   // Track scrollTop from the *outer* scroll container.
-  useEffect(() => {
+  //
+  // A layout effect, not a passive one. `wrapperWidth` starts at 0, which makes
+  // `colWidth` 0, which makes `packColumns` bail — so the first render of the
+  // grid has no tiles at all. Measuring after paint meant the browser reliably
+  // painted that empty frame, then a second frame with the tiles at the top of
+  // the list, before anything landed where it belonged. Measuring before paint
+  // collapses all of that into one correct first frame.
+  useLayoutEffect(() => {
     const scrollEl = getScrollContainer?.();
     const wrapper = wrapperRef.current;
     if (!scrollEl || !wrapper) return;
@@ -139,12 +151,27 @@ export function VirtualizedGrid({
     [columns, scrollTop, viewportHeight, wrapperTop]
   );
 
-  // Apply total height without using inline styles
-  useEffect(() => {
-    const el = virtualContainerRef.current;
-    if (!el) return;
-    el.style.height = `${totalHeight}px`;
-  }, [totalHeight]);
+  // Restore a saved scroll offset, once, in the first commit that has a real
+  // height to scroll within.
+  //
+  // This has to live here rather than in `useScrollRestoration`: React runs
+  // layout effects child-first, so a parent that scrolls the container would
+  // run while the grid still measures 0px tall and the scroll would be clamped
+  // straight back to the top. Here it runs in the same pre-paint pass that
+  // sizes the grid, and seeds `scrollTop` so `visibleSlice` mounts the tiles
+  // around the restored position instead of the ones at the top of the feed.
+  const restoredKeyRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!restoreScrollTop || totalHeight <= 0) return;
+    if (restoredKeyRef.current === restoreScrollTop.key) return;
+    const scrollEl = getScrollContainer?.();
+    if (!scrollEl) return;
+    restoredKeyRef.current = restoreScrollTop.key;
+    const max = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+    const top = Math.min(restoreScrollTop.top, max);
+    scrollEl.scrollTop = top;
+    setScrollTop(top);
+  }, [restoreScrollTop, totalHeight, getScrollContainer]);
 
   // Entrance animation for tiles a page-fetch just appended.
   //
@@ -197,16 +224,22 @@ export function VirtualizedGrid({
   return (
     <div ref={wrapperRef} className={`relative ${className || ""}`}>
       {/* Virtual container with total height */}
-      <div ref={virtualContainerRef} className="relative">
+      <div
+        ref={virtualContainerRef}
+        className="relative"
+        // Inline, not applied by an effect. The scroll container's
+        // scrollHeight comes from this box; setting it after paint meant every
+        // first frame was 0px tall, so a restored scroll offset had nothing to
+        // scroll into and the grid could only jump into place a frame later.
+        style={{ height: `${totalHeight}px` }}
+      >
         {/* Render only visible tiles, absolutely positioned. */}
         {visibleTiles.map((tile) => {
           const entering = tile.index >= entranceFrom;
           return (
             <div
               key={tile.item._id}
-              className={
-                entering ? "absolute motion-safe:animate-fade-in" : "absolute"
-              }
+              className="absolute"
               style={{
                 // No `will-change: transform` here. It used to sit on every
                 // visible tile permanently, promoting each one to its own
@@ -215,26 +248,45 @@ export function VirtualizedGrid({
                 transform: `translate(${tile.x}px, ${tile.y}px)`,
                 width: `${tile.w}px`,
                 height: `${tile.h}px`,
-                animationDelay: entering
-                  ? `${Math.min(
-                      MAX_STAGGER_MS,
-                      (tile.index - entranceFrom) * STAGGER_STEP_MS
-                    )}ms`
-                  : undefined,
               }}
             >
-              <ThumbnailTile
-                item={tile.item}
-                index={tile.index}
-                selected={selectionMode && selection.has(tile.item._id)}
-                selectionMode={selectionMode}
-                dimQuarantined={dimQuarantined}
-                onOpen={onOpen}
-                onToggle={onToggle}
-                getRoot={getScrollContainer}
-                eager
-                focused={tile.index === focusedIndex}
-              />
+              {/* The entrance animation lives on an inner element, and the
+                  position on the outer one. They cannot share: `fade-in`
+                  animates `transform`, and an animated property outranks an
+                  inline style for as long as it runs — with `fill-mode: both`,
+                  that includes the whole stagger delay. Putting both on one
+                  div meant every entering tile rendered at the origin until
+                  its animation ended, so the grid opened as a pile of
+                  thumbnails on top of each other that snapped into place a
+                  quarter-second later. On mount `entranceFrom` is 0, so that
+                  was every tile on screen, on every reload and every return
+                  from the image view. */}
+              <div
+                className={
+                  entering ? "h-full w-full motion-safe:animate-fade-in" : "h-full w-full"
+                }
+                style={{
+                  animationDelay: entering
+                    ? `${Math.min(
+                        MAX_STAGGER_MS,
+                        (tile.index - entranceFrom) * STAGGER_STEP_MS
+                      )}ms`
+                    : undefined,
+                }}
+              >
+                <ThumbnailTile
+                  item={tile.item}
+                  index={tile.index}
+                  selected={selectionMode && selection.has(tile.item._id)}
+                  selectionMode={selectionMode}
+                  dimQuarantined={dimQuarantined}
+                  onOpen={onOpen}
+                  onToggle={onToggle}
+                  getRoot={getScrollContainer}
+                  eager
+                  focused={tile.index === focusedIndex}
+                />
+              </div>
             </div>
           );
         })}
