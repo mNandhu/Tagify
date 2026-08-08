@@ -29,53 +29,6 @@ from ..core.config import settings
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 
-def _read_gen_raw(img: PILImage.Image) -> dict | None:
-    """Extract embedded generation metadata from an open PIL image.
-
-    Returns the ``image_gen_raw`` doc shape (``{"source", ...}``) or ``None`` when
-    the image carries no recognised generation data. Must be called on a freshly
-    opened image (before ``thumbnail()``), reading from ``img.info`` text chunks
-    (PNG) or EXIF ``UserComment`` (JPEG/WebP A1111 output).
-    """
-    info = img.info or {}
-
-    # ComfyUI embeds the API-format `prompt` graph and the UI `workflow` graph as
-    # PNG text chunks (JSON strings). Keep both: `prompt` drives extraction, and
-    # `workflow` is needed for canvas-paste in copy-workflow.
-    if info.get("prompt") or info.get("workflow"):
-        # Lenient parse per chunk: a malformed `prompt` must not also discard an
-        # intact `workflow` (and vice versa), and the common control-char/trailing
-        # -byte malformations are recovered rather than dropped.
-        prompt = gen_metadata.loads_lenient(info.get("prompt"))
-        workflow = gen_metadata.loads_lenient(info.get("workflow"))
-        return {"source": "comfyui", "prompt": prompt, "workflow": workflow}
-
-    # Automatic1111 PNG: a single `parameters` text chunk.
-    params = info.get("parameters")
-    if isinstance(params, str) and params.strip():
-        return {"source": "a1111", "parameters": params}
-
-    # Automatic1111 JPEG/WebP: the parameter string lives in EXIF UserComment.
-    try:
-        exif = img.getexif()
-        uc = exif.get(0x9286)  # UserComment
-        if isinstance(uc, bytes):
-            # EXIF UserComment is an 8-byte charset prefix + payload.
-            if uc[:8] == b"UNICODE\x00":
-                text = uc[8:].decode("utf-16-be", errors="ignore")
-            elif uc[:8] == b"ASCII\x00\x00\x00":
-                text = uc[8:].decode("ascii", errors="ignore")
-            else:
-                text = uc.decode("utf-8", errors="ignore")
-        else:
-            text = uc if isinstance(uc, str) else ""
-        if text and "Steps:" in text:
-            return {"source": "a1111", "parameters": text}
-    except Exception:
-        pass
-    return None
-
-
 def _make_thumb_bytes(
     path: Path,
 ) -> tuple[bytes | None, str | None, int, int, dict | None]:
@@ -92,9 +45,9 @@ def _make_thumb_bytes(
             # them before draft()/thumbnail() shrink the in-memory image.
             width, height = img.size
 
-            # Read embedded generation metadata from the same open, before
-            # thumbnail() mutates the image object.
-            gen_raw = _read_gen_raw(img)
+            # Capture embedded generation metadata from the same open — the
+            # format knowledge lives in gen_metadata, which owns both halves.
+            gen_raw = gen_metadata.read_gen_raw(img)
 
             size = max(16, settings.thumb_max_size)
             # draft() lets the JPEG decoder emit a pre-shrunk image (1/2, 1/4,

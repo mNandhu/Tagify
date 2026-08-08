@@ -2,10 +2,15 @@
 (Automatic1111 parameter strings, ComfyUI node graphs) into the structured
 ``gen.*`` fields the gallery searches and displays.
 
-Everything here is pure (no I/O), so it is unit-testable without a database or
-image files. The scanner reads the *raw* embedded data off disk and stores it
-verbatim; :func:`extract` (re)derives structured fields from that stored raw,
-which is why reprojection never needs to touch disk again.
+Two steps, both owned here. :func:`read_gen_raw` captures the *raw* embedded
+data from an open image and is the only part that touches PIL; everything else
+is pure (no I/O), so it is unit-testable without a database or image files. The
+scanner stores that raw verbatim and :func:`extract` (re)derives structured
+fields from it, which is why reprojection never needs to touch disk again.
+
+The format knowledge — which chunk wins, PNG text vs EXIF, charset decoding —
+lives behind :func:`gen_raw_from_embedded`, which takes the two embedded sources
+as plain values so every branch is reachable from a table test.
 
 Two source formats, two strategies:
 
@@ -97,6 +102,89 @@ _EMPTY: dict[str, Any] = {
     "prompt_terms": [],
     "group_id": None,
 }
+
+
+# --- Raw capture: how generation data is embedded in an image file ------------
+#
+# The one place that knows where AI-art tools hide their metadata. ComfyUI and
+# Automatic1111 each write it differently, and A1111 writes it differently again
+# depending on the container (PNG text chunk vs EXIF UserComment), so all three
+# sniffs and the charset handling belong together rather than beside whatever
+# happens to hold an open image.
+
+_EXIF_USER_COMMENT = 0x9286
+
+
+def decode_user_comment(uc: Any) -> str:
+    """Decode an EXIF ``UserComment`` value to text.
+
+    The value is an 8-byte charset prefix followed by the payload. Anything that
+    is neither a declared UNICODE/ASCII payload nor already ``str`` is decoded
+    leniently as utf-8 — A1111 forks in the wild write the bare string.
+    """
+    if isinstance(uc, str):
+        return uc
+    if not isinstance(uc, bytes):
+        return ""
+    if uc[:8] == b"UNICODE\x00":
+        return uc[8:].decode("utf-16-be", errors="ignore")
+    if uc[:8] == b"ASCII\x00\x00\x00":
+        return uc[8:].decode("ascii", errors="ignore")
+    return uc.decode("utf-8", errors="ignore")
+
+
+def gen_raw_from_embedded(info: Any, user_comment: Any = None) -> dict | None:
+    """Build the ``image_gen_raw`` doc from an image's embedded sources.
+
+    ``info`` is the PNG/format text dict (PIL's ``img.info``); ``user_comment``
+    is the raw EXIF ``UserComment`` value if the container carries one. Returns
+    ``None`` when nothing recognisable is embedded.
+
+    Pure — the branch that reads A1111 data out of JPEG/WebP EXIF is only
+    reachable from a test because it takes these as values.
+    """
+    info = info or {}
+
+    # ComfyUI embeds the API-format `prompt` graph and the UI `workflow` graph as
+    # PNG text chunks (JSON strings). Keep both: `prompt` drives extraction, and
+    # `workflow` is needed for canvas-paste in copy-workflow.
+    if info.get("prompt") or info.get("workflow"):
+        # Lenient parse per chunk: a malformed `prompt` must not also discard an
+        # intact `workflow` (and vice versa), and the common control-char/trailing
+        # -byte malformations are recovered rather than dropped.
+        return {
+            "source": "comfyui",
+            "prompt": loads_lenient(info.get("prompt")),
+            "workflow": loads_lenient(info.get("workflow")),
+        }
+
+    # Automatic1111 PNG: a single `parameters` text chunk.
+    params = info.get("parameters")
+    if isinstance(params, str) and params.strip():
+        return {"source": "a1111", "parameters": params}
+
+    # Automatic1111 JPEG/WebP: the parameter string lives in EXIF UserComment.
+    # `Steps:` is the marker that separates real A1111 output from any other
+    # comment a camera or editor may have left there.
+    text = decode_user_comment(user_comment)
+    if text and "Steps:" in text:
+        return {"source": "a1111", "parameters": text}
+    return None
+
+
+def read_gen_raw(img: Any) -> dict | None:
+    """Capture the ``image_gen_raw`` doc from an open PIL image.
+
+    The only PIL-touching step in this module. Call it while the file handle is
+    open — the scanner captures at open time, inside the same ``with`` block that
+    later renders the thumbnail, so the ordering cannot be got wrong.
+    """
+    try:
+        exif = img.getexif()
+        user_comment = exif.get(_EXIF_USER_COMMENT)
+    except Exception:
+        user_comment = None
+    return gen_raw_from_embedded(getattr(img, "info", None), user_comment)
 
 
 def _empty(**over: Any) -> dict[str, Any]:

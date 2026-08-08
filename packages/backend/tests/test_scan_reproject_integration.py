@@ -159,3 +159,34 @@ async def test_full_scan_indexes_images_and_rescan_preserves_tag_state(
     row = await _img(target)
     assert "manual:keeper" in row.tags  # survived the rescan upsert
     assert row.has_tags is True
+
+
+async def test_full_scan_captures_a1111_exif_from_a_real_jpeg(client, tmp_path):
+    """The JPEG/WebP capture path end to end: EXIF UserComment -> image_gen_raw
+    -> reprojected gen.* columns. Every prior scan test wrote PNGs, so this
+    container had never been exercised by a scan."""
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    params = "masterpiece, 1girl\nSteps: 20, Model: sdxl, Seed: 7"
+    im = Image.new("RGB", (16, 16))
+    exif = im.getexif()
+    exif[0x9286] = b"UNICODE\x00" + params.encode("utf-16-be")
+    im.save(lib_dir / "shot.jpg", "JPEG", exif=exif.tobytes())
+
+    resp = await client.post("/libraries", json={"path": str(lib_dir)})
+    lib_id = resp.json()["_id"]
+    _wait_scan(lib_id)
+
+    image_id = f"{lib_id}:shot.jpg"
+    async with db.async_conn() as conn:
+        raw = (
+            await conn.execute(
+                sa.select(t.image_gen_raw).where(t.image_gen_raw.c._id == image_id)
+            )
+        ).first()
+    assert raw is not None, "EXIF-carried generation data was not captured"
+    assert raw.raw["source"] == "a1111"
+
+    row = await _img(image_id)
+    assert row.gen_model == "sdxl"
+    assert "1girl" in (row.gen_prompt or "")

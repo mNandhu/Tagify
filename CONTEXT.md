@@ -40,6 +40,16 @@ belongs in this file.
   through `image_tags.set_rating` (with `set_score` / `set_quarantine` for the
   other per-image scalars), so the single-owner rule holds — routers never
   assemble the UPDATE.
+- **Generation metadata** — the AI-art data embedded in an image file by the
+  tool that made it. `services/gen_metadata.py` owns both halves: `read_gen_raw`
+  **captures** the raw doc from an open image (the only PIL-touching step; the
+  scanner calls it at open time so the ordering can't be got wrong), and
+  `extract` **derives** the structured `gen.*` fields from that stored raw — so
+  reprojection never touches disk again. All format knowledge — ComfyUI's two
+  PNG text chunks, A1111's `parameters` chunk, and A1111's EXIF `UserComment`
+  with its charset prefixes — sits behind the pure `gen_raw_from_embedded`,
+  which takes the embedded sources as plain values so every branch is reachable
+  from a table test.
 - **Scan** — discovering a library's files, indexing them, and **reconciling**
   away images that vanished from disk. (`services/scanner.py`;
   `reconcile_stale` is the pure deletion-decision step.) The scan's batched
