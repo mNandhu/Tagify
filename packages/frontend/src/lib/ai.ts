@@ -2,6 +2,8 @@
 // the frontend sees them. Status predicates are pure (the test surface); the
 // polling cadence that used to be hand-rolled in three places now derives from
 // them. See CONTEXT.md › AI Job, Tagger / Model, AI Settings.
+import { api } from "./api";
+
 
 export type AISettings = {
   model_repo: string;
@@ -100,41 +102,92 @@ export function isStatusBusy(s: AIStatus | undefined | null): boolean {
   );
 }
 
-async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const r = await fetch(url, { signal });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json() as Promise<T>;
-}
+// --- Reads ------------------------------------------------------------------
 
 export function fetchAiStatus(signal?: AbortSignal): Promise<AIStatus> {
-  return getJson<AIStatus>("/api/ai/status", signal);
+  return api<AIStatus>("/api/ai/status", { signal });
 }
 
 export function fetchAiJob(id: string, signal?: AbortSignal): Promise<AiJob> {
-  return getJson<AiJob>(`/api/ai/jobs/${encodeURIComponent(id)}`, signal);
+  return api<AiJob>(`/api/ai/jobs/${encodeURIComponent(id)}`, { signal });
 }
 
 export function fetchAiCoverage(signal?: AbortSignal): Promise<AiCoverage> {
-  return getJson<AiCoverage>("/api/ai/coverage", signal);
+  return api<AiCoverage>("/api/ai/coverage", { signal });
+}
+
+export function fetchAiSettings(): Promise<AISettings> {
+  return api<AISettings>("/api/ai/settings");
+}
+
+// --- Commands ---------------------------------------------------------------
+//
+// Every AI mutation the UI can issue. These used to live inside SettingsContext,
+// fused to toast + busy-flag state, which meant six endpoints existed in exactly
+// one React hook and `/jobs/:id/cancel` had two adapters that disagreed on whose
+// job it was. The context now owns state and toast policy; it knows no URLs.
+
+const POST = { method: "POST" } as const;
+
+function postJson<T>(url: string, body: unknown): Promise<T> {
+  return api<T>(url, {
+    ...POST,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 /** Queue an AI tagging job for the given image ids; returns the job id. */
-export async function postAiTag(ids: string[]): Promise<{ job_id: string }> {
-  const r = await fetch(`/api/ai/tag`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids }),
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json() as Promise<{ job_id: string }>;
+export function postAiTag(ids: string[]): Promise<{ job_id: string }> {
+  return postJson<{ job_id: string }>("/api/ai/tag", { ids });
 }
 
 /** Request cancellation of an AI tagging job. Returns whether the backend
  * accepted the request (false if the job already finished). */
-export async function postAiJobCancel(id: string): Promise<{ ok: boolean }> {
-  const r = await fetch(`/api/ai/jobs/${encodeURIComponent(id)}/cancel`, {
-    method: "POST",
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json() as Promise<{ ok: boolean }>;
+export function postAiJobCancel(id: string): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(
+    `/api/ai/jobs/${encodeURIComponent(id)}/cancel`,
+    POST
+  );
+}
+
+export function saveAiSettings(settings: AISettings): Promise<AISettings> {
+  return postJson<AISettings>("/api/ai/settings", settings);
+}
+
+export function postModelLoad(): Promise<{ started: boolean }> {
+  return api<{ started: boolean }>("/api/ai/model/load", POST);
+}
+
+export function postModelLoadCancel(): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>("/api/ai/model/load-cancel", POST);
+}
+
+export function postModelDownloadCancel(): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>("/api/ai/model/download-cancel", POST);
+}
+
+export function postModelUnload(): Promise<unknown> {
+  return api("/api/ai/model/unload", POST);
+}
+
+/** Queue AI tagging for up to `limit` images that have no AI tags yet. */
+export function postTagUntagged(
+  limit: number
+): Promise<{ job_id: string | null; queued: number }> {
+  return postJson<{ job_id: string | null; queued: number }>(
+    "/api/ai/tag-untagged",
+    { limit }
+  );
+}
+
+/** Remove AI tags + AI metadata from every image (manual tags are kept). */
+export function postClearAiTags(): Promise<{
+  matched: number;
+  modified: number;
+}> {
+  return api<{ matched: number; modified: number }>(
+    "/api/ai/clear-ai-tags",
+    POST
+  );
 }

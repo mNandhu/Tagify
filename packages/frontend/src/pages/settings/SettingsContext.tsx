@@ -9,7 +9,17 @@ import {
 import { useToast } from "../../components/Toasts";
 import { useAiStatus } from "../../hooks/useAiStatus";
 import type { AISettings, AIStatus, AiJob } from "../../lib/ai";
-import { api } from "../../lib/api";
+import {
+  fetchAiSettings,
+  postAiJobCancel,
+  postClearAiTags,
+  postModelDownloadCancel,
+  postModelLoad,
+  postModelLoadCancel,
+  postModelUnload,
+  postTagUntagged,
+  saveAiSettings,
+} from "../../lib/ai";
 
 export function formatBytes(n: number) {
   if (!Number.isFinite(n) || n <= 0) return "0 B";
@@ -68,7 +78,7 @@ function useSettingsController(): SettingsController {
 
   // Initial load
   useEffect(() => {
-    api<AISettings>("/api/ai/settings")
+    fetchAiSettings()
       .then(setSettings)
       .catch((e) => push(`Failed to load AI settings: ${String(e)}`, "error"));
   }, [push]);
@@ -91,34 +101,39 @@ function useSettingsController(): SettingsController {
     );
   }, [latestJob]);
 
-  const cancelJob = async (jobId: string) => {
+  /** Run one AI command with the shared busy flag + toast policy. `report`
+   * turns the result into a message; throwing is reported via `failure`. */
+  const runCommand = async <T,>(
+    action: () => Promise<T>,
+    report: (result: T) => [string, "success" | "error" | "info"] | null,
+    failure: string
+  ) => {
     setRunning(true);
     try {
-      const r = await api<{ ok: boolean }>(
-        `/api/ai/jobs/${encodeURIComponent(jobId)}/cancel`,
-        { method: "POST" }
-      );
-      push(
-        r.ok ? "Cancellation requested" : "Could not cancel job",
-        r.ok ? "success" : "error"
-      );
+      const said = report(await action());
+      if (said) push(said[0], said[1]);
     } catch (e) {
-      push(`Failed to cancel: ${String(e)}`, "error");
+      push(`${failure}: ${String(e)}`, "error");
     } finally {
       setRunning(false);
     }
   };
 
+  const cancelJob = (jobId: string) =>
+    runCommand(
+      () => postAiJobCancel(jobId),
+      (r) => [
+        r.ok ? "Cancellation requested" : "Could not cancel job",
+        r.ok ? "success" : "error",
+      ],
+      "Failed to cancel"
+    );
+
   const save = async () => {
     if (!settings) return;
     setSaving(true);
     try {
-      const next = await api<AISettings>("/api/ai/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      setSettings(next);
+      setSettings(await saveAiSettings(settings));
       push("Saved AI settings", "success");
     } catch (e) {
       push(`Failed to save: ${String(e)}`, "error");
@@ -127,110 +142,63 @@ function useSettingsController(): SettingsController {
     }
   };
 
-  const loadModel = async () => {
-    setRunning(true);
-    try {
-      const r = await api<{ started: boolean }>("/api/ai/model/load", {
-        method: "POST",
-      });
-      push(
+  const loadModel = () =>
+    runCommand(
+      postModelLoad,
+      (r) => [
         r.started ? "Model load started" : "Model already loading/loaded",
-        "info"
-      );
-    } catch (e) {
-      push(`Failed to load model: ${String(e)}`, "error");
-    } finally {
-      setRunning(false);
-    }
-  };
+        "info",
+      ],
+      "Failed to load model"
+    );
 
-  const cancelModelLoad = async () => {
-    setRunning(true);
-    try {
-      const r = await api<{ ok: boolean }>("/api/ai/model/load-cancel", {
-        method: "POST",
-      });
-      push(
+  const cancelModelLoad = () =>
+    runCommand(
+      postModelLoadCancel,
+      (r) => [
         r.ok ? "Cancelled model load" : "Nothing to cancel",
-        r.ok ? "success" : "info"
-      );
-    } catch (e) {
-      push(`Failed to cancel load: ${String(e)}`, "error");
-    } finally {
-      setRunning(false);
-    }
-  };
+        r.ok ? "success" : "info",
+      ],
+      "Failed to cancel load"
+    );
 
-  const cancelModelDownload = async () => {
-    setRunning(true);
-    try {
-      const r = await api<{ ok: boolean }>("/api/ai/model/download-cancel", {
-        method: "POST",
-      });
-      push(
+  const cancelModelDownload = () =>
+    runCommand(
+      postModelDownloadCancel,
+      (r) => [
         r.ok ? "Cancelled download" : "Nothing to cancel",
-        r.ok ? "success" : "info"
-      );
-    } catch (e) {
-      push(`Failed to cancel download: ${String(e)}`, "error");
-    } finally {
-      setRunning(false);
-    }
-  };
+        r.ok ? "success" : "info",
+      ],
+      "Failed to cancel download"
+    );
 
-  const unloadModel = async () => {
-    setRunning(true);
-    try {
-      await api("/api/ai/model/unload", { method: "POST" });
-      push("Model unloaded", "success");
-    } catch (e) {
-      push(`Failed to unload model: ${String(e)}`, "error");
-    } finally {
-      setRunning(false);
-    }
-  };
+  const unloadModel = () =>
+    runCommand(
+      postModelUnload,
+      () => ["Model unloaded", "success"],
+      "Failed to unload model"
+    );
 
-  const runUntagged = async () => {
-    setRunning(true);
-    try {
-      const r = await api<{ job_id: string | null; queued: number }>(
-        "/api/ai/tag-untagged",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ limit: untaggedLimit }),
-        }
-      );
-      if (!r.queued) {
-        push("No images are missing AI tags", "info");
-        return;
-      }
-      push(`Queued AI tagging for ${r.queued} images`, "success");
-    } catch (e) {
-      push(`Failed to start job: ${String(e)}`, "error");
-    } finally {
-      setRunning(false);
-    }
-  };
+  const runUntagged = () =>
+    runCommand(
+      () => postTagUntagged(untaggedLimit),
+      (r) =>
+        r.queued
+          ? [`Queued AI tagging for ${r.queued} images`, "success"]
+          : ["No images are missing AI tags", "info"],
+      "Failed to start job"
+    );
 
   const clearAllAiTags = async () => {
     const ok = confirm(
       "This will REMOVE all AI-generated tags and AI metadata from ALL images across ALL libraries.\n\nManual tags (manual:) will be kept.\n\nContinue?"
     );
     if (!ok) return;
-
-    setRunning(true);
-    try {
-      const r = await api<{ matched: number; modified: number }>(
-        "/api/ai/clear-ai-tags",
-        { method: "POST" }
-      );
-      push(`Cleared AI tags on ${r.modified} images`, "success");
-    } catch (e) {
-      push(`Failed to clear AI tags: ${String(e)}`, "error");
-    } finally {
-      setRunning(false);
-    }
+    await runCommand(
+      postClearAiTags,
+      (r) => [`Cleared AI tags on ${r.modified} images`, "success"],
+      "Failed to clear AI tags"
+    );
   };
 
   return {

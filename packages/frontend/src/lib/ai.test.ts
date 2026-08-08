@@ -1,8 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
+  fetchAiCoverage,
   isTerminalJob,
   isActiveJob,
   isStatusBusy,
+  postAiJobCancel,
+  postAiTag,
+  postClearAiTags,
+  postModelDownloadCancel,
+  postModelLoad,
+  postModelLoadCancel,
+  postModelUnload,
+  postTagUntagged,
+  saveAiSettings,
   type AIStatus,
 } from "./ai";
 
@@ -80,5 +90,90 @@ describe("isStatusBusy", () => {
     expect(
       isStatusBusy({ ...base, jobs: { recent: [job], queue_depth: 0 } }),
     ).toBe(false);
+  });
+});
+
+// --- Commands ---------------------------------------------------------------
+//
+// These six endpoints previously existed only inside SettingsContext, so
+// "does cancel-download hit the right URL" needed renderHook + a provider + a
+// fetch mock. As adapters they are the same shape of test as api.test.ts.
+
+describe("AI commands", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function mockFetch(body: unknown = {}) {
+    const spy = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify(body), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", spy);
+    return spy;
+  }
+
+  it.each([
+    ["postModelLoad", () => postModelLoad(), "/api/ai/model/load"],
+    ["postModelLoadCancel", () => postModelLoadCancel(), "/api/ai/model/load-cancel"],
+    [
+      "postModelDownloadCancel",
+      () => postModelDownloadCancel(),
+      "/api/ai/model/download-cancel",
+    ],
+    ["postModelUnload", () => postModelUnload(), "/api/ai/model/unload"],
+    ["postClearAiTags", () => postClearAiTags(), "/api/ai/clear-ai-tags"],
+  ])("%s POSTs %s", async (_name, call, url) => {
+    const spy = mockFetch();
+    await call();
+    expect(spy).toHaveBeenCalledWith(url, { method: "POST" });
+  });
+
+  it("postAiJobCancel encodes the job id into the path", async () => {
+    const spy = mockFetch({ ok: true });
+    await postAiJobCancel("job/1");
+    expect(spy).toHaveBeenCalledWith("/api/ai/jobs/job%2F1/cancel", {
+      method: "POST",
+    });
+  });
+
+  it("postAiTag sends the ids as a JSON body", async () => {
+    const spy = mockFetch({ job_id: "j1" });
+    await expect(postAiTag(["a", "b"])).resolves.toEqual({ job_id: "j1" });
+    expect(spy).toHaveBeenCalledWith("/api/ai/tag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: ["a", "b"] }),
+    });
+  });
+
+  it("postTagUntagged sends the limit", async () => {
+    const spy = mockFetch({ job_id: null, queued: 0 });
+    await postTagUntagged(50);
+    expect(spy.mock.calls[0][1]).toMatchObject({
+      body: JSON.stringify({ limit: 50 }),
+    });
+  });
+
+  it("saveAiSettings round-trips the settings body", async () => {
+    const spy = mockFetch({ model_repo: "r" });
+    await saveAiSettings({ model_repo: "r" } as never);
+    expect(spy.mock.calls[0][0]).toBe("/api/ai/settings");
+    expect(spy.mock.calls[0][1]).toMatchObject({ method: "POST" });
+  });
+
+  it("reads go through the shared client and forward the abort signal", async () => {
+    const spy = mockFetch({ total: 0 });
+    const signal = new AbortController().signal;
+    await fetchAiCoverage(signal);
+    expect(spy).toHaveBeenCalledWith("/api/ai/coverage", { signal });
+  });
+
+  it("propagates the response body text on failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("model busy", { status: 409 })),
+    );
+    await expect(postModelLoad()).rejects.toThrow("model busy");
   });
 });
