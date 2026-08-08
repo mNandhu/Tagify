@@ -2,23 +2,13 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { ThumbnailTile } from "./ThumbnailTile";
 import {
   columnWidth,
-  estimateItemHeight,
   gridColumns,
-  OVERSCAN_PX,
+  packColumns,
+  visibleSlice,
 } from "../lib/masonryLayout";
 import type { ImageDoc } from "../lib/imageFilter";
 
 type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
-
-// One positioned tile in the masonry layout (pixel coords within the wrapper).
-type Tile = {
-  item: ImageDocWithDims;
-  index: number;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-};
 
 interface VirtualizedGridProps {
   items: ImageDocWithDims[];
@@ -105,84 +95,16 @@ export function VirtualizedGrid({
     };
   }, [getScrollContainer]);
 
-  // Column-masonry layout: place each item in the currently-shortest column so
-  // shorter items pack up and tiles below rise to fill gaps (Pinterest-style),
-  // matching the CSS-grid StandardGrid. A fixed-row layout would leave empty
-  // space under the short items in a tall row.
-  const { tiles, columns, totalHeight } = useMemo(() => {
-    if (!colWidth || cols === 0) {
-      return {
-        tiles: [] as Tile[],
-        columns: [] as Tile[][],
-        totalHeight: 0,
-      };
-    }
+  const { tiles, columns, totalHeight } = useMemo(
+    () => packColumns(items, cols, colWidth, GAP),
+    [items, colWidth, cols]
+  );
 
-    const colHeights = new Array(cols).fill(0);
-    const colTiles: Tile[][] = Array.from({ length: cols }, () => []);
-    const allTiles: Tile[] = [];
-
-    for (let i = 0; i < items.length; i++) {
-      // Shortest column wins (ties go left).
-      let col = 0;
-      for (let c = 1; c < cols; c++) {
-        if (colHeights[c] < colHeights[col]) col = c;
-      }
-      const h = estimateItemHeight(items[i], colWidth);
-      const tile: Tile = {
-        item: items[i],
-        index: i,
-        x: col * (colWidth + GAP),
-        y: colHeights[col],
-        w: colWidth,
-        h,
-      };
-      colHeights[col] += h + GAP;
-      colTiles[col].push(tile);
-      allTiles.push(tile);
-    }
-
-    return {
-      tiles: allTiles,
-      columns: colTiles,
-      totalHeight: Math.max(0, ...colHeights),
-    };
-  }, [items, colWidth, cols]);
-
-  // First index in a column whose tile *bottom* is >= y (column is sorted by y
-  // ascending and tiles don't overlap, so this is monotonic).
-  const lowerBoundByBottom = (column: Tile[], y: number) => {
-    let lo = 0;
-    let hi = column.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (column[mid].y + column[mid].h < y) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
-
-  // Visible tiles: per-column binary-search slice of the viewport window.
-  const visibleTiles = useMemo(() => {
-    if (!tiles.length) return [];
-    const viewportTop = Math.max(0, scrollTop - wrapperTop);
-    const viewportBottom = viewportTop + viewportHeight;
-
-    const overscanPx = OVERSCAN_PX;
-    const startY = Math.max(0, viewportTop - overscanPx);
-    const endY = viewportBottom + overscanPx;
-
-    const out: Tile[] = [];
-    for (const column of columns) {
-      // Start at the first tile reaching into the window…
-      for (let i = lowerBoundByBottom(column, startY); i < column.length; i++) {
-        // …and stop once a tile starts past the window (rest are lower still).
-        if (column[i].y > endY) break;
-        out.push(column[i]);
-      }
-    }
-    return out;
-  }, [tiles, columns, scrollTop, viewportHeight, wrapperTop]);
+  const visibleTiles = useMemo(
+    () =>
+      visibleSlice(columns, Math.max(0, scrollTop - wrapperTop), viewportHeight),
+    [columns, scrollTop, viewportHeight, wrapperTop]
+  );
 
   // Apply total height without using inline styles
   useEffect(() => {

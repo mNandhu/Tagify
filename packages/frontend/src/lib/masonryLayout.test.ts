@@ -4,7 +4,12 @@ import {
   columnWidth,
   aspectHeight,
   estimateItemHeight,
+  lowerBoundByBottom,
+  packColumns,
   rowSpan,
+  visibleSlice,
+  LOAD_AHEAD_PX,
+  OVERSCAN_PX,
 } from "./masonryLayout";
 
 describe("gridColumns", () => {
@@ -61,5 +66,158 @@ describe("rowSpan", () => {
   });
   it("guards against a zero row unit", () => {
     expect(rowSpan(400, 0, 12)).toBe(1);
+  });
+});
+
+// --- Packing + windowing ------------------------------------------------------
+//
+// This is the algorithm the virtualized gallery runs on any library over 150
+// items. It lived inside the component, where "does a 3-column pack put item 4
+// under item 1" needed jsdom, a ResizeObserver stub and a fake scroll container.
+
+// 100x200 at colWidth 100 gives a 200px tile — comfortably above
+// estimateItemHeight's 150px floor, so packed geometry is exact.
+const tall = (n: number) =>
+  Array.from({ length: n }, () => ({ width: 100, height: 200 }));
+
+describe("packColumns", () => {
+  it("fills columns left to right before wrapping", () => {
+    const p = packColumns(tall(3), 3, 100, 10);
+    expect(p.tiles.map((t) => t.x)).toEqual([0, 110, 220]);
+    expect(p.tiles.map((t) => t.y)).toEqual([0, 0, 0]);
+  });
+
+  it("puts the 4th item under the 1st in a 3-column grid", () => {
+    const p = packColumns(tall(4), 3, 100, 10);
+    const fourth = p.tiles[3];
+    expect(fourth.x).toBe(0);
+    expect(fourth.y).toBe(210); // 200 tall + 10 gap
+  });
+
+  it("sends each item to the shortest column, ties going left", () => {
+    // A tall first item must push the next items into the other columns, and
+    // the 4th back into a short one rather than under the tall one.
+    const items = [
+      { width: 100, height: 800 },
+      { width: 100, height: 200 },
+      { width: 100, height: 200 },
+      { width: 100, height: 200 },
+    ];
+    const p = packColumns(items, 3, 100, 10);
+    expect(p.tiles.map((t) => t.x)).toEqual([0, 110, 220, 110]);
+  });
+
+  it("totalHeight is the tallest column, not the sum", () => {
+    // Summing would over-scroll the grid by a factor of `cols`.
+    const p = packColumns(tall(3), 3, 100, 10);
+    expect(p.totalHeight).toBe(210);
+  });
+
+  it("groups tiles by column, each sorted by ascending y", () => {
+    const p = packColumns(tall(6), 2, 100, 10);
+    expect(p.columns).toHaveLength(2);
+    for (const col of p.columns) {
+      const ys = col.map((t) => t.y);
+      expect([...ys].sort((a, b) => a - b)).toEqual(ys);
+    }
+  });
+
+  it("keeps the original item index on every tile", () => {
+    const p = packColumns(tall(5), 2, 100, 10);
+    expect(p.tiles.map((t) => t.index)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("is empty for a zero column count or width", () => {
+    expect(packColumns(tall(3), 0, 100, 10).tiles).toEqual([]);
+    expect(packColumns(tall(3), 3, 0, 10).totalHeight).toBe(0);
+    expect(packColumns([], 3, 100, 10).totalHeight).toBe(0);
+  });
+});
+
+describe("lowerBoundByBottom", () => {
+  const column = packColumns(tall(5), 1, 100, 10).columns[0];
+
+  it("returns 0 when the window starts above everything", () => {
+    expect(lowerBoundByBottom(column, 0)).toBe(0);
+  });
+
+  it("includes a tile straddling the window's top edge", () => {
+    // Tile 1 spans y 210..410. A window starting at 250 cuts through it, so it
+    // is partly on screen and must be included, not skipped.
+    expect(lowerBoundByBottom(column, 250)).toBe(1);
+  });
+
+  it("keeps a tile whose bottom lands exactly on the window top", () => {
+    // Tile 0 spans 0..200. The bound is inclusive on the bottom edge, so a
+    // window starting at 200 still keeps it; one past that drops it.
+    expect(lowerBoundByBottom(column, 200)).toBe(0);
+    expect(lowerBoundByBottom(column, 201)).toBe(1);
+  });
+
+  it("returns the length when the window starts below everything", () => {
+    expect(lowerBoundByBottom(column, 99999)).toBe(column.length);
+  });
+
+  it("agrees with a linear scan at every boundary", () => {
+    for (let y = 0; y < 600; y += 7) {
+      const linear = column.findIndex((t) => t.y + t.h >= y);
+      expect(lowerBoundByBottom(column, y)).toBe(
+        linear === -1 ? column.length : linear,
+      );
+    }
+  });
+});
+
+describe("visibleSlice", () => {
+  const { columns } = packColumns(tall(40), 2, 100, 10);
+
+  it("mounts only a window of the tiles, not all of them", () => {
+    const out = visibleSlice(columns, 0, 500, 0);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.length).toBeLessThan(40);
+  });
+
+  it("includes tiles straddling both edges of the window", () => {
+    const out = visibleSlice(columns, 200, 200, 0);
+    const tops = out.map((t) => t.y);
+    const bottoms = out.map((t) => t.y + t.h);
+    expect(Math.min(...tops)).toBeLessThan(200); // straddles the top
+    expect(Math.max(...bottoms)).toBeGreaterThan(400); // straddles the bottom
+  });
+
+  it("overscan widens the window on both sides", () => {
+    const tight = visibleSlice(columns, 500, 200, 0);
+    const loose = visibleSlice(columns, 500, 200, 300);
+    expect(loose.length).toBeGreaterThan(tight.length);
+  });
+
+  it("clamps the window at the top of the grid", () => {
+    const out = visibleSlice(columns, 0, 200, 1000);
+    expect(out[0].y).toBe(0);
+  });
+
+  it("returns nothing past the end of the grid", () => {
+    expect(visibleSlice(columns, 99999, 200, 0)).toEqual([]);
+  });
+
+  it("never drops a tile that a linear scan would keep", () => {
+    for (let top = 0; top < 2000; top += 137) {
+      const got = new Set(visibleSlice(columns, top, 300, 100).map((t) => t.index));
+      const startY = Math.max(0, top - 100);
+      const endY = top + 300 + 100;
+      const expected = columns
+        .flat()
+        .filter((t) => t.y + t.h >= startY && t.y <= endY)
+        .map((t) => t.index);
+      for (const i of expected) expect(got.has(i)).toBe(true);
+    }
+  });
+});
+
+describe("load-ahead constants", () => {
+  it("the grid mounts tiles before they start loading", () => {
+    // These were two unrelated literals in two files; the ordering is the whole
+    // point of the pairing.
+    expect(OVERSCAN_PX).toBeGreaterThan(LOAD_AHEAD_PX);
   });
 });
