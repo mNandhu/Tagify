@@ -4,6 +4,7 @@ import {
   columnWidth,
   estimateItemHeight,
   gridColumns,
+  OVERSCAN_PX,
 } from "../lib/masonryLayout";
 import type { ImageDoc } from "../lib/imageFilter";
 
@@ -167,10 +168,7 @@ export function VirtualizedGrid({
     const viewportTop = Math.max(0, scrollTop - wrapperTop);
     const viewportBottom = viewportTop + viewportHeight;
 
-    // Overscan to reduce pop-in. Must exceed the tile's load-ahead rootMargin
-    // (~1200px) so tiles mount before they start loading, letting thumbs decode
-    // before they scroll into view.
-    const overscanPx = 1600;
+    const overscanPx = OVERSCAN_PX;
     const startY = Math.max(0, viewportTop - overscanPx);
     const endY = viewportBottom + overscanPx;
 

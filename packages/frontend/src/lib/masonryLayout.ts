@@ -56,3 +56,20 @@ export function rowSpan(
   if (rowUnit <= 0) return 1;
   return Math.max(1, Math.ceil((pxHeight + rowGap) / (rowUnit + rowGap)));
 }
+
+/**
+ * How far ahead of the viewport a tile starts loading its image
+ * (ImageThumbnail's IntersectionObserver rootMargin).
+ */
+export const LOAD_AHEAD_PX = 1200;
+
+/**
+ * How far ahead of the viewport the virtualized grid mounts tiles.
+ *
+ * Must exceed LOAD_AHEAD_PX so a tile is mounted before it wants to load —
+ * otherwise the load-ahead window is clipped by the mount window and thumbs
+ * only start fetching once they are nearly on screen. These were two unrelated
+ * literals in two files whose ordering was described in a pair of comments and
+ * enforced by nothing.
+ */
+export const OVERSCAN_PX = LOAD_AHEAD_PX + 400;
