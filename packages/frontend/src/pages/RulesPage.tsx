@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useBlocker } from "react-router-dom";
+import { useRulesetSession } from "../hooks/useRulesetSession";
+import { useUnsavedChangesGuard } from "../hooks/useUnsavedChangesGuard";
 import { Workflow, Save, Trash2, Play, X, Plus, Search, AlertTriangle } from "lucide-react";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
@@ -8,15 +9,10 @@ import { useToast } from "../components/Toasts";
 import {
   RULE_FIELDS,
   type RuleField,
-  type RuleFields,
   type SignatureRow,
   type PreviewResult,
   fetchSignatures,
-  fetchRuleset,
-  saveRuleset,
-  deleteRuleset,
   previewRuleset,
-  fetchWorkflow,
 } from "../lib/gen";
 
 const FIELD_LABEL: Record<RuleField, string> = {
@@ -175,13 +171,9 @@ export function JsonTree({
 export default function RulesPage() {
   const { push } = useToast();
   const [sigs, setSigs] = useState<SignatureRow[]>([]);
-  const [selected, setSelected] = useState<SignatureRow | null>(null);
-  const [fields, setFields] = useState<RuleFields>({});
-  const savedFields = useRef<RuleFields>({});
-  const [graph, setGraph] = useState<unknown>(null);
   const [activeField, setActiveField] = useState<RuleField>("prompt");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
   // Search *within* the selected sample graph — find a node by id, class_type, or
   // a prompt word and see where it lives so its dot-path can be pinned.
   const [graphQuery, setGraphQuery] = useState("");
@@ -194,121 +186,40 @@ export default function RulesPage() {
 
   useEffect(() => loadSignatures(), [loadSignatures]);
 
-  const isDirty = useMemo(
-    () => JSON.stringify(fields) !== JSON.stringify(savedFields.current),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [fields],
-  );
+  const session = useRulesetSession({ notify: push, onSaved: loadSignatures });
+  const {
+    selected,
+    fields,
+    graph,
+    isDirty,
+    selectSig,
+    removePath,
+    save,
+    remove,
+  } = session;
+  const busy = session.busy || previewBusy;
 
-  useEffect(() => {
-    if (!isDirty) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [isDirty]);
-
-  const blocker = useBlocker(isDirty);
-  useEffect(() => {
-    if (blocker.state !== "blocked") return;
-    if (confirm("You have unsaved changes. Leave anyway?")) {
-      blocker.proceed();
-    } else {
-      blocker.reset();
-    }
-  }, [blocker]);
-
-  const selectSig = useCallback(
-    async (row: SignatureRow) => {
-      if (isDirty && !confirm("You have unsaved changes. Discard and switch signature?"))
-        return;
-      setSelected(row);
-      setPreview(null);
-      setGraph(null);
-      try {
-        const [rs, wf] = await Promise.all([
-          fetchRuleset(row.workflow_sig),
-          fetchWorkflow(row.sample_image_id),
-        ]);
-        const loaded = rs.fields || {};
-        savedFields.current = loaded;
-        setFields(loaded);
-        // Root the tree at the raw doc so pinned paths read `prompt.<node>...`.
-        const g: Record<string, unknown> = {};
-        if (wf && (wf as { prompt?: unknown }).prompt != null)
-          g.prompt = (wf as { prompt?: unknown }).prompt;
-        if (wf && (wf as { workflow?: unknown }).workflow != null)
-          g.workflow = (wf as { workflow?: unknown }).workflow;
-        setGraph(g);
-      } catch (e) {
-        push(`Failed to load ruleset: ${String(e)}`, "error");
-      }
-    },
-    [push, isDirty],
-  );
+  useUnsavedChangesGuard(isDirty);
 
   const pinPath = useCallback(
     (path: string) => {
-      setFields((f) => {
-        const cur = f[activeField] || [];
-        if (cur.includes(path)) return f;
-        return { ...f, [activeField]: [...cur, path] };
-      });
+      session.pinPath(activeField, path);
       push(`Pinned ${path} → ${FIELD_LABEL[activeField]}`, "info");
     },
-    [activeField, push],
+    [session, activeField, push],
   );
-
-  const removePath = (field: RuleField, path: string) =>
-    setFields((f) => ({
-      ...f,
-      [field]: (f[field] || []).filter((p) => p !== path),
-    }));
 
   const runPreview = useCallback(async () => {
     if (!selected) return;
-    setBusy(true);
+    setPreviewBusy(true);
     try {
       setPreview(await previewRuleset(selected.sample_image_id, fields));
     } catch (e) {
       push(`Preview failed: ${String(e)}`, "error");
     } finally {
-      setBusy(false);
+      setPreviewBusy(false);
     }
   }, [selected, fields, push]);
-
-  const save = useCallback(async () => {
-    if (!selected) return;
-    setBusy(true);
-    try {
-      await saveRuleset(selected.workflow_sig, fields);
-      savedFields.current = fields;
-      push("Ruleset saved · reprojecting this signature", "success");
-      loadSignatures();
-    } catch (e) {
-      push(`Save failed: ${String(e)}`, "error");
-    } finally {
-      setBusy(false);
-    }
-  }, [selected, fields, push, loadSignatures]);
-
-  const remove = useCallback(async () => {
-    if (!selected) return;
-    if (!confirm("Delete this ruleset and reproject with built-in rules?")) return;
-    setBusy(true);
-    try {
-      await deleteRuleset(selected.workflow_sig);
-      savedFields.current = {};
-      setFields({});
-      push("Ruleset deleted", "info");
-      loadSignatures();
-    } catch (e) {
-      push(`Delete failed: ${String(e)}`, "error");
-    } finally {
-      setBusy(false);
-    }
-  }, [selected, push, loadSignatures]);
 
   const previewGen = preview?.gen;
   const firedByField = useMemo(() => preview?.paths ?? {}, [preview]);

@@ -81,6 +81,25 @@ belongs in this file.
   toggles. Its URL round-trip is pure: `parseFilters` / `serializeFilters`
   (`lib/imageFilter.ts`) are the single source of truth, so the URL and the
   query never drift.
+- **Tag kinds (frontend)** — the `manual:` / `prompt:` / `any:` prefixes and the
+  predicates over them live once in `lib/tags.ts` (`isManual`, `isPrompt`,
+  `isAiTag`, `partitionTags`, `formatTag`, `formatSearchTag`), mirroring the
+  backend's `image_tags` helpers. They were hardcoded in five components.
+- **Per-image mutations** — every write the UI can make to one Image (rating,
+  score, quarantine, purge, apply/remove tags, tag thumbnail) goes through
+  `lib/imageMutations.ts` over the shared `lib/api` client — the client-side
+  mirror of `services/image_tags.py`. Their feed-cache consequences live in
+  `lib/feedCache.ts`, which patches *every* cached feed rather than one exact
+  key, since an Image can be cached under several filters.
+- **Load slot** — a thumbnail's permission to fetch. `hooks/useImageLoadSlot.ts`
+  owns the global concurrency limit and the per-tile lifecycle (enqueue-once,
+  token-matched release, unmount/stale-src guards). Leaked slots silently stop
+  every later thumbnail from loading, so the invariants are code, not comments.
+- **Ruleset edit session** — the loaded-vs-edited state of one signature's
+  extraction Ruleset: one definition of dirty, and the load/save/delete
+  transitions that reset the baseline (`hooks/useRulesetSession.ts`). The exits
+  a page can't intercept itself — tab close, in-app navigation — are guarded off
+  the same flag by `hooks/useUnsavedChangesGuard.ts`.
 - **Image feed** — the cursor-paged stream of Images matching an Image filter.
   One shared query (`hooks/useImageFeed.ts`, TanStack `useInfiniteQuery` keyed
   by the filter); the gallery (`AllImagesPage`) and `ImageView` read the same
