@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 import anyio  # type: ignore[import-not-found]
@@ -39,6 +40,11 @@ async def list_libraries():
 
 @router.post("")
 async def add_library(body: LibraryIn):
+    if not await anyio.to_thread.run_sync(lambda: Path(body.path).is_dir()):  # type: ignore[attr-defined]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Path does not exist or is not a directory: {body.path}",
+        )
     async with async_tx() as conn:
         existing = (
             await conn.execute(
@@ -147,6 +153,13 @@ async def update_library(library_id: str, body: LibraryUpdate):
     update_doc = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
     if not update_doc:
         raise HTTPException(status_code=400, detail="No fields to update")
+    if "path" in update_doc and not await anyio.to_thread.run_sync(
+        lambda: Path(update_doc["path"]).is_dir()
+    ):  # type: ignore[attr-defined]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Path does not exist or is not a directory: {update_doc['path']}",
+        )
     async with async_tx() as conn:
         old = (
             await conn.execute(
