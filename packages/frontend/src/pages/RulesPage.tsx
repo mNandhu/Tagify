@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useRulesetSession } from "../hooks/useRulesetSession";
 import { useUnsavedChangesGuard } from "../hooks/useUnsavedChangesGuard";
 import { Workflow, Save, Trash2, Play, X, Plus, Search, AlertTriangle } from "lucide-react";
@@ -200,6 +201,21 @@ export default function RulesPage() {
   const busy = session.busy || previewBusy;
 
   useUnsavedChangesGuard(isDirty);
+
+  // Deep link from a specific image (Full View "Edit rule" button) —
+  // ?sig=<workflow_sig> auto-selects that signature once its row has loaded.
+  // Guarded by a ref (not just presence of the param) so it fires once per
+  // distinct sig and never fights a later manual selection.
+  const [searchParams] = useSearchParams();
+  const sigParam = searchParams.get("sig");
+  const appliedSigParam = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sigParam || sigParam === appliedSigParam.current) return;
+    const row = sigs.find((s) => s.workflow_sig === sigParam);
+    if (!row) return;
+    appliedSigParam.current = sigParam;
+    void selectSig(row);
+  }, [sigParam, sigs, selectSig]);
 
   const pinPath = useCallback(
     (path: string) => {

@@ -26,6 +26,7 @@ import {
   Download,
   PanelRight,
   Image as ImageIcon,
+  Workflow,
 } from "lucide-react";
 import { resolveMediaUrl } from "../lib/media";
 import { useToast } from "../components/Toasts";
@@ -506,6 +507,21 @@ export default function ImageView() {
     [data?._id, formatTag, push],
   );
 
+  const copyAllTags = useCallback(async () => {
+    const all = data?.tags ?? [];
+    if (!all.length) {
+      push("No tags to copy", "info");
+      return;
+    }
+    const text = all.map(formatTag).join(", ");
+    try {
+      await navigator.clipboard.writeText(text);
+      push("Tags copied to clipboard", "success");
+    } catch (e) {
+      push(`Copy failed: ${String(e)}`, "error");
+    }
+  }, [data?.tags, push]);
+
   if (!id) return null;
 
   const fileName = data?.path ? data.path.split(/[\\/]/).pop() : "";
@@ -734,7 +750,21 @@ export default function ImageView() {
 
               {/* Tags — kept last; can be long, so it never pushes Curation
                   and Generation data below the fold. */}
-              <Section title="Tags">
+              <Section
+                title="Tags"
+                right={
+                  (aiTags.length || manualTagsRaw.length || promptTagsRaw.length) ? (
+                    <button
+                      type="button"
+                      onClick={() => void copyAllTags()}
+                      className="inline-flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
+                      title="Copy all tags as comma-separated text"
+                    >
+                      <Copy size={12} /> Copy all
+                    </button>
+                  ) : undefined
+                }
+              >
                 {aiTags.length ||
                 manualTagsRaw.length ||
                 promptTagsRaw.length ? (
@@ -1080,14 +1110,25 @@ function GenPanel({
     <section className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3 space-y-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Generation data</h2>
-        <button
-          type="button"
-          onClick={onCopyAll}
-          className="inline-flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
-          title="Copy all generation data"
-        >
-          <Copy size={12} /> Copy all
-        </button>
+        <div className="flex items-center gap-3">
+          {gen.workflow_sig && (
+            <Link
+              to={`/rules?sig=${encodeURIComponent(gen.workflow_sig)}`}
+              className="inline-flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
+              title="Edit this workflow's extraction rule"
+            >
+              <Workflow size={12} /> Edit rule
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={onCopyAll}
+            className="inline-flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
+            title="Copy all generation data"
+          >
+            <Copy size={12} /> Copy all
+          </button>
+        </div>
       </div>
 
       {gen.model && (
