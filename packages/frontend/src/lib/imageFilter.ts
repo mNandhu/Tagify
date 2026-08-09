@@ -149,6 +149,22 @@ export function serializeFilters(filters: Filters): URLSearchParams {
 }
 
 /**
+ * Query string for the batch-peek fetch (see useBatchScrub): every active
+ * filter except `group`/`group_id`, which the peek sets itself to scope to
+ * one batch's members. Without this, the peek fetched a batch's members
+ * unfiltered while the grouped feed picks each batch's *representative*
+ * honoring the active filter — under a tag or quarantine filter those can
+ * disagree, so hovering could swap the tile to a different image than the
+ * one it was showing at rest.
+ */
+export function serializeFiltersForPeek(filters: Filters): string {
+  const sp = serializeFilters(filters);
+  sp.delete("group");
+  sp.delete("group_id");
+  return sp.toString();
+}
+
+/**
  * Build the `/api/images` query string for one page of the Image feed:
  * the filter params plus pagination (limit, optional cursor).
  */

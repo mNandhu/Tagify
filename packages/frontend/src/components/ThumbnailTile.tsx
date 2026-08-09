@@ -28,6 +28,11 @@ type ImageDocWithDims = ImageDoc & { width?: number; height?: number };
  * on a screen whose entire job is looking at pictures, so entering the mode is
  * the deliberate opt-in that puts it there.
  */
+// Must match the `duration-300` class on the crossfade layers below: the
+// exit fade sets both layers to opacity-0 and waits this long for that
+// transition to finish before unmounting the <img> nodes.
+const SCRUB_CROSSFADE_MS = 300;
+
 export const ThumbnailTile = React.memo(function ThumbnailTile({
   item,
   index,
@@ -39,6 +44,7 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   eager = false,
   focused = false,
   dimQuarantined = true,
+  peekQuery = "",
 }: {
   item: ImageDocWithDims;
   index: number;
@@ -53,6 +59,10 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   /** Hold a quarantined tile back visually. Off in the quarantined view, where
    * every tile is quarantined and the badge alone carries the meaning. */
   dimQuarantined?: boolean;
+  /** Active gallery filters, serialized for the batch-peek fetch — see
+   * serializeFiltersForPeek. Scopes the peek to the same members the grouped
+   * feed considered when it picked this tile as the representative. */
+  peekQuery?: string;
 }) {
   // Prefer the ready-to-use URL embedded in the list payload (no per-tile
   // resolve request). Fall back to the endpoint, which ImageThumbnail resolves
@@ -63,7 +73,20 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   const groupCount = item.group_count ?? 1;
   const isBatch = groupCount > 1;
   const [scrubbing, setScrubbing] = useState(false);
-  const scrub = useBatchScrub(item.group_id, isBatch && scrubbing && !selectionMode);
+  // Entering selection mode detaches the mouse handlers below (a picking
+  // affordance shouldn't also be scrubbing), which means the onMouseLeave
+  // that would normally clear `scrubbing` never fires if selection mode
+  // engages mid-hover. Without this, the flag stays stuck true and the tile
+  // starts peeking on its own — pointer nowhere near it — the moment
+  // selection mode turns back off.
+  useEffect(() => {
+    if (selectionMode) setScrubbing(false);
+  }, [selectionMode]);
+  const scrub = useBatchScrub(
+    item.group_id,
+    isBatch && scrubbing && !selectionMode,
+    peekQuery,
+  );
 
   // Two stacked layers that swap which one is "front" on every frame change, so
   // each step — including the wrap from the last member back to the first — is
@@ -71,14 +94,26 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   // A single <img> whose src is swapped in place can't do this: only a fresh
   // element (or a genuinely new opacity target) retriggers a CSS transition.
   const [scrubLayers, setScrubLayers] = useState<[string | null, string | null]>([null, null]);
-  const [scrubFront, setScrubFront] = useState<0 | 1>(0);
+  // `null` means neither layer is front — both fade to opacity-0. Used only
+  // on hover-exit, so the layers stay mounted long enough to actually play
+  // the fade instead of vanishing with it.
+  const [scrubFront, setScrubFront] = useState<0 | 1 | null>(0);
   const lastScrubSrc = useRef<string | null>(null);
 
   useEffect(() => {
     if (!scrub.src) {
+      if (lastScrubSrc.current === null) return;
       lastScrubSrc.current = null;
-      setScrubLayers([null, null]);
-      return;
+      // Fade the visible layer out to opacity-0 rather than unmounting both
+      // <img> layers in the same commit — removing the nodes immediately
+      // skipped the opacity transition and hard-cut straight back to the
+      // resting thumbnail on mouse-leave.
+      setScrubFront(null);
+      const t = setTimeout(
+        () => setScrubLayers([null, null]),
+        SCRUB_CROSSFADE_MS,
+      );
+      return () => clearTimeout(t);
     }
     if (scrub.src === lastScrubSrc.current) return;
     lastScrubSrc.current = scrub.src;

@@ -24,8 +24,19 @@ const MAX_MEMBERS = 12;
  * Deliberately hover-intent gated and fetched at most once per tile: the
  * grouped feed can show hundreds of batches, and a request per pointer-cross
  * would be worse than the problem it solves.
+ *
+ * `peekQuery` carries the gallery's active filters (tags, quarantined, etc.)
+ * so the peek is scoped the same way the grouped feed picked this tile's
+ * representative — see serializeFiltersForPeek. Fetched once per tile
+ * (`fetchedRef`), so a filter change after a peek has already been cached
+ * won't be reflected until the tile remounts; that's an acceptable gap for a
+ * hover nicety.
  */
-export function useBatchScrub(groupId: string | undefined, active: boolean) {
+export function useBatchScrub(
+  groupId: string | undefined,
+  active: boolean,
+  peekQuery: string,
+) {
   const [frames, setFrames] = useState<string[] | null>(null);
   const [frame, setFrame] = useState(0);
   // Marks that this tile's members have been *successfully* resolved, so a
@@ -43,9 +54,10 @@ export function useBatchScrub(groupId: string | undefined, active: boolean) {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const docs = await api<ImageDoc[]>(
-          `/api/images?group_id=${encodeURIComponent(groupId)}&limit=${MAX_MEMBERS}`,
-        );
+        const params = new URLSearchParams(peekQuery);
+        params.set("group_id", groupId);
+        params.set("limit", String(MAX_MEMBERS));
+        const docs = await api<ImageDoc[]>(`/api/images?${params.toString()}`);
         if (cancelled) return;
         const urls = docs
           .map((d) => d.thumb_url ?? `/api/images/${encodeURIComponent(d._id)}/thumb`)
@@ -71,7 +83,7 @@ export function useBatchScrub(groupId: string | undefined, active: boolean) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [active, groupId]);
+  }, [active, groupId, peekQuery]);
 
   // Advance frames only while hovered; reset to the representative on leave so
   // the grid at rest always shows the same image it showed before.

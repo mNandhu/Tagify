@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { VirtualizedGrid } from "../components/VirtualizedGrid";
 import { GallerySkeleton } from "../components/GallerySkeleton";
@@ -23,6 +23,7 @@ import {
 import {
   DEFAULT_FILTERS,
   serializeFilters,
+  serializeFiltersForPeek,
   hasActiveFilter,
   type Filters,
 } from "../lib/imageFilter";
@@ -320,6 +321,9 @@ export default function AllImagesPage() {
   // and a Quarantine action aimed at images the user can't see. Leaving
   // selection mode is what drops the selection (see useSelectionMode).
   const filterKey = serializeFilters(filters).toString();
+  // Scopes each tile's batch-peek fetch to the same members the grouped feed
+  // considered when it picked that tile as the representative.
+  const peekQuery = useMemo(() => serializeFiltersForPeek(filters), [filters]);
   const lastFilterKeyRef = useRef(filterKey);
   useEffect(() => {
     if (lastFilterKeyRef.current === filterKey) return;
@@ -975,6 +979,7 @@ export default function AllImagesPage() {
           // meaning there; the dimming is only informative in a mixed feed.
           dimQuarantined={!filters.quarantined}
           restoreScrollTop={restoreScroll}
+          peekQuery={peekQuery}
           className="min-h-screen"
         />
         </div>

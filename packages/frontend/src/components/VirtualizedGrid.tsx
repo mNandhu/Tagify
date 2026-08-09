@@ -30,6 +30,9 @@ interface VirtualizedGridProps {
   /** Scroll offset to jump to once the grid has packed — see the layout effect
    * below for why the grid owns this rather than the page. */
   restoreScrollTop?: PendingRestore | null;
+  /** Active gallery filters, serialized for tiles' batch-peek fetch — see
+   * serializeFiltersForPeek. */
+  peekQuery?: string;
 }
 
 /** Longest entrance stagger, so a 200-item page doesn't trickle in for 4s. */
@@ -61,6 +64,7 @@ export function VirtualizedGrid({
   density = DEFAULT_DENSITY,
   dimQuarantined = true,
   restoreScrollTop = null,
+  peekQuery = "",
 }: VirtualizedGridProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const virtualContainerRef = useRef<HTMLDivElement>(null);
@@ -284,6 +288,7 @@ export function VirtualizedGrid({
                   onToggle={onToggle}
                   getRoot={getScrollContainer}
                   eager
+                  peekQuery={peekQuery}
                   focused={tile.index === focusedIndex}
                 />
               </div>
