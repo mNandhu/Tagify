@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
@@ -17,6 +18,19 @@ def _sanitize_path(value: str) -> str:
     return value
 
 
+def _validate_path(value: str) -> str:
+    value = _sanitize_path(value)
+    # A quoted-empty or whitespace-only path sanitizes to "", and Path("") is
+    # the process's own cwd to pathlib — not "no path". Rejecting non-absolute
+    # paths here also catches that (cwd is relative) along with bare relative
+    # names and Windows drive-relative references ("C:", as opposed to
+    # "C:\\"), whose meaning would otherwise depend on the backend's cwd
+    # rather than naming a fixed location.
+    if not value or not Path(value).is_absolute():
+        raise ValueError(f"Path must be a non-empty absolute path: {value!r}")
+    return value
+
+
 class LibraryIn(BaseModel):
     path: str
     name: Optional[str] = None
@@ -24,7 +38,7 @@ class LibraryIn(BaseModel):
     @field_validator("path")
     @classmethod
     def _strip_quotes(cls, v: str) -> str:
-        return _sanitize_path(v)
+        return _validate_path(v)
 
 
 class Library(BaseModel):
@@ -43,4 +57,4 @@ class LibraryUpdate(BaseModel):
     @field_validator("path")
     @classmethod
     def _strip_quotes(cls, v: Optional[str]) -> Optional[str]:
-        return _sanitize_path(v) if v is not None else v
+        return _validate_path(v) if v is not None else v

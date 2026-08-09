@@ -40,19 +40,25 @@ async def list_libraries():
 
 @router.post("")
 async def add_library(body: LibraryIn):
+    # Dedupe before touching the filesystem: an already-registered library
+    # whose drive is temporarily offline (unplugged external disk, unmounted
+    # share) should still return the existing record on a repeat POST, not a
+    # 400 that makes it look unregistered.
+    async with async_conn() as conn:
+        existing = (
+            await conn.execute(
+                sa.select(t.libraries).where(t.libraries.c.path == body.path)
+            )
+        ).first()
+    if existing:
+        return dict(existing._mapping)
+
     if not await anyio.to_thread.run_sync(lambda: Path(body.path).is_dir()):  # type: ignore[attr-defined]
         raise HTTPException(
             status_code=400,
             detail=f"Path does not exist or is not a directory: {body.path}",
         )
     async with async_tx() as conn:
-        existing = (
-            await conn.execute(
-                sa.select(t.libraries).where(t.libraries.c.path == body.path)
-            )
-        ).first()
-        if existing:
-            return dict(existing._mapping)
         lib_id = uuid.uuid4().hex
         await conn.execute(
             sa.insert(t.libraries).values(
