@@ -879,6 +879,7 @@ dependencies = [
     { name = "python-dotenv", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "sqlalchemy", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "uvicorn", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "watchfiles", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -900,6 +901,7 @@ requires-dist = [
     { name = "python-dotenv" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "uvicorn" },
+    { name = "watchfiles", specifier = ">=1.0" },
 ]
 
 [package.metadata.requires-dev]

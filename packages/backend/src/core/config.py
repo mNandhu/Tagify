@@ -31,6 +31,19 @@ class Settings(BaseSettings):
     scanner_max_workers: int = 0
     scan_progress_update_ms: int = 500
 
+    # Filesystem watcher (near-real-time incremental indexing).
+    watch_enabled_default: bool = True
+    # Quiet period a changed file must hold its size for before it's read (avoids
+    # ingesting a file mid-write from ComfyUI/A1111/etc).
+    watch_stability_window_ms: int = 500
+    watch_stability_max_attempts: int = 6
+    # watchfiles' own debounce: how long a burst of events on one path is
+    # coalesced before it's delivered as a single batch.
+    watch_debounce_ms: int = 800
+    # Backstop full rescan per watched library, in case events are missed
+    # (network shares, drives that drop inotify/ReadDirectoryChanges).
+    watch_reconcile_interval_s: int = 900
+
     # Local filesystem directory for downloaded AI tagger model files (ONNX +
     # label CSV). Relative values resolve against the repo root, the same as
     # `thumb_root` and `sqlite_path`, so the location doesn't depend on the

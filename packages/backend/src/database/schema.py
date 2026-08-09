@@ -106,6 +106,11 @@ libraries = sa.Table(
     sa.Column("scan_error", sa.Text),
     sa.Column("scan_failed_count", sa.Integer, server_default="0"),
     sa.Column("scan_failed_samples", sa.JSON, server_default="[]"),
+    # Filesystem watcher: on by default per library. `last_event_at` bumps on
+    # every watcher-driven add/modify/delete so pollers (the gallery feed poll)
+    # can detect out-of-band changes without a dedicated push channel.
+    sa.Column("watch_enabled", sa.Boolean, server_default=sa.text("1")),
+    sa.Column("last_event_at", sa.Text),
 )
 
 # Cold collection: raw embedded generation metadata captured at scan time. The

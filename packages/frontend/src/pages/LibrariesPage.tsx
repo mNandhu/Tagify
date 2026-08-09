@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { FolderOpen, Plus, RotateCw, Pencil, Trash2 } from "lucide-react";
+import { FolderOpen, Plus, RotateCw, Pencil, Trash2, Eye, EyeOff } from "lucide-react";
 import { useToast } from "../components/Toasts";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, Section } from "../components/ui/Card";
@@ -17,6 +17,8 @@ type Library = {
   path: string;
   indexed_count?: number;
   last_scanned?: string;
+  watch_enabled?: boolean;
+  last_event_at?: string | null;
 };
 
 export default function LibrariesPage() {
@@ -278,6 +280,9 @@ export default function LibrariesPage() {
                   {rescanning.has(l._id) && (
                     <Badge tone="brand">Rescanning…</Badge>
                   )}
+                  <Badge tone={l.watch_enabled ? "brand" : undefined}>
+                    {l.watch_enabled ? "Watching" : "Watch off"}
+                  </Badge>
                 </div>
               </div>
 
@@ -320,6 +325,23 @@ export default function LibrariesPage() {
                 >
                   <RotateCw size={14} />
                   {rescanning.has(l._id) ? "Rescanning…" : "Rescan"}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await updateLibrary(l._id, { watch_enabled: !l.watch_enabled });
+                      push(
+                        l.watch_enabled ? "Watching disabled" : "Watching enabled",
+                        "success",
+                      );
+                    } catch (e: any) {
+                      push(e?.message || "Failed to update watching", "error");
+                    }
+                  }}
+                >
+                  {l.watch_enabled ? <EyeOff size={14} /> : <Eye size={14} />}
+                  {l.watch_enabled ? "Stop watching" : "Watch"}
                 </Button>
                 <Button
                   size="sm"

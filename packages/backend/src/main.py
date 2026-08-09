@@ -5,15 +5,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from .api import libraries, images, tags, ai, rules
-from .database.db import ensure_schema
+from .database.db import async_conn, ensure_schema
+from .database import schema as t
 from .core.config import settings
 from .services.storage_fs import ensure_thumb_root
 from .services.ai_jobs import get_ai_job_manager, get_ai_settings
 from .services.ai_tagger import get_tagger_manager
+from .services import library_watch
 
 import logging
 import time
 import anyio  # type: ignore[import-not-found]
+import sqlalchemy as sa
 
 logger = logging.getLogger("tagify")
 
@@ -36,9 +39,29 @@ async def lifespan(app: FastAPI):
         # Best-effort; AI can still run with defaults, but log failures for operators.
         logger.exception("Failed to load AI settings during startup; continuing")
 
+    # Start a filesystem watcher for every library that wants one. A library
+    # added while the process is down only starts watching on the next boot.
+    try:
+        async with async_conn() as conn:
+            rows = (
+                await conn.execute(
+                    sa.select(
+                        t.libraries.c._id,
+                        t.libraries.c.path,
+                        t.libraries.c.watch_enabled,
+                    )
+                )
+            ).fetchall()
+        for r in rows:
+            if r.watch_enabled:
+                library_watch.start_watch(r._id, r.path)
+    except Exception:
+        logger.exception("Failed to start library watchers during startup")
+
     yield
 
-    # Shutdown: add cleanup if needed in the future
+    # Shutdown
+    library_watch.stop_all()
 
 
 app = FastAPI(title="Tagify API", version="0.1.0", lifespan=lifespan)

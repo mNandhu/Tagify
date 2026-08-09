@@ -133,6 +133,11 @@ def reproject_library(library_id: str, *, workflow_sig: str | None = None) -> in
     return _reproject_where(where)
 
 
+def reproject_image(image_id: str) -> int:
+    """Recompute ``gen.*`` for a single image (watcher single-file ingest)."""
+    return _reproject_where(t.image_gen_raw.c._id == image_id)
+
+
 def reproject_by_sig(workflow_sig: str) -> int:
     """Recompute ``gen.*`` for every image of a signature across all libraries.
     Used when a ruleset is created/edited/deleted (rulesets are sig-global)."""

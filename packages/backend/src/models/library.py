@@ -53,6 +53,7 @@ class Library(BaseModel):
 class LibraryUpdate(BaseModel):
     path: Optional[str] = None
     name: Optional[str] = None
+    watch_enabled: Optional[bool] = None
 
     @field_validator("path")
     @classmethod

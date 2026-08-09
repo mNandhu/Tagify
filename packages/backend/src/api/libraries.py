@@ -6,6 +6,7 @@ import anyio  # type: ignore[import-not-found]
 
 import sqlalchemy as sa
 
+from ..core.config import settings
 from ..database.db import async_conn, async_tx
 from ..database import schema as t
 from ..models.library import LibraryIn, LibraryUpdate
@@ -13,6 +14,7 @@ from ..services.scanner import cancel_scan, scan_library_async
 
 from ..services.storage_fs import delete_by_prefix
 from ..services import tag_index
+from ..services import library_watch
 
 router = APIRouter()
 
@@ -28,6 +30,8 @@ _LIB_LIST_COLS = (
     t.libraries.c.scan_done,
     t.libraries.c.scan_error,
     t.libraries.c.scan_failed_count,
+    t.libraries.c.watch_enabled,
+    t.libraries.c.last_event_at,
 )
 
 
@@ -58,6 +62,7 @@ async def add_library(body: LibraryIn):
             status_code=400,
             detail=f"Path does not exist or is not a directory: {body.path}",
         )
+    watch_enabled = settings.watch_enabled_default
     async with async_tx() as conn:
         lib_id = uuid.uuid4().hex
         await conn.execute(
@@ -67,10 +72,13 @@ async def add_library(body: LibraryIn):
                 name=body.name or body.path,
                 indexed_count=0,
                 last_scanned=None,
+                watch_enabled=watch_enabled,
             )
         )
     # trigger initial scan in background
     scan_library_async(lib_id, body.path)
+    if watch_enabled:
+        library_watch.start_watch(lib_id, body.path)
     return {"_id": lib_id, "path": body.path, "name": body.name or body.path}
 
 
@@ -78,6 +86,7 @@ async def add_library(body: LibraryIn):
 async def remove_library(library_id: str):
     # Cancel an in-flight scan first to avoid the scan recreating rows/files after deletion.
     cancel_scan(library_id)
+    library_watch.stop_watch(library_id)
 
     async with async_tx() as conn:
         await conn.execute(
@@ -186,6 +195,16 @@ async def update_library(library_id: str, body: LibraryUpdate):
             )
         ).first()
     result = dict(doc._mapping) if doc else None
-    if "path" in update_doc and update_doc["path"] != old._mapping.get("path"):
-        scan_library_async(library_id, update_doc["path"])
+    new_path = update_doc.get("path", old._mapping.get("path"))
+    path_changed = "path" in update_doc and update_doc["path"] != old._mapping.get(
+        "path"
+    )
+    if path_changed:
+        scan_library_async(library_id, new_path)
+    watch_enabled = update_doc.get("watch_enabled", old._mapping.get("watch_enabled"))
+    if path_changed or "watch_enabled" in update_doc:
+        if watch_enabled:
+            library_watch.start_watch(library_id, new_path)
+        else:
+            library_watch.stop_watch(library_id)
     return result
