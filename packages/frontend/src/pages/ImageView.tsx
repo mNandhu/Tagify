@@ -187,6 +187,7 @@ export default function ImageView() {
     const item = list.find((x) => x._id === id);
     return item?.thumb_url ?? `/api/images/${encodeURIComponent(id)}/thumb`;
   }, [id, list]);
+  const listItem = useMemo(() => list.find((x) => x._id === id), [id, list]);
   const [thumbFailed, setThumbFailed] = useState(false);
   useEffect(() => {
     setThumbFailed(false);
@@ -558,8 +559,8 @@ export default function ImageView() {
               src={thumbUrl}
               alt=""
               aria-hidden="true"
-              width={data?.width}
-              height={data?.height}
+              width={listItem?.width ?? data?.width}
+              height={listItem?.height ?? data?.height}
               onError={() => setThumbFailed(true)}
               className={`max-w-full max-h-dvh w-auto h-auto object-contain blur-xl scale-105 transition-opacity duration-300 ${
                 imgLoaded || thumbFailed ? "opacity-0" : "opacity-100"

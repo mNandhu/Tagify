@@ -4,8 +4,11 @@ import type { ImageDoc } from "../lib/imageFilter";
 
 /** Wait this long before fetching — hovering past a tile shouldn't hit the API. */
 const HOVER_INTENT_MS = 350;
-/** How long each member is shown. */
-const FRAME_MS = 650;
+/** How long each member is shown, including the crossfade into it. Long enough
+ * that a frame gets a settled dwell after the ~300ms fade in ThumbnailTile —
+ * important for a 2-member batch, where a short interval just reads as an A/B
+ * strobe rather than a cycle. */
+const FRAME_MS = 1500;
 /** Members fetched per batch; enough to convey the batch, bounded per hover. */
 const MAX_MEMBERS = 12;
 
@@ -47,6 +50,14 @@ export function useBatchScrub(groupId: string | undefined, active: boolean) {
         const urls = docs
           .map((d) => d.thumb_url ?? `/api/images/${encodeURIComponent(d._id)}/thumb`)
           .filter(Boolean);
+        // Decode every frame up front so the crossfade in ThumbnailTile never
+        // reveals an empty layer — a keyed/layered <img> paints nothing until
+        // its src has loaded, unlike the old single-element swap which kept
+        // showing the previous frame while the next one fetched.
+        urls.forEach((u) => {
+          const img = new Image();
+          img.src = u;
+        });
         fetchedRef.current = true;
         setFrames(urls.length > 1 ? urls : null);
       } catch {
@@ -76,6 +87,10 @@ export function useBatchScrub(groupId: string | undefined, active: boolean) {
     return () => clearInterval(id);
   }, [active, frames]);
 
-  const src = active && frames && frame > 0 ? frames[frame] : null;
+  // Frame 0 is included (not skipped) so the wrap from the last member back to
+  // it is an ordinary crossfade rather than a snap: the plain list endpoint and
+  // the grouped feed both order by `_id desc`, so frames[0] is the same image,
+  // same URL, as the tile's own representative thumbnail.
+  const src = active && frames ? frames[frame] : null;
   return { src, total: frames?.length ?? 0, position: frame };
 }

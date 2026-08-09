@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Check, Layers, ShieldOff, Sparkles } from "lucide-react";
 import { ImageThumbnail } from "./ImageThumbnail";
 import { cn } from "../lib/cn";
@@ -65,6 +65,37 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   const [scrubbing, setScrubbing] = useState(false);
   const scrub = useBatchScrub(item.group_id, isBatch && scrubbing && !selectionMode);
 
+  // Two stacked layers that swap which one is "front" on every frame change, so
+  // each step — including the wrap from the last member back to the first — is
+  // a dissolve between the previous frame and the next rather than a hard cut.
+  // A single <img> whose src is swapped in place can't do this: only a fresh
+  // element (or a genuinely new opacity target) retriggers a CSS transition.
+  const [scrubLayers, setScrubLayers] = useState<[string | null, string | null]>([null, null]);
+  const [scrubFront, setScrubFront] = useState<0 | 1>(0);
+  const lastScrubSrc = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!scrub.src) {
+      lastScrubSrc.current = null;
+      setScrubLayers([null, null]);
+      return;
+    }
+    if (scrub.src === lastScrubSrc.current) return;
+    lastScrubSrc.current = scrub.src;
+    const back = scrubFront === 0 ? 1 : 0;
+    setScrubLayers((layers) => {
+      const next: [string | null, string | null] = [...layers];
+      next[back] = scrub.src;
+      return next;
+    });
+    // Paint the new frame into the hidden layer first, then flip which layer
+    // is front on the next tick — flipping in the same update risks the
+    // browser coalescing both style changes and skipping the transition.
+    const raf = requestAnimationFrame(() => setScrubFront(back));
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrub.src]);
+
   const score = item.score ?? 0;
   const hasScore = score > 0;
   const quarantined = !!item.quarantined;
@@ -108,14 +139,23 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
       {/* Batch peek: while the pointer rests on a collapsed batch, its other
           members cross-fade over the representative. Layered on top rather than
           swapped into ImageThumbnail's src so the tile's own load state, and
-          the BlurHash it already resolved, are left alone. */}
-      {scrub.src && (
-        <img
-          src={scrub.src}
-          alt=""
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 h-full w-full rounded-xl object-cover motion-safe:animate-fade-in"
-        />
+          the BlurHash it already resolved, are left alone. Two layers alternate
+          front/back so every step dissolves, including the wrap back to the
+          first frame — see the scrubLayers effect above. */}
+      {scrubLayers.map((layerSrc, i) =>
+        layerSrc ? (
+          <img
+            key={i}
+            src={layerSrc}
+            alt=""
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none absolute inset-0 h-full w-full rounded-xl object-cover",
+              "motion-safe:transition-opacity motion-safe:duration-300 motion-safe:ease-in-out",
+              scrubFront === i ? "opacity-100" : "opacity-0",
+            )}
+          />
+        ) : null,
       )}
 
       {/* Selection checkbox — only in selection mode. */}
