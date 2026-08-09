@@ -262,6 +262,7 @@ describe("AllImagesPage", () => {
     await waitFor(() =>
       expect(navigateSpy).toHaveBeenCalledWith(
         expect.stringContaining("/image/"),
+        expect.objectContaining({ state: expect.anything() }),
       ),
     );
   });

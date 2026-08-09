@@ -7,10 +7,12 @@ import React, {
 } from "react";
 import {
   Link,
+  useLocation,
   useNavigate,
   useParams,
   useSearchParams,
 } from "react-router-dom";
+import { getBackgroundLocation } from "../lib/backgroundLocation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -66,6 +68,10 @@ export default function ImageView() {
   // one — otherwise a held arrow key defers it forever.
   const holdStartRef = useRef<number | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
+  // Set when opened over the gallery (see RootRoutes); absent on a direct
+  // link or refresh, where this view is the only thing on the page.
+  const backgroundLocation = getBackgroundLocation(location);
   const [searchParams] = useSearchParams();
   const { push } = useToast();
   const queryClient = useQueryClient();
@@ -97,6 +103,29 @@ export default function ImageView() {
       `/image/${encodeURIComponent(imgId)}${filterQuery ? `?${filterQuery}` : ""}`,
     [filterQuery],
   );
+  // Stepping to another image replaces the current history entry rather than
+  // pushing a new one, for two reasons: it must carry `backgroundLocation`
+  // forward or the gallery `<Routes>` (RootRoutes) stops matching the
+  // background location and the gallery underneath unmounts mid-session; and
+  // it keeps exactly one entry between the gallery and the viewer no matter
+  // how many images were stepped through, so `goBack`'s single `navigate(-1)`
+  // always exits in one Escape/Back press instead of walking back one image
+  // at a time.
+  const navigateToImage = useCallback(
+    (imgId: string) =>
+      navigate(toImage(imgId), { replace: true, state: location.state }),
+    [navigate, toImage, location.state],
+  );
+  // Closing the view: if it was opened over the gallery, go back to that exact
+  // history entry (cheap — the gallery never unmounted) instead of pushing a
+  // fresh navigation to it.
+  const goBack = useCallback(() => {
+    if (backgroundLocation) {
+      navigate(-1);
+    } else {
+      navigate(`/${filterQuery ? `?${filterQuery}` : ""}`);
+    }
+  }, [backgroundLocation, navigate, filterQuery]);
 
   // Current image document (full doc with tags/rating); refetched after edits.
   const { data, refetch } = useQuery({
@@ -340,13 +369,13 @@ export default function ImageView() {
   ]);
 
   const goPrev = useCallback(() => {
-    if (index > 0) navigate(toImage(list[index - 1]._id));
-  }, [index, list, navigate, toImage]);
+    if (index > 0) navigateToImage(list[index - 1]._id);
+  }, [index, list, navigateToImage]);
 
   const goNext = useCallback(async () => {
     if (index < 0) return;
     if (index < list.length - 1) {
-      navigate(toImage(list[index + 1]._id));
+      navigateToImage(list[index + 1]._id);
       return;
     }
     // At the end of the loaded pages: fetch the next one, then advance.
@@ -354,13 +383,12 @@ export default function ImageView() {
       const res = await feed.fetchNextPage();
       const all = res.data?.pages.flat() ?? [];
       const nextItem = all[index + 1];
-      if (nextItem) navigate(toImage(nextItem._id));
+      if (nextItem) navigateToImage(nextItem._id);
     }
   }, [
     index,
     list,
-    navigate,
-    toImage,
+    navigateToImage,
     feed.hasNextPage,
     feed.isFetchingNextPage,
     feed.fetchNextPage,
@@ -385,7 +413,7 @@ export default function ImageView() {
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        navigate(`/${filterQuery ? `?${filterQuery}` : ""}`);
+        goBack();
       }
       // Curation acts on the image on screen. While the view is held mid-swap
       // that is not the one the URL has moved to, so ignore these until the
@@ -407,8 +435,7 @@ export default function ImageView() {
   }, [
     goPrev,
     goNext,
-    navigate,
-    filterQuery,
+    goBack,
     applyScore,
     toggleQuarantine,
     pending,
@@ -498,7 +525,11 @@ export default function ImageView() {
 
   return (
     <div
-      className="h-dvh overflow-hidden bg-neutral-950 text-white flex relative"
+      // Fixed, not in normal flow: this now mounts *alongside* the gallery
+      // (see main.tsx's RootRoutes) rather than replacing it, so it needs to
+      // cover the sidebar and grid itself instead of relying on being the only
+      // thing on the page.
+      className="fixed inset-0 z-[100] overflow-hidden bg-neutral-950 text-white flex"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onTouchMove={handleTouchMove}
@@ -507,7 +538,7 @@ export default function ImageView() {
       <div className="flex-1 h-full flex items-center justify-center relative overflow-hidden">
         {/* Back icon (overlay) */}
         <button
-          onClick={() => navigate(`/${filterQuery ? `?${filterQuery}` : ""}`)}
+          onClick={goBack}
           className="absolute top-4 left-4 z-50 p-2 rounded-full bg-black/40 border border-white/10 hover:bg-black/60 transition-transform transition-opacity duration-200 opacity-90 hover:opacity-100 hover:scale-[1.02]"
           aria-label="Back"
           title="Back"

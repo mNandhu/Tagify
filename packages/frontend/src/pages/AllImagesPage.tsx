@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { VirtualizedGrid } from "../components/VirtualizedGrid";
 import { GallerySkeleton } from "../components/GallerySkeleton";
 import { DensityControl } from "../components/DensityControl";
@@ -54,6 +54,7 @@ import {
 } from "../lib/imageMutations";
 import { api } from "../lib/api";
 import { isFormField } from "../lib/dom";
+import { useOverlayOpen, withBackgroundLocation } from "../lib/backgroundLocation";
 import { postAiTag } from "../lib/ai";
 import {
   invalidateFeeds,
@@ -66,6 +67,12 @@ type Library = { _id: string; name?: string; path: string };
 export default function AllImagesPage() {
   const { push } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+  // ImageView opens as an overlay on top of this page rather than routing in
+  // place of it (see RootRoutes), so this page never unmounts while it's
+  // open — its global key listeners below must bail instead, or they'd keep
+  // acting on the backgrounded grid while ImageView is also handling keys.
+  const overlayOpen = useOverlayOpen();
 
   // Image filter (URL is the single source of truth) and the Image feed it drives.
   const [filters, setFilters] = useFilters();
@@ -225,6 +232,7 @@ export default function AllImagesPage() {
   // A no-AI-tags, Q quarantined, +/- zoom, ? help.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (overlayOpen) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isFormField(e.target)) return;
 
@@ -304,6 +312,7 @@ export default function AllImagesPage() {
     selectionMode,
     setSelectionMode,
     showShortcuts,
+    overlayOpen,
   ]);
 
   // A selection belongs to the feed it was made in: changing the filter swaps
@@ -322,9 +331,11 @@ export default function AllImagesPage() {
     (id: string) => {
       saveScroll();
       const sp = serializeFilters(filters);
-      navigate(`/image/${encodeURIComponent(id)}?${sp.toString()}`);
+      navigate(`/image/${encodeURIComponent(id)}?${sp.toString()}`, {
+        state: withBackgroundLocation(location),
+      });
     },
-    [filters, navigate, saveScroll],
+    [filters, navigate, location, saveScroll],
   );
 
 
@@ -413,6 +424,7 @@ export default function AllImagesPage() {
       return;
     }
     const onKey = (e: KeyboardEvent) => {
+      if (overlayOpen) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isFormField(e.target)) return;
       if (isGridNavKey(e.key)) {
@@ -457,6 +469,7 @@ export default function AllImagesPage() {
     triageQuarantine,
     openTile,
     density.density,
+    overlayOpen,
   ]);
 
   // --- Bulk actions ----------------------------------------------------------

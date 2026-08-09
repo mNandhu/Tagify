@@ -3,33 +3,10 @@ import ReactDOM from "react-dom/client";
 import "./index.css";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import App from "./App";
-import OverviewPage from "./pages/OverviewPage";
-import AllImagesPage from "./pages/AllImagesPage";
-import LibrariesPage from "./pages/LibrariesPage";
-import TagsPage from "./pages/TagsPage";
-import SettingsPage from "./pages/SettingsPage";
-import AITaggingPage from "./pages/AITaggingPage";
-import RulesPage from "./pages/RulesPage";
-import ImageView from "./pages/ImageView";
+import RootRoutes from "./RootRoutes";
 import { ToastProvider } from "./components/Toasts";
 
-const router = createBrowserRouter([
-  {
-    path: "/",
-    element: <App />,
-    children: [
-      { index: true, element: <AllImagesPage /> },
-      { path: "overview", element: <OverviewPage /> },
-      { path: "libraries", element: <LibrariesPage /> },
-      { path: "tags", element: <TagsPage /> },
-      { path: "ai-tagging", element: <AITaggingPage /> },
-      { path: "rules", element: <RulesPage /> },
-      { path: "settings", element: <SettingsPage /> },
-    ],
-  },
-  { path: "/image/:id", element: <ImageView /> },
-]);
+const router = createBrowserRouter([{ path: "*", element: <RootRoutes /> }]);
 
 // Server-state cache. staleTime keeps the Image feed warm so navigating
 // gallery -> ImageView -> gallery reuses already-fetched pages instead of refetching.

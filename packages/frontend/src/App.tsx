@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
+import { useOverlayOpen } from "./lib/backgroundLocation";
 
 export default function App() {
+  const overlayOpen = useOverlayOpen();
   const [status, setStatus] = useState("loading");
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("sidebar:collapsed") === "1",
@@ -38,6 +40,10 @@ export default function App() {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (isFormField(e.target)) return;
+      // ImageView is mounted on top of the gallery, not routed in place of it,
+      // so its own key handling would otherwise fire alongside this one and
+      // scroll the hidden gallery underneath.
+      if (overlayOpen) return;
 
       const scroller = scrollRef.current;
       if (!scroller) return;
@@ -96,7 +102,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [overlayOpen]);
 
   return (
     // Transparent, not `bg-neutral-900`: index.css paints the app's radial
