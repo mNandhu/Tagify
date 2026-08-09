@@ -153,8 +153,9 @@ async def update_library(library_id: str, body: LibraryUpdate):
     update_doc = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
     if not update_doc:
         raise HTTPException(status_code=400, detail="No fields to update")
-    if "path" in update_doc and not await anyio.to_thread.run_sync(
-        lambda: Path(update_doc["path"]).is_dir()
+    if "path" in update_doc and (
+        update_doc["path"] is None
+        or not await anyio.to_thread.run_sync(lambda: Path(update_doc["path"]).is_dir())
     ):  # type: ignore[attr-defined]
         raise HTTPException(
             status_code=400,

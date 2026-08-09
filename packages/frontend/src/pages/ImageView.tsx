@@ -175,6 +175,23 @@ export default function ImageView() {
     return resolvedUrls[id] ?? ep;
   }, [id, resolvedUrls]);
 
+  // Blur-up placeholder shown under the original while it loads. Reuses the
+  // exact thumb URL the gallery tile rendered (when the feed item is known)
+  // so the browser serves it from cache instead of refetching — the thumb is
+  // almost always already decoded from scrolling past it in the grid. Looked
+  // up by `id` (the image on screen), not `index` (which tracks `routeId`) —
+  // those diverge while a navigation is held pending, and keying off the
+  // route target would show the *next* image's thumb under the current one.
+  const thumbUrl = useMemo(() => {
+    if (!id) return null;
+    const item = list.find((x) => x._id === id);
+    return item?.thumb_url ?? `/api/images/${encodeURIComponent(id)}/thumb`;
+  }, [id, list]);
+  const [thumbFailed, setThumbFailed] = useState(false);
+  useEffect(() => {
+    setThumbFailed(false);
+  }, [thumbUrl]);
+
   useEffect(() => {
     if (!id || resolvedUrls[id]) return;
     const ep = `/api/images/${encodeURIComponent(id)}/file`;
@@ -525,16 +542,44 @@ export default function ImageView() {
               style={{ background: accent }}
             />
           )}
+          {/* Blur-up placeholder: the (already-cached) thumbnail, blurred and
+              slightly scaled up to hide its soft edge. Sits in normal flow —
+              it is what defines the box while the original is absolutely
+              positioned on top of it. Sized off the *original*'s dimensions
+              (from the fetched doc), not the thumbnail's own — the thumbnail
+              is downscaled, so sizing off its intrinsic pixels would render
+              the whole stage at thumbnail resolution on a large viewport,
+              and a missing/failed thumbnail file (no intrinsic size at all)
+              would otherwise collapse the box to 0×0 and hide the original
+              underneath forever. Opacity, not unmount, on error, so the
+              width/height-derived box size survives a failed load. */}
+          {thumbUrl && (
+            <img
+              src={thumbUrl}
+              alt=""
+              aria-hidden="true"
+              width={data?.width}
+              height={data?.height}
+              onError={() => setThumbFailed(true)}
+              className={`max-w-full max-h-dvh w-auto h-auto object-contain blur-xl scale-105 transition-opacity duration-300 ${
+                imgLoaded || thumbFailed ? "opacity-0" : "opacity-100"
+              }`}
+            />
+          )}
           <img
             src={fileUrl ?? undefined}
             alt="image"
             onLoad={() => setLoadedId(id ?? null)}
-            // Gated on `pending`, not on `imgLoaded`: when stepping, the src
+            // Absolutely positioned over the blurred thumb, which owns the
+            // box's size. Hidden (not just dimmed) until it has actually
+            // painted, so the browser's line-by-line JPEG decode is never
+            // visible — only the blurred thumb is, until the swap.
+            // Gated on `pending` only once loaded: when stepping, the src
             // only changes once the image has already decoded, so fading it
             // in would hide a frame that is ready to paint. The dim marks a
             // frame that is *stale* — held while the next one loads.
-            className={`relative z-10 max-w-full max-h-dvh w-auto h-auto object-contain transition-opacity duration-200 ${
-              pending ? "opacity-40" : "opacity-100"
+            className={`absolute inset-0 z-10 w-full h-full object-contain transition-opacity duration-200 ${
+              !imgLoaded ? "opacity-0" : pending ? "opacity-40" : "opacity-100"
             }`}
           />
           {/* Busy hint for the cases that can still make you wait: opening
