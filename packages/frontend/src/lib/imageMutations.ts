@@ -26,7 +26,7 @@ function post<T>(url: string, body?: unknown): Promise<T> {
 }
 
 const forImage = (id: string, suffix: string) =>
-  `/api/images/${encodeURIComponent(id)}/${suffix}`;
+  `/api/v1/images/${encodeURIComponent(id)}/${suffix}`;
 
 // --- Scalars ------------------------------------------------------------------
 
@@ -54,17 +54,17 @@ export function purgeImage(id: string): Promise<unknown> {
 
 /** Apply manual tags (the backend adds the `manual:` prefix). */
 export function applyTags(id: string, tags: string[]): Promise<unknown> {
-  return post(`/api/tags/apply/${encodeURIComponent(id)}`, tags);
+  return post(`/api/v1/tags/apply/${encodeURIComponent(id)}`, tags);
 }
 
 export function removeTags(id: string, tags: string[]): Promise<unknown> {
-  return post(`/api/tags/remove/${encodeURIComponent(id)}`, tags);
+  return post(`/api/v1/tags/remove/${encodeURIComponent(id)}`, tags);
 }
 
 /** Pin this image as the mosaic thumbnail for a tag. `tag` is the raw stored
  * form, prefix included. */
 export function setTagThumbnail(tag: string, imageId: string): Promise<unknown> {
-  return post(`/api/tags/thumbnail/${encodeURIComponent(tag)}`, {
+  return post(`/api/v1/tags/thumbnail/${encodeURIComponent(tag)}`, {
     image_id: imageId,
   });
 }

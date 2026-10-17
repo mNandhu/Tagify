@@ -59,18 +59,18 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 export function fetchSignatures(): Promise<SignatureRow[]> {
-  return getJson<SignatureRow[]>("/api/rules/signatures");
+  return getJson<SignatureRow[]>("/api/v1/rules/signatures");
 }
 
 export function fetchRuleset(sig: string): Promise<Ruleset> {
-  return getJson<Ruleset>(`/api/rules/${encodeURIComponent(sig)}`);
+  return getJson<Ruleset>(`/api/v1/rules/${encodeURIComponent(sig)}`);
 }
 
 export async function saveRuleset(
   sig: string,
   fields: RuleFields,
 ): Promise<Ruleset> {
-  const r = await fetch(`/api/rules/${encodeURIComponent(sig)}`, {
+  const r = await fetch(`/api/v1/rules/${encodeURIComponent(sig)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ fields }),
@@ -80,7 +80,7 @@ export async function saveRuleset(
 }
 
 export async function deleteRuleset(sig: string): Promise<void> {
-  const r = await fetch(`/api/rules/${encodeURIComponent(sig)}`, {
+  const r = await fetch(`/api/v1/rules/${encodeURIComponent(sig)}`, {
     method: "DELETE",
   });
   if (!r.ok) throw new Error(await r.text());
@@ -90,7 +90,7 @@ export async function previewRuleset(
   sampleImageId: string,
   fields: RuleFields,
 ): Promise<PreviewResult> {
-  const r = await fetch(`/api/rules/preview`, {
+  const r = await fetch(`/api/v1/rules/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sample_image_id: sampleImageId, fields }),
@@ -100,7 +100,7 @@ export async function previewRuleset(
 }
 
 export async function fetchWorkflow(id: string): Promise<WorkflowPayload> {
-  const r = await fetch(`/api/images/${encodeURIComponent(id)}/workflow`);
+  const r = await fetch(`/api/v1/images/${encodeURIComponent(id)}/workflow`);
   if (!r.ok) throw new Error(await r.text());
   return (await r.json()) as WorkflowPayload;
 }

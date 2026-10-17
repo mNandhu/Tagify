@@ -18,7 +18,7 @@ export default function App() {
   }, [collapsed]);
 
   useEffect(() => {
-    fetch("/api/health")
+    fetch("/api/v1/health")
       .then(async (r) => setStatus((await r.json()).status))
       .catch(() => setStatus("offline"));
   }, []);

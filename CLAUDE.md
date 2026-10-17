@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Tagify is a pnpm monorepo for organizing AI-generated images. FastAPI backend (Python 3.11+, embedded SQLite for metadata via SQLAlchemy Core, local filesystem for thumbnail + original storage, WD ONNX model for AI tagging) + Vite/React/TypeScript frontend. Frontend talks to backend via REST; the Vite dev server proxies `/api/*` → `http://127.0.0.1:8000` (stripping `/api`). **No external running dependencies** — no database server, no object store.
+Tagify is a pnpm monorepo for organizing AI-generated images. FastAPI backend (Python 3.11+, embedded SQLite for metadata via SQLAlchemy Core, local filesystem for thumbnail + original storage, WD ONNX model for AI tagging) + Vite/React/TypeScript frontend. Frontend talks to backend via REST; every backend route lives under `/api/v1` (`API_PREFIX` in `main.py`; root `/health` kept for probes) and the Vite dev server proxies `/api/*` → `http://127.0.0.1:8000` unchanged. **No external running dependencies** — no database server, no object store.
 
 ## Commands
 
@@ -43,7 +43,7 @@ Backend env is optional: `SQLITE_PATH` (defaults to `<repo>/data/tagify.db`) and
 
 ## Backend layout
 
-`src/api/` routers (libraries, images, tags, ai, rules) mounted in `main.py` under matching prefixes. `src/services/` holds the logic: `scanner.py` (multithreaded walk → write thumb to FS → upsert + library progress), `storage_fs.py` (thumbnail FS keys/paths under `THUMB_ROOT`, atomic writes, traversal guard, `delete_by_prefix`), `ai_jobs.py` (queued cancellable batch tagging worker, started in lifespan), `ai_tagger.py` (WD ONNX model lifecycle vs pure `select_tags` inference), `ai_settings.py`, `reproject.py` (prompt-tag extraction), `image_tags.py`, `blurhash.py`.
+`src/api/` routers (libraries, images, tags, ai, rules) mounted in `main.py` under `/api/v1/<name>`. `src/services/` holds the logic: `scanner.py` (multithreaded walk → write thumb to FS → upsert + library progress), `storage_fs.py` (thumbnail FS keys/paths under `THUMB_ROOT`, atomic writes, traversal guard, `delete_by_prefix`), `ai_jobs.py` (queued cancellable batch tagging worker, started in lifespan), `ai_tagger.py` (WD ONNX model lifecycle vs pure `select_tags` inference), `ai_settings.py`, `reproject.py` (prompt-tag extraction), `image_tags.py`, `blurhash.py`.
 
 **Media delivery** streams everything from the local filesystem through the API: thumbnails via `FileResponse` from `THUMB_ROOT`, originals via `FileResponse` from their on-disk library path. Originals support Range requests; both thumb and original have HEAD endpoints. New media endpoints should serve from the FS with a HEAD counterpart. A single exposed port covers remote access; front with nginx for TLS/static offload (see `deploy/nginx.conf.example`).
 

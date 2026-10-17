@@ -27,8 +27,8 @@ function CoverageBar({ tagged, total }: { tagged: number; total: number }) {
 }
 
 /**
- * AI-tag coverage overview. Counts come from `/api/ai/coverage` (the
- * `has_ai_tags` flag); library names are joined from `/api/libraries`.
+ * AI-tag coverage overview. Counts come from `/api/v1/ai/coverage` (the
+ * `has_ai_tags` flag); library names are joined from `/api/v1/libraries`.
  * Polls faster while the AI subsystem is busy so the numbers track a running
  * job, idle otherwise.
  */
@@ -43,7 +43,7 @@ function CoveragePanel() {
   });
   const { data: libs } = useQuery({
     queryKey: ["libraries"],
-    queryFn: () => api<Library[]>("/api/libraries"),
+    queryFn: () => api<Library[]>("/api/v1/libraries"),
     staleTime: 60_000,
   });
 

@@ -201,7 +201,7 @@ export default function ImageView() {
   // resolve only *overrides* it for modes that need a per-image resolve.
   const fileUrl = useMemo(() => {
     if (!id) return null;
-    const ep = `/api/images/${encodeURIComponent(id)}/file`;
+    const ep = `/api/v1/images/${encodeURIComponent(id)}/file`;
     return resolvedUrls[id] ?? ep;
   }, [id, resolvedUrls]);
 
@@ -215,7 +215,7 @@ export default function ImageView() {
   const thumbUrl = useMemo(() => {
     if (!id) return null;
     const item = list.find((x) => x._id === id);
-    return item?.thumb_url ?? `/api/images/${encodeURIComponent(id)}/thumb`;
+    return item?.thumb_url ?? `/api/v1/images/${encodeURIComponent(id)}/thumb`;
   }, [id, list]);
   const listItem = useMemo(() => list.find((x) => x._id === id), [id, list]);
   const [thumbFailed, setThumbFailed] = useState(false);
@@ -225,7 +225,7 @@ export default function ImageView() {
 
   useEffect(() => {
     if (!id || resolvedUrls[id]) return;
-    const ep = `/api/images/${encodeURIComponent(id)}/file`;
+    const ep = `/api/v1/images/${encodeURIComponent(id)}/file`;
     let cancelled = false;
     resolveMediaUrl(ep)
       .then((u) => {
@@ -270,7 +270,7 @@ export default function ImageView() {
     if (holdStartRef.current === null) holdStartRef.current = Date.now();
     const elapsed = Date.now() - holdStartRef.current;
     const timer = window.setTimeout(commit, Math.max(0, MAX_HOLD_MS - elapsed));
-    const ep = `/api/images/${encodeURIComponent(routeId)}/file`;
+    const ep = `/api/v1/images/${encodeURIComponent(routeId)}/file`;
     const img = new Image();
     void resolveMediaUrl(ep)
       .catch(() => ep)
@@ -333,7 +333,7 @@ export default function ImageView() {
       // Never let a neighbour compete with the image actually on screen.
       img.fetchPriority = "low";
       preloadedRef.current.set(it._id, img);
-      const ep = `/api/images/${encodeURIComponent(it._id)}/file`;
+      const ep = `/api/v1/images/${encodeURIComponent(it._id)}/file`;
       resolveMediaUrl(ep)
         .catch(() => ep)
         .then((u) => {
@@ -691,7 +691,7 @@ export default function ImageView() {
                 <a
                   href={
                     fileUrl ||
-                    `/api/images/${encodeURIComponent(data._id)}/file`
+                    `/api/v1/images/${encodeURIComponent(data._id)}/file`
                   }
                   download={fileName || ""}
                   className="p-2 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"

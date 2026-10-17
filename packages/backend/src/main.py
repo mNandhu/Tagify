@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -19,6 +19,9 @@ import anyio  # type: ignore[import-not-found]
 import sqlalchemy as sa
 
 logger = logging.getLogger("tagify")
+
+
+API_PREFIX = "/api/v1"
 
 
 @asynccontextmanager
@@ -100,7 +103,7 @@ async def _timing_and_rate_limit(request: Request, call_next):
         if (
             request.method.upper() == "POST"
             and path.endswith("/rescan")
-            and path.startswith("/libraries/")
+            and path.startswith(f"{API_PREFIX}/libraries/")
         ):
             ip = request.client.host if request.client else "unknown"
             key = (ip, "libraries:rescan")
@@ -140,15 +143,15 @@ def health():
     return {"status": "ok"}
 
 
-# Include routers (placeholders for now)
-# TODO(nginx): group all API routes under a common `/api/v1` prefix so a reverse
-# proxy can route media vs. JSON cleanly (e.g. a dedicated `location ~ ^/api/v1/
-# images/.+/file$` for Range/originals, separate from the small-thumb traffic).
-# Today routes mount at bare prefixes (/images, /tags, ...) and the Vite dev
-# proxy strips `/api`; unifying on `/api/v1` removes that asymmetry. Coordinate
-# the frontend base URL + Vite proxy when implementing. Deferred.
-app.include_router(libraries.router, prefix="/libraries", tags=["libraries"])
-app.include_router(images.router, prefix="/images", tags=["images"])
-app.include_router(tags.router, prefix="/tags", tags=["tags"])
-app.include_router(ai.router, prefix="/ai", tags=["ai"])
-app.include_router(rules.router, prefix="/rules", tags=["rules"])
+# Every API route lives under one versioned prefix, so a reverse proxy can route
+# `/api/v1/*` straight through (no path rewriting) and split media from JSON
+# (e.g. a dedicated `location ~ ^/api/v1/images/.+/file$` for Range/originals).
+# `/health` stays at the root too, for container probes.
+api = APIRouter(prefix=API_PREFIX)
+api.add_api_route("/health", health, methods=["GET"], tags=["health"])
+api.include_router(libraries.router, prefix="/libraries", tags=["libraries"])
+api.include_router(images.router, prefix="/images", tags=["images"])
+api.include_router(tags.router, prefix="/tags", tags=["tags"])
+api.include_router(ai.router, prefix="/ai", tags=["ai"])
+api.include_router(rules.router, prefix="/rules", tags=["rules"])
+app.include_router(api)

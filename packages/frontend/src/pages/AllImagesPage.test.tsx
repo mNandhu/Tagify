@@ -31,16 +31,16 @@ const IMAGES = Array.from({ length: 6 }, (_, i) => ({
   score: i,
   quarantined: false,
   has_ai_tags: false,
-  thumb_url: `/api/images/L1%3Aimg-${i}.png/thumb`,
+  thumb_url: `/api/v1/images/L1%3Aimg-${i}.png/thumb`,
 }));
 
 function stubFetch(images: unknown[]) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      const body = url.includes("/api/libraries")
+      const body = url.includes("/api/v1/libraries")
         ? []
-        : url.includes("/api/tags") || url.includes("/api/images/models")
+        : url.includes("/api/v1/tags") || url.includes("/api/v1/images/models")
           ? []
           : images;
       return new Response(JSON.stringify(body), { status: 200 });

@@ -18,6 +18,7 @@ if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
 
 BASE_URL = os.environ.get("TAGIFY_BASE_URL", "http://127.0.0.1:8000")
+API_URL = f"{BASE_URL}/api/v1"
 LIBRARY_PATH = os.environ.get("TAGIFY_TEST_LIBRARY", "G:/images")
 CONCURRENCY = int(os.environ.get("TAGIFY_CONCURRENCY", "8"))
 ITERATIONS = int(os.environ.get("TAGIFY_ITERATIONS", "200"))
@@ -90,7 +91,7 @@ class Stat:
 
 
 async def find_library(client: httpx.AsyncClient, lib_path: str) -> str | None:
-    r = await client.get(f"{BASE_URL}/libraries", timeout=TIMEOUT)
+    r = await client.get(f"{API_URL}/libraries", timeout=TIMEOUT)
     r.raise_for_status()
     libs = r.json()
     for lib in libs:
@@ -101,7 +102,7 @@ async def find_library(client: httpx.AsyncClient, lib_path: str) -> str | None:
 
 async def add_library(client: httpx.AsyncClient, lib_path: str) -> str:
     r = await client.post(
-        f"{BASE_URL}/libraries", json={"path": lib_path}, timeout=TIMEOUT
+        f"{API_URL}/libraries", json={"path": lib_path}, timeout=TIMEOUT
     )
     r.raise_for_status()
     data = r.json()
@@ -116,7 +117,7 @@ async def wait_for_scan(
 ):
     start = time.time()
     while True:
-        r = await client.get(f"{BASE_URL}/libraries/{lib_id}/progress", timeout=TIMEOUT)
+        r = await client.get(f"{API_URL}/libraries/{lib_id}/progress", timeout=TIMEOUT)
         r.raise_for_status()
         p = r.json()
         if not p.get("scanning"):
@@ -131,7 +132,7 @@ async def wait_until_scanning(
 ) -> bool:
     start = time.time()
     while time.time() - start < timeout_s:
-        r = await client.get(f"{BASE_URL}/libraries/{lib_id}/progress", timeout=TIMEOUT)
+        r = await client.get(f"{API_URL}/libraries/{lib_id}/progress", timeout=TIMEOUT)
         r.raise_for_status()
         p = r.json()
         if p.get("scanning"):
@@ -141,7 +142,7 @@ async def wait_until_scanning(
 
 
 async def fetch_some_ids(client: httpx.AsyncClient, n: int = 20) -> List[str]:
-    r = await client.get(f"{BASE_URL}/images", params={"limit": n}, timeout=TIMEOUT)
+    r = await client.get(f"{API_URL}/images", params={"limit": n}, timeout=TIMEOUT)
     r.raise_for_status()
     arr = r.json()
     return [it["_id"] for it in arr]
@@ -175,7 +176,7 @@ async def run_benchmark():
         # Health check; optionally autostart backend if unreachable
         async def _try_health() -> bool:
             try:
-                r = await client.get(f"{BASE_URL}/health")
+                r = await client.get(f"{API_URL}/health")
                 if r.status_code == 200:
                     return True
             except Exception:
@@ -238,7 +239,7 @@ async def run_benchmark():
                 # Trigger rescan and time it
                 t0 = time.perf_counter()
                 rr = await client.post(
-                    f"{BASE_URL}/libraries/{lib_id}/rescan", timeout=TIMEOUT
+                    f"{API_URL}/libraries/{lib_id}/rescan", timeout=TIMEOUT
                 )
                 rr.raise_for_status()
                 # Wait until scanning starts (briefly), then until completion
@@ -276,7 +277,7 @@ async def run_benchmark():
         # Define coroutines
         async def get_images():
             r = await client.get(
-                f"{BASE_URL}/images", params={"limit": 100}, timeout=TIMEOUT
+                f"{API_URL}/images", params={"limit": 100}, timeout=TIMEOUT
             )
             if r.status_code == 200:
                 _ = r.json()
@@ -284,7 +285,7 @@ async def run_benchmark():
             return False
 
         async def get_tags():
-            r = await client.get(f"{BASE_URL}/tags", timeout=TIMEOUT)
+            r = await client.get(f"{API_URL}/tags", timeout=TIMEOUT)
             if r.status_code == 200:
                 _ = r.json()
                 return True
@@ -292,7 +293,7 @@ async def run_benchmark():
 
         async def get_no_tags():
             r = await client.get(
-                f"{BASE_URL}/images",
+                f"{API_URL}/images",
                 params={"no_tags": 1, "limit": 100},
                 timeout=TIMEOUT,
             )
@@ -303,7 +304,7 @@ async def run_benchmark():
 
         async def get_no_tags_by_lib(library_id: str):
             r = await client.get(
-                f"{BASE_URL}/images",
+                f"{API_URL}/images",
                 params={"no_tags": 1, "limit": 100, "library_id": library_id},
                 timeout=TIMEOUT,
             )
@@ -313,15 +314,15 @@ async def run_benchmark():
             return False
 
         async def get_image_details(img_id: str):
-            r = await client.get(f"{BASE_URL}/images/{img_id}", timeout=TIMEOUT)
+            r = await client.get(f"{API_URL}/images/{img_id}", timeout=TIMEOUT)
             return r.status_code == 200
 
         async def head_thumb(img_id: str):
-            r = await client.head(f"{BASE_URL}/images/{img_id}/thumb", timeout=TIMEOUT)
+            r = await client.head(f"{API_URL}/images/{img_id}/thumb", timeout=TIMEOUT)
             return r.status_code == 200
 
         async def get_thumb(img_id: str):
-            r = await client.get(f"{BASE_URL}/images/{img_id}/thumb", timeout=TIMEOUT)
+            r = await client.get(f"{API_URL}/images/{img_id}/thumb", timeout=TIMEOUT)
             # In URL mode, API returns JSON { url }; otherwise bytes
             if r.status_code == 200:
                 ctype = r.headers.get("content-type", "")
@@ -336,13 +337,13 @@ async def run_benchmark():
             return False
 
         async def head_file(img_id: str):
-            r = await client.head(f"{BASE_URL}/images/{img_id}/file", timeout=TIMEOUT)
+            r = await client.head(f"{API_URL}/images/{img_id}/file", timeout=TIMEOUT)
             return r.status_code == 200
 
         async def get_file_range(img_id: str):
             headers = {"Range": "bytes=0-65535"}
             r = await client.get(
-                f"{BASE_URL}/images/{img_id}/file", headers=headers, timeout=TIMEOUT
+                f"{API_URL}/images/{img_id}/file", headers=headers, timeout=TIMEOUT
             )
             # Could be 206 Partial Content or redirect/JSON URL
             if r.status_code in (200, 206, 307):

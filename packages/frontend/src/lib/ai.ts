@@ -105,19 +105,19 @@ export function isStatusBusy(s: AIStatus | undefined | null): boolean {
 // --- Reads ------------------------------------------------------------------
 
 export function fetchAiStatus(signal?: AbortSignal): Promise<AIStatus> {
-  return api<AIStatus>("/api/ai/status", { signal });
+  return api<AIStatus>("/api/v1/ai/status", { signal });
 }
 
 export function fetchAiJob(id: string, signal?: AbortSignal): Promise<AiJob> {
-  return api<AiJob>(`/api/ai/jobs/${encodeURIComponent(id)}`, { signal });
+  return api<AiJob>(`/api/v1/ai/jobs/${encodeURIComponent(id)}`, { signal });
 }
 
 export function fetchAiCoverage(signal?: AbortSignal): Promise<AiCoverage> {
-  return api<AiCoverage>("/api/ai/coverage", { signal });
+  return api<AiCoverage>("/api/v1/ai/coverage", { signal });
 }
 
 export function fetchAiSettings(): Promise<AISettings> {
-  return api<AISettings>("/api/ai/settings");
+  return api<AISettings>("/api/v1/ai/settings");
 }
 
 // --- Commands ---------------------------------------------------------------
@@ -139,36 +139,36 @@ function postJson<T>(url: string, body: unknown): Promise<T> {
 
 /** Queue an AI tagging job for the given image ids; returns the job id. */
 export function postAiTag(ids: string[]): Promise<{ job_id: string }> {
-  return postJson<{ job_id: string }>("/api/ai/tag", { ids });
+  return postJson<{ job_id: string }>("/api/v1/ai/tag", { ids });
 }
 
 /** Request cancellation of an AI tagging job. Returns whether the backend
  * accepted the request (false if the job already finished). */
 export function postAiJobCancel(id: string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>(
-    `/api/ai/jobs/${encodeURIComponent(id)}/cancel`,
+    `/api/v1/ai/jobs/${encodeURIComponent(id)}/cancel`,
     POST
   );
 }
 
 export function saveAiSettings(settings: AISettings): Promise<AISettings> {
-  return postJson<AISettings>("/api/ai/settings", settings);
+  return postJson<AISettings>("/api/v1/ai/settings", settings);
 }
 
 export function postModelLoad(): Promise<{ started: boolean }> {
-  return api<{ started: boolean }>("/api/ai/model/load", POST);
+  return api<{ started: boolean }>("/api/v1/ai/model/load", POST);
 }
 
 export function postModelLoadCancel(): Promise<{ ok: boolean }> {
-  return api<{ ok: boolean }>("/api/ai/model/load-cancel", POST);
+  return api<{ ok: boolean }>("/api/v1/ai/model/load-cancel", POST);
 }
 
 export function postModelDownloadCancel(): Promise<{ ok: boolean }> {
-  return api<{ ok: boolean }>("/api/ai/model/download-cancel", POST);
+  return api<{ ok: boolean }>("/api/v1/ai/model/download-cancel", POST);
 }
 
 export function postModelUnload(): Promise<unknown> {
-  return api("/api/ai/model/unload", POST);
+  return api("/api/v1/ai/model/unload", POST);
 }
 
 /** Queue AI tagging for up to `limit` images that have no AI tags yet. */
@@ -176,7 +176,7 @@ export function postTagUntagged(
   limit: number
 ): Promise<{ job_id: string | null; queued: number }> {
   return postJson<{ job_id: string | null; queued: number }>(
-    "/api/ai/tag-untagged",
+    "/api/v1/ai/tag-untagged",
     { limit }
   );
 }
@@ -187,7 +187,7 @@ export function postClearAiTags(): Promise<{
   modified: number;
 }> {
   return api<{ matched: number; modified: number }>(
-    "/api/ai/clear-ai-tags",
+    "/api/v1/ai/clear-ai-tags",
     POST
   );
 }

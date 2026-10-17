@@ -57,10 +57,10 @@ export function useBatchScrub(
         const params = new URLSearchParams(peekQuery);
         params.set("group_id", groupId);
         params.set("limit", String(MAX_MEMBERS));
-        const docs = await api<ImageDoc[]>(`/api/images?${params.toString()}`);
+        const docs = await api<ImageDoc[]>(`/api/v1/images?${params.toString()}`);
         if (cancelled) return;
         const urls = docs
-          .map((d) => d.thumb_url ?? `/api/images/${encodeURIComponent(d._id)}/thumb`)
+          .map((d) => d.thumb_url ?? `/api/v1/images/${encodeURIComponent(d._id)}/thumb`)
           .filter(Boolean);
         // Decode every frame up front so the crossfade in ThumbnailTile never
         // reveals an empty layer — a keyed/layered <img> paints nothing until

@@ -68,7 +68,7 @@ export const ThumbnailTile = React.memo(function ThumbnailTile({
   // resolve request). Fall back to the endpoint, which ImageThumbnail resolves
   // lazily once it decides to load.
   const embedded = item.thumb_url;
-  const src = embedded ?? `/api/images/${encodeURIComponent(item._id)}/thumb`;
+  const src = embedded ?? `/api/v1/images/${encodeURIComponent(item._id)}/thumb`;
 
   const groupCount = item.group_count ?? 1;
   const isBatch = groupCount > 1;
