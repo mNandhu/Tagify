@@ -1,39 +1,33 @@
+# Tagify: FastAPI backend (embedded SQLite + filesystem thumbnails) and the
+# nginx-served frontend. No database or object-store containers — all state
+# lives in the `tagify_data` volume mounted at /data in the backend.
+#
+# Libraries are folders on the host: mount them into the backend (read-only is
+# fine) in docker-compose.override.yml, then add them in the UI by their
+# in-container path (e.g. /mnt/g/images).
 services:
-  # MongoDB database
-  mongodb:
-    image: mongo:7
-    container_name: tagify-mongodb
-    restart: "no"  # Changed from unless-stopped for CI compatibility
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password}
-    volumes:
-      - mongodb_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "--authenticationDatabase", "admin"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  # FastAPI backend
   backend:
     build:
       context: ./packages/backend
       dockerfile: Dockerfile
     container_name: tagify-backend
-    restart: "no"  # Changed from unless-stopped for CI compatibility
+    restart: unless-stopped
     volumes:
-      - thumb_data:/data/thumbs
-    depends_on:
-      mongodb:
-        condition: service_healthy
+      - tagify_data:/data
     environment:
-      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-password}@mongodb:27017/
+      SQLITE_PATH: /data/tagify.db
       THUMB_ROOT: /data/thumbs
+      MODEL_CACHE_DIR: /data/models
+      # Containers log to stdout (`docker compose logs`); no rotating file.
+      LOG_TO_FILE: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       THUMB_MAX_SIZE: ${THUMB_MAX_SIZE:-1080}
       SCANNER_MAX_WORKERS: ${SCANNER_MAX_WORKERS:-0}
-      AI_TAGGING_URL: ${AI_TAGGING_URL:-}
+      SCANNER_MAX_CONCURRENT_SCANS: ${SCANNER_MAX_CONCURRENT_SCANS:-2}
+      # inotify doesn't see changes made on a Windows/macOS host through a bind
+      # mount; the periodic reconcile rescan is the backstop there.
+      WATCH_ENABLED_DEFAULT: ${WATCH_ENABLED_DEFAULT:-true}
+      WATCH_RECONCILE_INTERVAL_S: ${WATCH_RECONCILE_INTERVAL_S:-900}
     ports:
       - "8000:8000"
     healthcheck:
@@ -43,13 +37,12 @@ services:
       retries: 5
       start_period: 20s
 
-  # React frontend
   frontend:
     build:
       context: .
       dockerfile: packages/frontend/Dockerfile
     container_name: tagify-frontend
-    restart: "no"  # Changed from unless-stopped for CI compatibility
+    restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
@@ -63,7 +56,4 @@ services:
       start_period: 15s
 
 volumes:
-  mongodb_data:
-    driver: local
-  thumb_data:
-    driver: local
+  tagify_data:
