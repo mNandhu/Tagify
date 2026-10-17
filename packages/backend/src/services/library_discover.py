@@ -5,26 +5,26 @@ one library per immediate subfolder. Nothing is written here — this only walks
 the filesystem and compares against the already-registered library paths so the
 UI can show (and let the user prune) the plan before committing it.
 
-Counting is bounded per candidate (`max_count` files, `time_budget_s` seconds):
-libraries often live on slow mounts (network shares, WSL `/mnt/<drive>`), and a
-preview that takes minutes is worse than one that says "5,000+".
+Counting is bounded: per candidate (`max_count` files, `time_budget_s` seconds)
+and for the whole request (`total_budget_s`, with candidates counted in
+parallel). Libraries often live on slow mounts (network shares, WSL
+`/mnt/<drive>`), and a preview that takes minutes is worse than one that says
+"5,000+" or "not counted".
 """
 
 from __future__ import annotations
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from .scanner import IMAGE_EXTS
+from ..models.library import normalize_path, validate_library_path
+from .scanner import is_image
 
-
-def normalize_path(path: str) -> str:
-    """Canonical spelling for comparing library paths: collapses `..`/`//` and
-    drops a trailing separator (but keeps a bare root like `/` or `C:\\`)."""
-    return os.path.normpath(path)
+__all__ = ["discover", "as_dicts", "normalize_path"]
 
 
 def _is_within(child: str, parent: str) -> bool:
@@ -69,9 +69,12 @@ class SourceReport:
 
 def _count_images(root: str, *, max_count: int, deadline: float) -> tuple[int, bool]:
     n = 0
+    if time.monotonic() > deadline:
+        return 0, True
     for _dirpath, _dirs, files in os.walk(root):
         for f in files:
-            if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
+            # Same test the scanner applies, so the preview counts what a scan indexes.
+            if is_image(Path(f)):
                 n += 1
                 if n >= max_count:
                     return n, True
@@ -83,11 +86,7 @@ def _count_images(root: str, *, max_count: int, deadline: float) -> tuple[int, b
 def _loose_images(root: str) -> int:
     try:
         with os.scandir(root) as it:
-            return sum(
-                1
-                for e in it
-                if e.is_file() and os.path.splitext(e.name)[1].lower() in IMAGE_EXTS
-            )
+            return sum(1 for e in it if e.is_file() and is_image(Path(e.name)))
     except OSError:
         return 0
 
@@ -120,8 +119,26 @@ def _classify(c: Candidate, existing: list[str]) -> None:
                 lib,
             )
             return
-    if c.image_count == 0:
+    if c.image_count == 0 and not c.count_capped:
         c.status, c.note = "empty", "No images found"
+
+
+def _classify_within_plan(cands: list[Candidate]) -> None:
+    """Nested folders in the same request would index the same images twice
+    (e.g. `/imgs` listed alongside `/imgs/portraits`)."""
+    for c in cands:
+        if c.status != "new":
+            continue
+        for o in cands:
+            if o is c:
+                continue
+            if _is_within(c.path, o.path) or _is_within(o.path, c.path):
+                c.status, c.note, c.conflict_path = (
+                    "overlap",
+                    "Overlaps another folder in this list — images would be indexed twice",
+                    o.path,
+                )
+                break
 
 
 def discover(
@@ -131,14 +148,25 @@ def discover(
     existing_paths: Iterable[str],
     max_count: int = 5000,
     time_budget_s: float = 2.0,
+    total_budget_s: float = 20.0,
+    workers: int = 8,
 ) -> list[SourceReport]:
     existing = [normalize_path(p) for p in existing_paths]
     reports: list[SourceReport] = []
     seen: set[str] = set()
     planned: set[str] = set()
+    cands: list[Candidate] = []
 
     for raw in paths:
-        src = normalize_path(raw)
+        # Validate per folder, so one mistyped line is flagged on its own row
+        # instead of rejecting the whole preview.
+        try:
+            src = validate_library_path(raw)
+        except ValueError:
+            reports.append(
+                SourceReport(path=raw.strip(), ok=False, error="Not an absolute path")
+            )
+            continue
         if src in seen:
             continue
         seen.add(src)
@@ -171,20 +199,27 @@ def discover(
             if path in planned:
                 continue
             planned.add(path)
-            count, capped = _count_images(
-                path, max_count=max_count, deadline=time.monotonic() + time_budget_s
-            )
-            c = Candidate(
-                path=path,
-                name=name,
-                source=src,
-                image_count=count,
-                count_capped=capped,
-                hidden=hidden,
-            )
-            _classify(c, existing)
+            c = Candidate(path=path, name=name, source=src, hidden=hidden)
             rep.candidates.append(c)
+            cands.append(c)
 
+    # Count in parallel under one overall deadline; whatever doesn't start in
+    # time comes back as "not counted" (0, capped) rather than stalling.
+    overall = time.monotonic() + total_budget_s
+
+    def _count(c: Candidate) -> None:
+        deadline = min(time.monotonic() + time_budget_s, overall)
+        c.image_count, c.count_capped = _count_images(
+            c.path, max_count=max_count, deadline=deadline
+        )
+
+    if cands:
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(cands)))) as ex:
+            list(ex.map(_count, cands))
+
+    for c in cands:
+        _classify(c, existing)
+    _classify_within_plan(cands)
     return reports
 
 

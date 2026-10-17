@@ -100,9 +100,48 @@ async def test_discover_endpoint_writes_nothing(client, tmp_path):
     assert (await client.get("/libraries")).json() == []
 
 
-async def test_discover_rejects_relative_paths(client):
-    resp = await client.post("/libraries/discover", json={"paths": ["rel/dir"]})
+async def test_discover_flags_a_bad_path_on_its_own_row(client, tmp_path):
+    root = _tree(tmp_path)
+    resp = await client.post(
+        "/libraries/discover", json={"paths": ["rel/dir", str(root)]}
+    )
+    assert resp.status_code == 200
+    bad, good = resp.json()["sources"]
+    assert not bad["ok"] and bad["error"] == "Not an absolute path"
+    assert good["ok"] and good["candidates"]
+
+
+async def test_discover_requires_a_non_blank_path(client):
+    resp = await client.post("/libraries/discover", json={"paths": ["  ", ""]})
     assert resp.status_code == 422
+
+
+def test_counts_what_the_scanner_indexes(tmp_path):
+    # .tiff isn't in IMAGE_EXTS but the scanner's mimetype fallback indexes it.
+    _img(tmp_path / "t" / "scan.tiff")
+    [rep] = discover([str(tmp_path / "t")], split_subdirs=False, existing_paths=[])
+    [c] = rep.candidates
+    assert c.image_count == 1 and c.status == "new"
+
+
+def test_nested_folders_in_one_request_overlap(tmp_path):
+    root = _tree(tmp_path)
+    reps = discover(
+        [str(root), str(root / "a" / "deep")], split_subdirs=False, existing_paths=[]
+    )
+    statuses = [c.status for r in reps for c in r.candidates]
+    assert statuses == ["overlap", "overlap"]
+
+
+def test_candidates_past_the_overall_deadline_are_not_counted(tmp_path):
+    root = _tree(tmp_path)
+    [rep] = discover(
+        [str(root)], split_subdirs=True, existing_paths=[], total_budget_s=0
+    )
+    for c in rep.candidates:
+        assert c.count_capped and c.image_count == 0
+        # "Not counted" is not "no images".
+        assert c.status == "new"
 
 
 async def test_name_only_edit_of_unnormalized_path_does_not_rescan(
