@@ -18,6 +18,16 @@ dependencies = [
   "watchfiles>=1.0",
 ]
 
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# Flat layout: the importable package is the top-level `src/` directory itself
+# (imported as `src.main`), not `src/<name>/`.
+module-root = ""
+module-name = "src"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
