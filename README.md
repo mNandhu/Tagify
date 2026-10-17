@@ -141,9 +141,9 @@ Tagify ships with a **built-in** autotagger — a WD ONNX model that runs locall
 
 **How it works:**
 
-1. Configure the model and thresholds on the Settings page (or via `POST /ai/settings`).
-2. Load the model (`POST /ai/model/load`) — download and load are tracked, cancellable, and the model idle-unloads to free memory.
-3. Tag a single image, or queue a batch (e.g. all untagged images) via the AI job system (`POST /ai/tag`, `POST /ai/tag-untagged`). Jobs are listed, polled, and cancellable (`GET /ai/jobs`, `POST /ai/jobs/{id}/cancel`).
+1. Configure the model and thresholds on the Settings page (or via `POST /api/v1/ai/settings`).
+2. Load the model (`POST /api/v1/ai/model/load`) — download and load are tracked, cancellable, and the model idle-unloads to free memory.
+3. Tag a single image, or queue a batch (e.g. all untagged images) via the AI job system (`POST /api/v1/ai/tag`, `POST /api/v1/ai/tag-untagged`). Jobs are listed, polled, and cancellable (`GET /api/v1/ai/jobs`, `POST /api/v1/ai/jobs/{id}/cancel`).
 4. AI tags are stored alongside manual and prompt tags and become searchable.
 
 **Tag kinds** (all share one `tags` array, see [CONTEXT.md](CONTEXT.md)):

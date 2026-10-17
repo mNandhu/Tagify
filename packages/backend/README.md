@@ -61,15 +61,9 @@ All routes are served under `/api/v1` (e.g. `GET /api/v1/images`); `GET /health`
   - Pagination: `limit`, `cursor` (string `_id`) for stable paging by `_id` descending
   - Returns minimal fields for grid: `_id`, `path`, `width`, `height`
 
-- `GET /images/{id}/file`
+- `GET /images/{id}/file`: streams the original from disk; supports `Range` (HEAD too)
 
-  - In `redirect` mode: 307 to pre-signed URL
-  - In `url` mode: `{ "url": "..." }`
-  - In `off` mode: streams content; supports `Range`
-
-- `GET /images/{id}/thumb`
-
-  - Same delivery behavior as `/file`
+- `GET /images/{id}/thumb`: streams the WebP thumbnail from `THUMB_ROOT` (HEAD too)
 
 - `GET /tags`
   - Server-side TTL cache for 30s to avoid heavy aggregations on every request
