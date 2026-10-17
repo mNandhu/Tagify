@@ -10,6 +10,8 @@ export default function App() {
     () => localStorage.getItem("sidebar:collapsed") === "1",
   );
   const loc = useLocation();
+  // `loc` is the background location while ImageView is open over the gallery.
+  const isGallery = loc.pathname === "/";
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -132,7 +134,10 @@ export default function App() {
         }
       >
         <div ref={scrollRef} className="flex-1 overflow-auto">
-          <div className="mx-auto max-w-screen-2xl">
+          {/* Text/form pages read best capped and centered; the gallery uses
+              every pixel instead — capped, it sat centered between gutters
+              that grew with the window (96px each side at 1920px). */}
+          <div className={isGallery ? undefined : "mx-auto max-w-screen-2xl"}>
             <Outlet />
           </div>
         </div>
