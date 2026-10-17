@@ -190,3 +190,32 @@ async def test_full_scan_captures_a1111_exif_from_a_real_jpeg(client, tmp_path):
     row = await _img(image_id)
     assert row.gen_model == "sdxl"
     assert "1girl" in (row.gen_prompt or "")
+
+
+async def test_queued_scan_uses_the_path_the_library_has_when_it_starts(
+    client, tmp_path
+):
+    """A scan waiting for a slot must not walk the path captured at enqueue
+    time: moving the library meanwhile is a no-op rescan request (one is
+    already queued), so the queued scan is the only one that will run."""
+    old_dir, new_dir = tmp_path / "old", tmp_path / "new"
+    old_dir.mkdir()
+    new_dir.mkdir()
+    _write_png(old_dir / "stale.png")
+    _write_png(new_dir / "fresh.png")
+
+    held = 0
+    while scanner._scan_slots.acquire(blocking=False):
+        held += 1
+    try:
+        resp = await client.post("/libraries", json={"path": str(old_dir)})
+        lib_id = resp.json()["_id"]
+        resp = await client.patch(f"/libraries/{lib_id}", json={"path": str(new_dir)})
+        assert resp.status_code == 200, resp.text
+    finally:
+        for _ in range(held):
+            scanner._scan_slots.release()
+    _wait_scan(lib_id)
+
+    feed = await client.get("/images", params={"library_id": lib_id})
+    assert {it["_id"] for it in feed.json()} == {f"{lib_id}:fresh.png"}

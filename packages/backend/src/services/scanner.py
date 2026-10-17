@@ -427,7 +427,7 @@ def scan_library_async(library_id: str, root: str) -> dict:
     )
 
     def _run():
-        nonlocal library_id
+        nonlocal library_id, root_path
         total = 0
         processed = 0
         indexed = 0
@@ -444,6 +444,16 @@ def scan_library_async(library_id: str, root: str) -> dict:
             with _scan_lock:
                 if library_id in _cancel_scans:
                     raise RuntimeError("cancelled")
+            # A queued scan may have waited minutes; if the library was moved
+            # meanwhile (a re-scan request was a no-op while this was queued),
+            # scan where it lives now rather than the path captured at enqueue.
+            with sync_conn() as conn:
+                current = conn.execute(
+                    sa.select(t.libraries.c.path).where(t.libraries.c._id == library_id)
+                ).scalar()
+            if current is None:
+                raise RuntimeError("cancelled")  # library deleted while queued
+            root_path = Path(current)
 
             # Discover image files
             files: list[Path] = []
