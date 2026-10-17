@@ -5,7 +5,7 @@ const BUSY_INTERVAL_MS = 2000;
 const IDLE_INTERVAL_MS = 5000;
 
 /**
- * Poll `/api/ai/status`. Cadence derives from the pure isStatusBusy predicate:
+ * Poll `/api/v1/ai/status`. Cadence derives from the pure isStatusBusy predicate:
  * fast while the model/jobs are working, slow when idle. Replaces the
  * hand-rolled setTimeout/backoff loop that lived in SettingsPage.
  */

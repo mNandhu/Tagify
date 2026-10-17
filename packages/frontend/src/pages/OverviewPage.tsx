@@ -37,10 +37,10 @@ export default function OverviewPage() {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      api<Library[]>("/api/libraries")
+      api<Library[]>("/api/v1/libraries")
         .then((d) => alive && setLibs(d))
         .catch(() => alive && setLibs([]));
-      api<TagAgg[]>("/api/tags?include_manual=1")
+      api<TagAgg[]>("/api/v1/tags?include_manual=1")
         .then((d) => alive && setTags(d))
         .catch(() => alive && setTags([]));
     };

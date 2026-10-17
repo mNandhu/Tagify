@@ -72,7 +72,7 @@ export default function LibrariesPage() {
         await Promise.all(
           scanningIds.map(async (id) => {
             try {
-              const r = await fetch(`/api/libraries/${id}/progress`);
+              const r = await fetch(`/api/v1/libraries/${id}/progress`);
               if (!r.ok) return;
               const j = await r.json();
               updates[id] = {
@@ -114,7 +114,7 @@ export default function LibrariesPage() {
     else setRefreshing(true);
     setError(null);
     try {
-      const data = await api<Library[]>(`/api/libraries`);
+      const data = await api<Library[]>(`/api/v1/libraries`);
       setLibs(data);
     } catch (e: any) {
       const msg = e?.message || "Failed to load libraries";
@@ -129,7 +129,7 @@ export default function LibrariesPage() {
   }, []);
 
   const updateLibrary = async (id: string, data: Partial<Library>) => {
-    await api(`/api/libraries/${id}`, {
+    await api(`/api/v1/libraries/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
@@ -145,7 +145,7 @@ export default function LibrariesPage() {
       )
     )
       return;
-    await api(`/api/libraries/${id}`, { method: "DELETE" });
+    await api(`/api/v1/libraries/${id}`, { method: "DELETE" });
     refresh();
     invalidateImageFeed();
   };
@@ -190,7 +190,7 @@ export default function LibrariesPage() {
               if (!path.trim()) return;
               setAdding(true);
               try {
-                await api(`/api/libraries`, {
+                await api(`/api/v1/libraries`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ path, name: name || undefined }),
@@ -307,7 +307,7 @@ export default function LibrariesPage() {
                   onClick={async () => {
                     setRescanning((s) => new Set(s).add(l._id));
                     try {
-                      await api(`/api/libraries/${l._id}/rescan`, {
+                      await api(`/api/v1/libraries/${l._id}/rescan`, {
                         method: "POST",
                       });
                       push(`Rescan started for ${l.name || l.path}`, "info");

@@ -29,7 +29,7 @@ export default function TagsPage() {
   useEffect(() => {
     setTags(null);
     const params = includePrompt ? "?include_manual=1&include_prompt=1" : "?include_manual=1";
-    api<TagAgg[]>(`/api/tags${params}`)
+    api<TagAgg[]>(`/api/v1/tags${params}`)
       .then(setTags)
       .catch(() => setTags([]));
   }, [includePrompt]);
@@ -56,7 +56,7 @@ export default function TagsPage() {
     const params = new URLSearchParams();
     need.forEach((id) => params.append("tags", id));
     params.set("per", "4");
-    api<Record<string, Sample[]>>(`/api/tags/samples?${params}`)
+    api<Record<string, Sample[]>>(`/api/v1/tags/samples?${params}`)
       .then((data) => setSamples((prev) => ({ ...prev, ...data })))
       .catch(() => {
         // Allow a retry on next render if the batch failed.

@@ -11,7 +11,7 @@ export type ImageDoc = {
   height?: number;
   size?: number;
   // Ready-to-use thumbnail URL from the list payload: the API streaming route
-  // (`/api/images/{id}/thumb`). Lets the grid render <img src> with no per-tile
+  // (`/api/v1/images/{id}/thumb`). Lets the grid render <img src> with no per-tile
   // resolve request. See api/images.list_images.
   thumb_url?: string;
   // Compact blurred-preview hash; decoded to an instant placeholder so tiles
@@ -165,7 +165,7 @@ export function serializeFiltersForPeek(filters: Filters): string {
 }
 
 /**
- * Build the `/api/images` query string for one page of the Image feed:
+ * Build the `/api/v1/images` query string for one page of the Image feed:
  * the filter params plus pagination (limit, optional cursor).
  */
 export function buildImagesQuery(
@@ -189,7 +189,7 @@ export async function fetchImagesPage(
   opts: { cursor?: string | null; limit?: number; signal?: AbortSignal } = {},
 ): Promise<ImageDoc[]> {
   const qs = buildImagesQuery(filters, opts);
-  const r = await fetch(`/api/images?${qs}`, { signal: opts.signal });
+  const r = await fetch(`/api/v1/images?${qs}`, { signal: opts.signal });
   if (!r.ok) throw new Error(await r.text());
   return (await r.json()) as ImageDoc[];
 }
@@ -203,7 +203,7 @@ export async function fetchGroupsPage(
   const sp = serializeFilters(filters);
   sp.set("limit", String(opts.limit ?? PAGE_LIMIT));
   sp.set("offset", String(opts.offset ?? 0));
-  const r = await fetch(`/api/images/groups?${sp.toString()}`, {
+  const r = await fetch(`/api/v1/images/groups?${sp.toString()}`, {
     signal: opts.signal,
   });
   if (!r.ok) throw new Error(await r.text());
@@ -215,7 +215,7 @@ export async function fetchImage(
   id: string,
   opts: { signal?: AbortSignal } = {},
 ): Promise<ImageDoc> {
-  const r = await fetch(`/api/images/${encodeURIComponent(id)}`, {
+  const r = await fetch(`/api/v1/images/${encodeURIComponent(id)}`, {
     signal: opts.signal,
   });
   if (!r.ok) throw new Error(await r.text());

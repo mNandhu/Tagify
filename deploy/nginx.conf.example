@@ -35,18 +35,12 @@ server {
         try_files $uri /index.html;
     }
 
-    # IMPORTANT: the backend mounts routes at BARE prefixes (/images, /tags, ...);
-    # the frontend calls them under `/api/*` and the Vite dev proxy strips `/api`.
-    # In production nginx must strip `/api` too, so every proxied block below uses
-    # `rewrite ^/api/(.*)$ /$1 break;`. (For the regex `location` block this rewrite
-    # is mandatory — `proxy_pass` there cannot carry a rewritten URI on its own.)
-    # Once routes are grouped under `/api/v1` (see the TODO in
-    # packages/backend/src/main.py) these rewrites can be dropped.
+    # The backend serves every API route under `/api/v1`, the same path the
+    # frontend calls, so the blocks below proxy the URI through unchanged.
 
     # Originals: arbitrary disk paths → proxy through the API. Own block so large
     # files and Range requests stream unbuffered.
-    location ~ ^/api/images/.+/file$ {
-        rewrite ^/api/(.*)$ /$1 break;
+    location ~ ^/api/v1/images/.+/file$ {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
@@ -58,7 +52,6 @@ server {
 
     # All other API routes (JSON + the many small thumbnails). Buffering ON.
     location /api/ {
-        rewrite ^/api/(.*)$ /$1 break;
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;

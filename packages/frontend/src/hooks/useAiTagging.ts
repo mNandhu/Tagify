@@ -57,7 +57,7 @@ export function useAiTagging(onTagged?: () => void) {
       try {
         // Heads-up if the model isn't ready yet (tagging will start when it is).
         try {
-          const st = await fetch(`/api/ai/status`).then((r) =>
+          const st = await fetch(`/api/v1/ai/status`).then((r) =>
             r.ok ? r.json() : null,
           );
           if (st?.model_download?.status === "downloading") {

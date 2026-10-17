@@ -168,7 +168,7 @@ export default function AllImagesPage() {
     const tick = async () => {
       let anyScanning = false;
       try {
-        const data = await api<Library[]>(`/api/libraries`);
+        const data = await api<Library[]>(`/api/v1/libraries`);
         if (cancelled) return;
         setLibs(data);
         anyScanning = data.some((l) => l.scanning);
@@ -239,7 +239,7 @@ export default function AllImagesPage() {
   // source (the backend expands `any:`).
   useEffect(() => {
     api<TagSuggestion[]>(
-      `/api/tags?include_manual=1&include_prompt=1&merge_sources=1`,
+      `/api/v1/tags?include_manual=1&include_prompt=1&merge_sources=1`,
     )
       .then(setTagOptions)
       .catch(() => setTagOptions([]));
@@ -247,7 +247,7 @@ export default function AllImagesPage() {
 
   // Distinct extracted checkpoints for the model dropdown.
   useEffect(() => {
-    api<{ model: string; count: number }[]>(`/api/images/models`)
+    api<{ model: string; count: number }[]>(`/api/v1/images/models`)
       .then(setModelOptions)
       .catch(() => setModelOptions([]));
   }, []);

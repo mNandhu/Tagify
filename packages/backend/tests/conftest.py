@@ -44,10 +44,14 @@ async def temp_db(tmp_path: Path):
 @pytest_asyncio.fixture
 async def client(temp_db):
     """An httpx client bound to the ASGI app (no network, no lifespan)."""
-    from src.main import app
+    from src.main import API_PREFIX, app
 
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+    # Every route lives under API_PREFIX; httpx joins a leading-slash path onto
+    # the base URL's path, so tests address routes as `/images`, `/tags`, ...
+    async with httpx.AsyncClient(
+        transport=transport, base_url=f"http://test{API_PREFIX}"
+    ) as c:
         yield c
 
 

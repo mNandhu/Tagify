@@ -41,7 +41,7 @@ describe("per-image mutations", () => {
   ])("%s posts to /%s with its body", async (_n, call, suffix, body) => {
     const spy = mockFetch();
     await call();
-    expect(spy).toHaveBeenCalledWith(`/api/images/L1%3Aa.jpg/${suffix}`, {
+    expect(spy).toHaveBeenCalledWith(`/api/v1/images/L1%3Aa.jpg/${suffix}`, {
       ...JSON_POST,
       body: JSON.stringify(body),
     });
@@ -51,13 +51,13 @@ describe("per-image mutations", () => {
     // Image ids are `{library}:{relative/path}` — both characters are live.
     const spy = mockFetch();
     await setScore("L1:sub/dir/a.jpg", 1);
-    expect(spy.mock.calls[0][0]).toBe("/api/images/L1%3Asub%2Fdir%2Fa.jpg/score");
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/images/L1%3Asub%2Fdir%2Fa.jpg/score");
   });
 
   it("applyTags posts the bare tag array", async () => {
     const spy = mockFetch();
     await applyTags("L1:a.jpg", ["cat", "dog"]);
-    expect(spy).toHaveBeenCalledWith("/api/tags/apply/L1%3Aa.jpg", {
+    expect(spy).toHaveBeenCalledWith("/api/v1/tags/apply/L1%3Aa.jpg", {
       ...JSON_POST,
       body: JSON.stringify(["cat", "dog"]),
     });
@@ -66,13 +66,13 @@ describe("per-image mutations", () => {
   it("removeTags posts the bare tag array", async () => {
     const spy = mockFetch();
     await removeTags("L1:a.jpg", ["cat"]);
-    expect(spy.mock.calls[0][0]).toBe("/api/tags/remove/L1%3Aa.jpg");
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/tags/remove/L1%3Aa.jpg");
   });
 
   it("setTagThumbnail encodes the raw prefixed tag", async () => {
     const spy = mockFetch();
     await setTagThumbnail("manual:my fav", "L1:a.jpg");
-    expect(spy).toHaveBeenCalledWith("/api/tags/thumbnail/manual%3Amy%20fav", {
+    expect(spy).toHaveBeenCalledWith("/api/v1/tags/thumbnail/manual%3Amy%20fav", {
       ...JSON_POST,
       body: JSON.stringify({ image_id: "L1:a.jpg" }),
     });

@@ -114,15 +114,15 @@ describe("AI commands", () => {
   }
 
   it.each([
-    ["postModelLoad", () => postModelLoad(), "/api/ai/model/load"],
-    ["postModelLoadCancel", () => postModelLoadCancel(), "/api/ai/model/load-cancel"],
+    ["postModelLoad", () => postModelLoad(), "/api/v1/ai/model/load"],
+    ["postModelLoadCancel", () => postModelLoadCancel(), "/api/v1/ai/model/load-cancel"],
     [
       "postModelDownloadCancel",
       () => postModelDownloadCancel(),
-      "/api/ai/model/download-cancel",
+      "/api/v1/ai/model/download-cancel",
     ],
-    ["postModelUnload", () => postModelUnload(), "/api/ai/model/unload"],
-    ["postClearAiTags", () => postClearAiTags(), "/api/ai/clear-ai-tags"],
+    ["postModelUnload", () => postModelUnload(), "/api/v1/ai/model/unload"],
+    ["postClearAiTags", () => postClearAiTags(), "/api/v1/ai/clear-ai-tags"],
   ])("%s POSTs %s", async (_name, call, url) => {
     const spy = mockFetch();
     await call();
@@ -132,7 +132,7 @@ describe("AI commands", () => {
   it("postAiJobCancel encodes the job id into the path", async () => {
     const spy = mockFetch({ ok: true });
     await postAiJobCancel("job/1");
-    expect(spy).toHaveBeenCalledWith("/api/ai/jobs/job%2F1/cancel", {
+    expect(spy).toHaveBeenCalledWith("/api/v1/ai/jobs/job%2F1/cancel", {
       method: "POST",
     });
   });
@@ -140,7 +140,7 @@ describe("AI commands", () => {
   it("postAiTag sends the ids as a JSON body", async () => {
     const spy = mockFetch({ job_id: "j1" });
     await expect(postAiTag(["a", "b"])).resolves.toEqual({ job_id: "j1" });
-    expect(spy).toHaveBeenCalledWith("/api/ai/tag", {
+    expect(spy).toHaveBeenCalledWith("/api/v1/ai/tag", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids: ["a", "b"] }),
@@ -158,7 +158,7 @@ describe("AI commands", () => {
   it("saveAiSettings round-trips the settings body", async () => {
     const spy = mockFetch({ model_repo: "r" });
     await saveAiSettings({ model_repo: "r" } as never);
-    expect(spy.mock.calls[0][0]).toBe("/api/ai/settings");
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/ai/settings");
     expect(spy.mock.calls[0][1]).toMatchObject({ method: "POST" });
   });
 
@@ -166,7 +166,7 @@ describe("AI commands", () => {
     const spy = mockFetch({ total: 0 });
     const signal = new AbortController().signal;
     await fetchAiCoverage(signal);
-    expect(spy).toHaveBeenCalledWith("/api/ai/coverage", { signal });
+    expect(spy).toHaveBeenCalledWith("/api/v1/ai/coverage", { signal });
   });
 
   it("propagates the response body text on failure", async () => {
