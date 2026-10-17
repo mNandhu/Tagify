@@ -150,7 +150,12 @@ export default function LibrariesPage() {
       tone: "danger",
     });
     if (!ok) return;
-    await api(`/api/v1/libraries/${id}`, { method: "DELETE" });
+    try {
+      await api(`/api/v1/libraries/${id}`, { method: "DELETE" });
+    } catch (e: any) {
+      push(e?.message || "Failed to delete library", "error");
+      return;
+    }
     refresh();
     invalidateImageFeed();
   };

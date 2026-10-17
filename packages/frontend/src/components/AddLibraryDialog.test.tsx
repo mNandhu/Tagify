@@ -76,6 +76,34 @@ describe("AddLibraryDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("Ctrl+Enter can't start a second add or add an empty selection", async () => {
+    const posts = mockFetch();
+    const onClose = vi.fn();
+    render(<AddLibraryDialog open onClose={onClose} onAdded={vi.fn()} />);
+    await previewFlow();
+    const box = screen.getByLabelText("Folders");
+
+    fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(posts.map((p) => p.path)).toEqual(["/lib/a", "/lib/b"]);
+  });
+
+  it("Ctrl+Enter with nothing ticked keeps the dialog open", async () => {
+    const posts = mockFetch();
+    const onClose = vi.fn();
+    render(<AddLibraryDialog open onClose={onClose} onAdded={vi.fn()} />);
+    await previewFlow();
+    // [0] is the split toggle; [1] and [2] are the two new rows.
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getAllByRole("checkbox")[2]);
+
+    fireEvent.keyDown(screen.getByLabelText("Folders"), { key: "Enter", ctrlKey: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posts).toEqual([]);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("keeps only the failed rows selected after a partial failure", async () => {
     const posts = mockFetch(["/lib/b"]);
     const onAdded = vi.fn();
