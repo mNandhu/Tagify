@@ -200,6 +200,7 @@ export default function RulesPage() {
     graph,
     isDirty,
     loadFailed,
+    loading,
     selectSig,
     removePath,
     save,
@@ -344,7 +345,7 @@ export default function RulesPage() {
                   <Button
                     variant="primary"
                     onClick={() => void save()}
-                    disabled={busy || loadFailed}
+                    disabled={busy || loading || loadFailed}
                     title={loadFailed ? "Ruleset didn't load — click the signature to retry" : undefined}
                   >
                     <Save size={14} /> Save

@@ -246,6 +246,29 @@ describe("useRulesetSession", () => {
     expect(v.result.current.fields).toEqual({ prompt: ["prompt.6.text"] });
   });
 
+  it("refuses to save while the ruleset is still loading", async () => {
+    // Saving the interim {} would wipe the signature's stored pins.
+    const v = setup();
+    const pending = deferred<{ fields: Record<string, string[]> }>();
+    gen.fetchRuleset.mockReturnValueOnce(pending.promise);
+
+    let switching!: Promise<void>;
+    act(() => {
+      switching = v.result.current.selectSig(SIG_A);
+    });
+    await waitFor(() => expect(v.result.current.loading).toBe(true));
+    await act(async () => {
+      await v.result.current.save();
+    });
+    expect(gen.saveRuleset).not.toHaveBeenCalled();
+
+    await act(async () => {
+      pending.resolve({ fields: { prompt: ["p"] } });
+      await switching;
+    });
+    expect(v.result.current.loading).toBe(false);
+  });
+
   it("save and delete are no-ops with nothing selected", async () => {
     const v = setup();
 
