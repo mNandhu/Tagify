@@ -153,7 +153,7 @@ async def test_route_decorates_samples_with_the_thumb_url(client, seed):
 
     resp = await client.get("/tags/samples", params={"tags": ["cat"], "per": 1})
 
-    assert resp.json()["cat"][0]["thumb_url"] == "/api/images/L1%3Aa.jpg/thumb"
+    assert resp.json()["cat"][0]["thumb_url"] == "/api/v1/images/L1%3Aa.jpg/thumb"
 
 
 @pytest.mark.asyncio

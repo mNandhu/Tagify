@@ -5,6 +5,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _BACKEND_ROOT = Path(__file__).parent.parent.parent  # packages/backend/
 _REPO_ROOT = _BACKEND_ROOT.parent.parent  # project root
 
+# Every API route is mounted under this prefix (see main.py). Anything that
+# builds a URL into the API (e.g. thumbnail URLs embedded in responses) must use
+# it rather than spelling the path.
+API_PREFIX = "/api/v1"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(

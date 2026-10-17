@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from .api import libraries, images, tags, ai, rules
 from .database.db import async_conn, ensure_schema
 from .database import schema as t
-from .core.config import settings
+from .core.config import API_PREFIX, settings
 from .core.logging_setup import setup_logging
 from .services.storage_fs import ensure_thumb_root
 from .services.ai_jobs import get_ai_job_manager, get_ai_settings
@@ -20,8 +20,6 @@ import anyio  # type: ignore[import-not-found]
 import sqlalchemy as sa
 
 logger = logging.getLogger("tagify")
-
-API_PREFIX = "/api/v1"
 
 
 @asynccontextmanager
