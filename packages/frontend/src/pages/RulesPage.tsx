@@ -7,6 +7,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
 import { useToast } from "../components/Toasts";
+import { useConfirm } from "../components/ConfirmDialog";
 import {
   RULE_FIELDS,
   type RuleField,
@@ -187,12 +188,18 @@ export default function RulesPage() {
 
   useEffect(() => loadSignatures(), [loadSignatures]);
 
-  const session = useRulesetSession({ notify: push, onSaved: loadSignatures });
+  const confirm = useConfirm();
+  const session = useRulesetSession({
+    notify: push,
+    onSaved: loadSignatures,
+    confirmDiscard: confirm,
+  });
   const {
     selected,
     fields,
     graph,
     isDirty,
+    loadFailed,
     selectSig,
     removePath,
     save,
@@ -200,7 +207,18 @@ export default function RulesPage() {
   } = session;
   const busy = session.busy || previewBusy;
 
-  useUnsavedChangesGuard(isDirty);
+  useUnsavedChangesGuard(isDirty, confirm);
+
+  // A preview belongs to one signature's sample; drop it on switch so its
+  // resolved values and green chips don't linger under the next workflow.
+  const selectedSig = selected?.workflow_sig ?? null;
+  const [previewSig, setPreviewSig] = useState<string | null>(null);
+  if (previewSig !== selectedSig) {
+    setPreviewSig(selectedSig);
+    setPreview(null);
+  }
+  const selectedSigRef = useRef(selectedSig);
+  selectedSigRef.current = selectedSig;
 
   // Deep link from a specific image (Full View "Edit rule" button) —
   // ?sig=<workflow_sig> auto-selects that signature once its row has loaded.
@@ -227,9 +245,12 @@ export default function RulesPage() {
 
   const runPreview = useCallback(async () => {
     if (!selected) return;
+    const sig = selected.workflow_sig;
     setPreviewBusy(true);
     try {
-      setPreview(await previewRuleset(selected.sample_image_id, fields));
+      const res = await previewRuleset(selected.sample_image_id, fields);
+      // Ignore a preview that lands after the user switched signature.
+      if (selectedSigRef.current === sig) setPreview(res);
     } catch (e) {
       push(`Preview failed: ${String(e)}`, "error");
     } finally {
@@ -320,7 +341,12 @@ export default function RulesPage() {
                   <Button onClick={() => void runPreview()} disabled={busy}>
                     <Play size={14} /> Preview
                   </Button>
-                  <Button variant="primary" onClick={() => void save()} disabled={busy}>
+                  <Button
+                    variant="primary"
+                    onClick={() => void save()}
+                    disabled={busy || loadFailed}
+                    title={loadFailed ? "Ruleset didn't load — click the signature to retry" : undefined}
+                  >
                     <Save size={14} /> Save
                     {isDirty && (
                       <span className="ml-1 w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
