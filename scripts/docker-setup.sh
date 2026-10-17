@@ -35,13 +35,20 @@ docker compose up --build -d
 
 echo ""
 echo "⏳ Waiting for the backend to become healthy..."
-for i in {1..60}; do
-    if curl -sf http://localhost:8000/health > /dev/null; then
+PORT="${TAGIFY_BACKEND_PORT:-8000}"
+healthy=false
+for _ in {1..60}; do
+    if curl -sf "http://localhost:${PORT}/health" > /dev/null; then
+        healthy=true
         break
     fi
     sleep 2
 done
 docker compose ps
+if [ "$healthy" != true ]; then
+    echo "❌ Backend did not become healthy. Check: docker compose logs backend"
+    exit 1
+fi
 
 echo ""
 echo "🎉 Tagify should now be running!"
