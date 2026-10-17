@@ -30,19 +30,25 @@ echo "  ✅ Backend healthy"
 
 echo "📚 Adding /data/test_images as a library..."
 LIB_ID=$(curl -sf -X POST -H 'Content-Type: application/json' \
-    -d '{"path":"/data/test_images","name":"docker-test"}' "$API/libraries" | jq -r '._id')
+    -d '{"path":"/data/test_images","name":"docker-test"}' "$API/libraries" | jq -r '._id // empty')
+if [ -z "$LIB_ID" ]; then echo "❌ Adding the library returned no _id"; exit 1; fi
 
-for i in {1..120}; do
+scan_done=false
+for _ in {1..120}; do
     SCANNING=$(curl -sf "$API/libraries/$LIB_ID/progress" | jq -r '.scanning')
-    [ "$SCANNING" = "false" ] && break
+    if [ "$SCANNING" = "false" ]; then scan_done=true; break; fi
     sleep 2
 done
+if [ "$scan_done" != true ]; then echo "❌ Scan did not finish in time"; $COMPOSE logs backend; exit 1; fi
 INDEXED=$(curl -sf "$API/libraries/$LIB_ID/progress" | jq -r '.indexed_count')
 if [ "$INDEXED" = "0" ]; then echo "❌ Nothing indexed"; $COMPOSE logs backend; exit 1; fi
 echo "  ✅ Indexed $INDEXED images"
 
-IMG_ID=$(curl -sf "$API/images?limit=1&library_id=$LIB_ID" | jq -r '.[0]._id')
-curl -sf -o /dev/null "$API/images/$IMG_ID/thumb" && echo "  ✅ Thumbnail served"
-curl -sf -o /dev/null "$API/images/$IMG_ID/file" && echo "  ✅ Original served"
+IMG_ID=$(curl -sf "$API/images?limit=1&library_id=$LIB_ID" | jq -r '.[0]._id // empty')
+if [ -z "$IMG_ID" ]; then echo "❌ Image feed is empty"; exit 1; fi
+if ! curl -sf -o /dev/null "$API/images/$IMG_ID/thumb"; then echo "❌ Thumbnail request failed"; exit 1; fi
+echo "  ✅ Thumbnail served"
+if ! curl -sf -o /dev/null "$API/images/$IMG_ID/file"; then echo "❌ Original request failed"; exit 1; fi
+echo "  ✅ Original served"
 
 echo "🎉 Docker smoke test passed"
