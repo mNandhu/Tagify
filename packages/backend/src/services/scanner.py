@@ -294,6 +294,10 @@ def reconcile_stale(
 
 # --- Async scanning with progress tracking ---
 _scan_lock = Lock()
+# Caps how many libraries scan at once. Each scan already fans out over a thread
+# pool and SQLite has one writer, so adding a dozen libraries in one go should
+# queue them, not run them all at once. A queued library shows `scanning` 0/0.
+_scan_slots = threading.BoundedSemaphore(max(1, settings.scanner_max_concurrent_scans))
 _current_scans: set[str] = set()
 _cancel_scans: set[str] = set()
 _scan_threads: dict[str, threading.Thread] = {}
@@ -430,7 +434,13 @@ def scan_library_async(library_id: str, root: str) -> dict:
         failed = 0
         failed_samples: list[dict] = []
         discovered_image_ids: set[str] = set()
+        has_slot = False
         try:
+            while not _scan_slots.acquire(timeout=0.5):
+                with _scan_lock:
+                    if library_id in _cancel_scans:
+                        raise RuntimeError("cancelled")
+            has_slot = True
             with _scan_lock:
                 if library_id in _cancel_scans:
                     raise RuntimeError("cancelled")
@@ -616,6 +626,8 @@ def scan_library_async(library_id: str, root: str) -> dict:
                 logger.exception("Scan failed for library %s", library_id)
             _lib_set(library_id, {"scanning": False, "scan_error": str(e)})
         finally:
+            if has_slot:
+                _scan_slots.release()
             with _scan_lock:
                 _current_scans.discard(library_id)
                 _cancel_scans.discard(library_id)

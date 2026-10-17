@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     thumb_root: str = "./data/thumbs"
 
     scanner_max_workers: int = 0
+    # How many libraries may scan concurrently; the rest wait their turn.
+    scanner_max_concurrent_scans: int = 2
     scan_progress_update_ms: int = 500
 
     # Filesystem watcher (near-real-time incremental indexing).
