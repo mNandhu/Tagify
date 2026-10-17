@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
@@ -28,7 +29,8 @@ def _validate_path(value: str) -> str:
     # rather than naming a fixed location.
     if not value or not Path(value).is_absolute():
         raise ValueError(f"Path must be a non-empty absolute path: {value!r}")
-    return value
+    # One spelling per folder: `D:/images/` and `D:/images` are the same library.
+    return os.path.normpath(value)
 
 
 class LibraryIn(BaseModel):
@@ -39,6 +41,17 @@ class LibraryIn(BaseModel):
     @classmethod
     def _strip_quotes(cls, v: str) -> str:
         return _validate_path(v)
+
+
+class LibraryDiscoverIn(BaseModel):
+    paths: list[str] = Field(..., min_length=1, max_length=50)
+    #: Offer each immediate subfolder as its own library.
+    split_subdirs: bool = False
+
+    @field_validator("paths")
+    @classmethod
+    def _clean(cls, v: list[str]) -> list[str]:
+        return [_validate_path(p) for p in v if p.strip()]
 
 
 class Library(BaseModel):
