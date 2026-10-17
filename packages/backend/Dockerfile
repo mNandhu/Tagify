@@ -31,7 +31,7 @@ FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH="/app/src" \
+    PYTHONPATH="/app" \
     PATH="/app/.venv/bin:$PATH"
 
 # Install curl for health checks and libgomp1 for onnxruntime
@@ -46,6 +46,12 @@ WORKDIR /app
 
 # Copy the fully-built app + venv from the builder
 COPY --from=builder --chown=nonroot:nonroot /app /app
+
+# All state (SQLite DB, thumbnails, model cache) lives under /data. Creating it
+# owned by the runtime user means a fresh named volume mounted here inherits
+# that ownership, so the non-root process can write to it.
+RUN mkdir -p /data && chown nonroot:nonroot /data
+VOLUME ["/data"]
 
 USER nonroot
 

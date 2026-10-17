@@ -1,26 +1,6 @@
-# Docker Compose configuration optimized for CI/testing environments
-# Use this for automated testing and CI pipelines
+# CI stack: backend only, with the repo's ./test_images mounted read-only as a
+# library. Separate volume so CI never touches a local `tagify_data`.
 services:
-  # MongoDB database
-  mongodb:
-    image: mongo:7
-    container_name: tagify-mongodb-ci
-    restart: "no"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password}
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data_ci:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 20s
-
-  # FastAPI backend
   backend:
     build:
       context: ./packages/backend
@@ -29,16 +9,16 @@ services:
     restart: "no"
     volumes:
       - ./test_images:/data/test_images:ro
-      - thumb_data_ci:/data/thumbs
-    depends_on:
-      mongodb:
-        condition: service_healthy
+      - tagify_data_ci:/data
     environment:
-      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-password}@mongodb:27017/
+      SQLITE_PATH: /data/tagify.db
       THUMB_ROOT: /data/thumbs
+      MODEL_CACHE_DIR: /data/models
+      LOG_TO_FILE: "false"
       THUMB_MAX_SIZE: ${THUMB_MAX_SIZE:-1080}
       SCANNER_MAX_WORKERS: ${SCANNER_MAX_WORKERS:-0}
-      AI_TAGGING_URL: ${AI_TAGGING_URL:-}
+      # CI adds a library and waits for one scan; no watcher needed.
+      WATCH_ENABLED_DEFAULT: "false"
     ports:
       - "8000:8000"
     healthcheck:
@@ -49,7 +29,4 @@ services:
       start_period: 15s
 
 volumes:
-  mongodb_data_ci:
-    driver: local
-  thumb_data_ci:
-    driver: local
+  tagify_data_ci:

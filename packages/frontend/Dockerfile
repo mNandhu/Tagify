@@ -1,8 +1,8 @@
 # Multi-stage build for Tagify frontend
-FROM node:20-alpine as build
+FROM node:20-alpine AS build
 
-# Install pnpm
-RUN npm install -g pnpm
+# Install pnpm (pinned to the version the lockfile was written with)
+RUN npm install -g pnpm@10.22.0
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ COPY packages/frontend/ ./packages/frontend/
 RUN pnpm -C packages/frontend build
 
 # Production stage with nginx
-FROM nginx:alpine as production
+FROM nginx:alpine AS production
 
 # Install curl for health checks
 RUN apk add --no-cache curl

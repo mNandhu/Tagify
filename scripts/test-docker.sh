@@ -1,102 +1,45 @@
 #!/bin/bash
 
-# Tagify Docker validation script
-# Tests individual components to ensure Docker setup is working
+# Tagify Docker smoke test: builds the CI stack, indexes ./test_images, and
+# checks the API + media endpoints. Mirrors .github/workflows/ci.yml.
 
-set -e
+set -euo pipefail
 
-echo "🧪 Testing Tagify Docker components..."
+COMPOSE="docker compose -f docker-compose.ci.yml"
+API="http://localhost:8000/api/v1"
 
-# Function to cleanup containers
 cleanup() {
-    echo "🧹 Cleaning up test containers..."
-    docker stop test-mongo test-minio 2>/dev/null || true
-    docker rm test-mongo test-minio 2>/dev/null || true
+    echo "🧹 Tearing down CI stack..."
+    $COMPOSE down -v > /dev/null 2>&1 || true
 }
-
-# Trap to ensure cleanup on exit
 trap cleanup EXIT
 
-# Test 1: MongoDB
-echo "📊 Testing MongoDB..."
-if ! docker run --rm -d --name test-mongo -p 27017:27017 \
-  -e MONGO_INITDB_ROOT_USERNAME=admin \
-  -e MONGO_INITDB_ROOT_PASSWORD=password \
-  mongo:7 > /dev/null; then
-  echo "  ❌ Failed to start MongoDB container"
-  exit 1
-fi
+echo "🐳 Building and starting the CI stack..."
+$COMPOSE up --build -d
 
-echo "  ⏳ Waiting for MongoDB to start..."
-sleep 15
-
-# Test MongoDB connection with retry
-MONGO_READY=false
-for i in {1..10}; do
-  if docker exec test-mongo mongosh --quiet --eval "db.adminCommand('ping').ok" --authenticationDatabase admin > /dev/null 2>&1; then
-    MONGO_READY=true
-    break
-  fi
-  echo "  ⏳ MongoDB not ready yet (attempt $i/10)..."
-  sleep 2
+echo "⏳ Waiting for backend health..."
+for i in {1..60}; do
+    if curl -sf http://localhost:8000/health > /dev/null; then break; fi
+    if [ "$i" = 60 ]; then echo "❌ Backend never became healthy"; $COMPOSE logs backend; exit 1; fi
+    sleep 2
 done
+echo "  ✅ Backend healthy"
 
-if [ "$MONGO_READY" = true ]; then
-  echo "  ✅ MongoDB is working"
-else
-  echo "  ❌ MongoDB failed to become ready"
-  exit 1
-fi
+echo "📚 Adding /data/test_images as a library..."
+LIB_ID=$(curl -sf -X POST -H 'Content-Type: application/json' \
+    -d '{"path":"/data/test_images","name":"docker-test"}' "$API/libraries" | jq -r '._id')
 
-docker stop test-mongo > /dev/null
-
-# Test 2: MinIO
-echo "🗄️  Testing MinIO..."
-if ! docker run --rm -d --name test-minio -p 9000:9000 \
-  -e MINIO_ROOT_USER=admin \
-  -e MINIO_ROOT_PASSWORD=password123 \
-  minio/minio server /data > /dev/null; then
-  echo "  ❌ Failed to start MinIO container"
-  exit 1
-fi
-
-echo "  ⏳ Waiting for MinIO to start..."
-sleep 15
-
-# Test MinIO health with retry
-MINIO_READY=false
-for i in {1..10}; do
-  if curl -f http://localhost:9000/minio/health/live > /dev/null 2>&1; then
-    MINIO_READY=true
-    break
-  fi
-  echo "  ⏳ MinIO not ready yet (attempt $i/10)..."
-  sleep 2
+for i in {1..120}; do
+    SCANNING=$(curl -sf "$API/libraries/$LIB_ID/progress" | jq -r '.scanning')
+    [ "$SCANNING" = "false" ] && break
+    sleep 2
 done
+INDEXED=$(curl -sf "$API/libraries/$LIB_ID/progress" | jq -r '.indexed_count')
+if [ "$INDEXED" = "0" ]; then echo "❌ Nothing indexed"; $COMPOSE logs backend; exit 1; fi
+echo "  ✅ Indexed $INDEXED images"
 
-if [ "$MINIO_READY" = true ]; then
-  echo "  ✅ MinIO is working"
-else
-  echo "  ❌ MinIO failed to become ready"
-  exit 1
-fi
+IMG_ID=$(curl -sf "$API/images?limit=1&library_id=$LIB_ID" | jq -r '.[0]._id')
+curl -sf -o /dev/null "$API/images/$IMG_ID/thumb" && echo "  ✅ Thumbnail served"
+curl -sf -o /dev/null "$API/images/$IMG_ID/file" && echo "  ✅ Original served"
 
-docker stop test-minio > /dev/null
-
-# Test 3: Docker Compose config
-echo "🐳 Testing Docker Compose configuration..."
-if docker compose -f docker-compose.yml config > /dev/null 2>&1; then
-  echo "  ✅ Docker Compose config is valid"
-else
-  echo "  ❌ Docker Compose config is invalid"
-  exit 1
-fi
-
-echo ""
-echo "🎉 All tests passed! Docker setup appears to be working correctly."
-echo ""
-echo "To start the full stack:"
-echo "  docker compose up --build -d"
-echo ""
-echo "To check status:"
-echo "  docker compose ps"
+echo "🎉 Docker smoke test passed"

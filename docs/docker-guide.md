@@ -1,121 +1,90 @@
-# Docker Configuration Guide
+# Docker Guide
 
-This directory contains multiple Docker Compose configurations for different use cases:
+Tagify runs as two containers: the FastAPI **backend** (embedded SQLite, thumbnails
+on the local filesystem, optional WD ONNX tagger) and the **frontend** (static
+build served by nginx, which proxies `/api/*` to the backend). There is no
+database or object-store container.
 
-## Available Configurations
+## Configurations
 
-### 1. `docker-compose.yml` - Production Setup
-
-Full production stack with all services, optimized for stability:
-
-- All services with proper health checks
-- Data persistence with volumes
-- Frontend served via nginx
-- Configured for production deployment
-
-**Usage:**
+| File | Purpose |
+| --- | --- |
+| `docker-compose.yml` | Full stack: backend + frontend, persistent `tagify_data` volume. |
+| `docker-compose.override.yml` | Your local additions — mount image folders here (picked up automatically). |
+| `docker-compose.ci.yml` | Backend only, with `./test_images` mounted read-only; used by CI and `scripts/test-docker.sh`. |
 
 ```bash
-docker compose up --build -d
+cp .env.example .env          # optional tuning
+docker compose up --build -d  # or: scripts/docker-setup.sh
 ```
 
-### 2. `docker-compose.dev.yml` - Development Dependencies
+- Frontend: http://localhost:5173
+- API: http://localhost:8000/api/v1 (OpenAPI docs at http://localhost:8000/docs)
+- Health: http://localhost:8000/health
 
-Only external dependencies (MongoDB + MinIO) for hybrid development:
+## Mounting your image folders
 
-- Backend and frontend run natively via `pnpm dev`
-- Faster iteration during development
-- Reduced resource usage
+The backend can only index folders it can see. Bind-mount them in
+`docker-compose.override.yml` (read-only is fine — Tagify never writes to
+library folders, except the explicit "purge" action):
 
-**Usage:**
-
-```bash
-docker compose -f docker-compose.dev.yml up -d
-pnpm dev
+```yaml
+services:
+  backend:
+    volumes:
+      - /absolute/path/to/images:/mnt/images:ro
+      # Windows (Docker Desktop):
+      # - type: bind
+      #   source: G:\
+      #   target: /mnt/g
+      #   read_only: true
 ```
 
-### 3. `docker-compose.ci.yml` - CI/Testing Environment
+Then add libraries in the UI using the **in-container** path (`/mnt/images/...`).
+The Add Library dialog accepts several folders and can split a parent folder into
+one library per subfolder.
 
-Optimized for automated testing and CI pipelines:
+## Data and persistence
 
-- No restart policies (prevents container state issues)
-- Aggressive health check timings
-- Better error handling and logging
-- Separate volumes to avoid conflicts
+Everything the backend writes lives in the `tagify_data` volume at `/data`:
 
-**Usage:**
+| Path | Contents | Setting |
+| --- | --- | --- |
+| `/data/tagify.db` | SQLite metadata (WAL mode) | `SQLITE_PATH` |
+| `/data/thumbs/` | Generated WebP thumbnails | `THUMB_ROOT` |
+| `/data/models/` | Downloaded tagger models | `MODEL_CACHE_DIR` |
 
-```bash
-docker compose -f docker-compose.ci.yml up --build -d
-```
+Back up by stopping the backend and copying the volume. Removing it
+(`docker compose down -v`) resets Tagify; your images are untouched.
 
-## Configuration Details
+## Logs
 
-### Health Checks
+The backend logs to stdout in the container (`LOG_TO_FILE=false`), so use
+`docker compose logs -f backend`. Outside Docker it also writes a rotating
+`data/logs/tagify.log`.
 
-All configurations include comprehensive health checks:
+## Configuration
 
-- **MongoDB**: `mongosh` ping command with authentication
-- **MinIO**: HTTP health endpoint check
-- **Backend**: FastAPI `/health` endpoint
-- **Frontend**: nginx root endpoint (production only)
+Set in `.env` (see `.env.example`):
 
-### Environment Variables
+- `THUMB_MAX_SIZE` — longest edge of thumbnails (px)
+- `SCANNER_MAX_WORKERS` — threads per scan (0 = auto)
+- `SCANNER_MAX_CONCURRENT_SCANS` — libraries scanning at once (others queue)
+- `WATCH_ENABLED_DEFAULT`, `WATCH_RECONCILE_INTERVAL_S` — live watching of new
+  files. Bind mounts from a Windows/macOS host don't deliver change events to
+  Linux, so there the periodic reconcile rescan is what picks up new images.
+- `LOG_LEVEL`
 
-Configure via `.env` file (see `.env.example`):
+## Reverse proxy / TLS
 
-- Database credentials
-- MinIO settings
-- Media delivery modes
-- Performance tuning
-
-### Volumes
-
-Persistent data storage:
-
-- `mongodb_data`: Database files
-- `minio_data`: Object storage files
-- Separate volumes for CI to avoid conflicts
-
-### Networking
-
-All services communicate via Docker internal networking:
-
-- Backend connects to `mongodb:27017` and `minio:9000`
-- Frontend proxies API calls to `backend:8000`
-- External access via mapped ports
+To serve Tagify behind your own nginx (TLS, static offload), see
+`deploy/nginx.conf.example`. All API routes are under `/api/v1`, so no path
+rewriting is needed.
 
 ## Troubleshooting
 
-### Container State Issues
-
-If you encounter "invalid state transition" errors:
-
-1. Use the CI configuration: `docker-compose.ci.yml`
-2. Ensure Docker daemon is running properly
-3. Clean up existing containers: `docker system prune`
-
-### Health Check Failures
-
-If services fail health checks:
-
-1. Increase timeout values in compose file
-2. Check container logs: `docker compose logs <service>`
-3. Verify network connectivity between containers
-
-### Build Failures
-
-If Docker builds fail:
-
-1. Clear build cache: `docker builder prune`
-2. Check Dockerfile and build context
-3. Ensure all required files are present and not in `.dockerignore`
-
-### Performance Issues
-
-For better performance:
-
-1. Allocate more resources to Docker
-2. Use SSD storage for volumes
-3. Adjust health check intervals
-4. Tune worker counts via environment variables
+- **Library shows 0 images** — the path isn't mounted, or you used the host path
+  instead of the in-container one. `docker compose exec backend ls /mnt/...`.
+- **Backend unhealthy** — `docker compose logs backend`.
+- **Permission denied on /data** — the backend runs as uid 999; a bind mount for
+  `/data` (instead of the named volume) must be writable by that uid.
