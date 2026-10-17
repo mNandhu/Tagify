@@ -38,6 +38,8 @@ export type RulesetSession = {
    * reload (clicking the signature again) succeeds.
    */
   loadFailed: boolean;
+  /** The selected signature's ruleset is still loading; save is refused. */
+  loading: boolean;
   /** Switch to another signature, guarding unsaved edits first. */
   selectSig: (row: SignatureRow) => Promise<void>;
   pinPath: (field: RuleField, path: string) => void;
@@ -85,6 +87,7 @@ export function useRulesetSession({
   const [graph, setGraph] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   // The last state the server agreed with. Every transition that makes the
   // server agree again must come back through `commit`.
@@ -130,6 +133,7 @@ export function useRulesetSession({
       // (or be savable) under this one, even while — or if — the load fails.
       setSelected(row);
       setLoadFailed(false);
+      setLoading(true);
       commit({});
       setFields({});
       setGraph(null);
@@ -140,6 +144,7 @@ export function useRulesetSession({
         fetchWorkflow(row.sample_image_id),
       ]);
       if (currentSig.current !== sig) return;
+      setLoading(false);
 
       if (rs.status === "fulfilled") {
         const loaded = rs.value.fields || {};
@@ -183,6 +188,9 @@ export function useRulesetSession({
 
   const save = useCallback(async () => {
     if (!selected) return;
+    // Until the load lands the editor shows {} — not the server's ruleset —
+    // so saving now would wipe it.
+    if (loading) return;
     if (loadFailed) {
       notify("Ruleset didn't load — click the signature to retry before saving", "error");
       return;
@@ -201,7 +209,7 @@ export function useRulesetSession({
     } finally {
       setBusy(false);
     }
-  }, [selected, loadFailed, fields, commit, notify, onSaved]);
+  }, [selected, loading, loadFailed, fields, commit, notify, onSaved]);
 
   const remove = useCallback(async () => {
     if (!selected) return;
@@ -238,6 +246,7 @@ export function useRulesetSession({
     isDirty,
     busy,
     loadFailed,
+    loading,
     selectSig,
     pinPath,
     removePath,
