@@ -35,13 +35,23 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function setup(confirmDiscard = vi.fn(() => true)) {
+function setup(confirmDiscard = vi.fn(async () => true)) {
   const notify = vi.fn();
   const onSaved = vi.fn();
   const view = renderHook(() =>
     useRulesetSession({ notify, onSaved, confirmDiscard }),
   );
   return { ...view, notify, onSaved, confirmDiscard };
+}
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 async function load(view: ReturnType<typeof setup>, sig = SIG_A) {
@@ -144,7 +154,7 @@ describe("useRulesetSession", () => {
   });
 
   it("declining the delete confirm does not delete", async () => {
-    const v = setup(vi.fn(() => false));
+    const v = setup(vi.fn(async () => false));
     await load(v);
 
     await act(async () => {
@@ -177,7 +187,7 @@ describe("useRulesetSession", () => {
 
   it("declining the switch keeps the current signature and the edits", async () => {
     // "I switched signature and lost my pins" is the failure this prevents.
-    const v = setup(vi.fn(() => false));
+    const v = setup(vi.fn(async () => false));
     await load(v);
     act(() => v.result.current.pinPath("model", "keep-me"));
 
@@ -217,6 +227,25 @@ describe("useRulesetSession", () => {
     );
   });
 
+  it("after a failed load, save is refused and re-clicking retries", async () => {
+    // An empty editor after a failed load is not the server's state; saving it
+    // would overwrite the signature's real ruleset.
+    gen.fetchRuleset.mockRejectedValueOnce(new Error("503"));
+    const v = setup();
+    await load(v);
+    act(() => v.result.current.pinPath("model", "x"));
+
+    await act(async () => {
+      await v.result.current.save();
+    });
+    expect(gen.saveRuleset).not.toHaveBeenCalled();
+    expect(v.result.current.loadFailed).toBe(true);
+
+    await load(v); // same signature again → retry
+    expect(v.result.current.loadFailed).toBe(false);
+    expect(v.result.current.fields).toEqual({ prompt: ["prompt.6.text"] });
+  });
+
   it("save and delete are no-ops with nothing selected", async () => {
     const v = setup();
 
@@ -227,5 +256,108 @@ describe("useRulesetSession", () => {
 
     expect(gen.saveRuleset).not.toHaveBeenCalled();
     expect(gen.deleteRuleset).not.toHaveBeenCalled();
+  });
+
+  it("switching resets the editor immediately, before the new ruleset loads", async () => {
+    // "Values from the previous workflow stay" — A's pins must not show under B.
+    const v = setup();
+    await load(v);
+    const pending = deferred<{ fields: Record<string, string[]> }>();
+    gen.fetchRuleset.mockReturnValueOnce(pending.promise);
+
+    let switching!: Promise<void>;
+    act(() => {
+      switching = v.result.current.selectSig(SIG_B);
+    });
+    await waitFor(() => expect(v.result.current.selected).toBe(SIG_B));
+
+    expect(v.result.current.fields).toEqual({});
+    expect(v.result.current.isDirty).toBe(false);
+
+    await act(async () => {
+      pending.resolve({ fields: { seed: ["prompt.3.seed"] } });
+      await switching;
+    });
+    expect(v.result.current.fields).toEqual({ seed: ["prompt.3.seed"] });
+    expect(v.result.current.isDirty).toBe(false);
+  });
+
+  it("a failed workflow fetch still loads the new signature's fields", async () => {
+    const v = setup();
+    await load(v);
+    gen.fetchRuleset.mockResolvedValueOnce({ fields: {} });
+    gen.fetchWorkflow.mockRejectedValueOnce(new Error("404"));
+
+    await load(v, SIG_B);
+
+    expect(v.result.current.selected).toBe(SIG_B);
+    expect(v.result.current.fields).toEqual({});
+    expect(v.result.current.isDirty).toBe(false);
+  });
+
+  it("a load that resolves after a later switch is ignored", async () => {
+    const v = setup();
+    const slowA = deferred<{ fields: Record<string, string[]> }>();
+    gen.fetchRuleset
+      .mockReturnValueOnce(slowA.promise)
+      .mockResolvedValueOnce({ fields: { model: ["prompt.4.ckpt_name"] } });
+
+    let first!: Promise<void>;
+    act(() => {
+      first = v.result.current.selectSig(SIG_A);
+    });
+    await load(v, SIG_B);
+    await act(async () => {
+      slowA.resolve({ fields: { prompt: ["stale"] } });
+      await first;
+    });
+
+    expect(v.result.current.selected).toBe(SIG_B);
+    expect(v.result.current.fields).toEqual({ model: ["prompt.4.ckpt_name"] });
+    expect(v.result.current.isDirty).toBe(false);
+  });
+
+  it("a save that resolves after switching does not dirty the next signature", async () => {
+    // The spurious "Unsaved changes" prompt: A's fields became B's baseline.
+    const v = setup();
+    await load(v);
+    act(() => v.result.current.pinPath("model", "x"));
+    const slowSave = deferred<undefined>();
+    gen.saveRuleset.mockReturnValueOnce(slowSave.promise);
+
+    let saving!: Promise<void>;
+    act(() => {
+      saving = v.result.current.save();
+    });
+    gen.fetchRuleset.mockResolvedValueOnce({ fields: {} });
+    await load(v, SIG_B);
+    await act(async () => {
+      slowSave.resolve(undefined);
+      await saving;
+    });
+
+    expect(v.result.current.selected).toBe(SIG_B);
+    expect(v.result.current.isDirty).toBe(false);
+  });
+
+  it("pinning then unpinning back to the saved state is clean", async () => {
+    const v = setup();
+    await load(v);
+
+    act(() => v.result.current.pinPath("model", "x"));
+    act(() => v.result.current.removePath("model", "x"));
+
+    expect(v.result.current.isDirty).toBe(false);
+  });
+
+  it("re-selecting the current signature neither prompts nor drops edits", async () => {
+    const v = setup();
+    await load(v);
+    act(() => v.result.current.pinPath("model", "keep-me"));
+
+    await load(v, SIG_A);
+
+    expect(v.confirmDiscard).not.toHaveBeenCalled();
+    expect(v.result.current.fields.model).toEqual(["keep-me"]);
   });
 });

@@ -32,6 +32,12 @@ export type RulesetSession = {
   graph: unknown;
   isDirty: boolean;
   busy: boolean;
+  /**
+   * The ruleset failed to load. The editor is empty, not the server's state,
+   * so saving would overwrite the real ruleset — save is refused until a
+   * reload (clicking the signature again) succeeds.
+   */
+  loadFailed: boolean;
   /** Switch to another signature, guarding unsaved edits first. */
   selectSig: (row: SignatureRow) => Promise<void>;
   pinPath: (field: RuleField, path: string) => void;
@@ -40,25 +46,57 @@ export type RulesetSession = {
   remove: () => Promise<void>;
 };
 
+export type ConfirmDiscard = (opts: {
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  tone?: "default" | "warning" | "danger";
+}) => Promise<boolean>;
+
+const nativeConfirm: ConfirmDiscard = async ({ title, message }) =>
+  window.confirm(message ? `${title}\n\n${message}` : title);
+
+/**
+ * Comparable form of a field map: empty pin lists dropped, keys sorted. Pinning
+ * then unpinning a path leaves `{model: []}`, and the server may return keys
+ * in another order — neither is an edit.
+ */
+function canonical(fields: RuleFields): string {
+  const out: Record<string, string[]> = {};
+  for (const k of Object.keys(fields).sort()) {
+    const v = fields[k as RuleField];
+    if (v && v.length) out[k] = v;
+  }
+  return JSON.stringify(out);
+}
+
 export function useRulesetSession({
   notify,
   onSaved,
-  confirmDiscard = (message: string) => window.confirm(message),
+  confirmDiscard = nativeConfirm,
 }: {
   notify: (message: string, kind: "success" | "error" | "info") => void;
   /** Refresh the signature list after a save or delete changes it. */
   onSaved?: () => void;
-  confirmDiscard?: (message: string) => boolean;
+  confirmDiscard?: ConfirmDiscard;
 }): RulesetSession {
   const [selected, setSelected] = useState<SignatureRow | null>(null);
   const [fields, setFields] = useState<RuleFields>({});
   const [graph, setGraph] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   // The last state the server agreed with. Every transition that makes the
   // server agree again must come back through `commit`.
   const baseline = useRef<RuleFields>({});
   const [baselineVersion, setBaselineVersion] = useState(0);
+
+  // Which signature the editor currently belongs to. Every async step checks
+  // it after its await: a load or save that resolves after the user switched
+  // away must not write into the new signature's editor (stale pins showing
+  // under the wrong workflow, or A's fields becoming B's baseline and leaving
+  // B permanently "unsaved").
+  const currentSig = useRef<string | null>(null);
 
   const commit = useCallback((next: RuleFields) => {
     baseline.current = next;
@@ -66,7 +104,7 @@ export function useRulesetSession({
   }, []);
 
   const isDirty = useMemo(
-    () => JSON.stringify(fields) !== JSON.stringify(baseline.current),
+    () => canonical(fields) !== canonical(baseline.current),
     // baselineVersion is the dependency that makes a commit re-evaluate this;
     // baseline.current is a ref and cannot be one.
     [fields, baselineVersion],
@@ -74,35 +112,58 @@ export function useRulesetSession({
 
   const selectSig = useCallback(
     async (row: SignatureRow) => {
+      if (row.workflow_sig === currentSig.current && !loadFailed) return;
       if (
         isDirty &&
-        !confirmDiscard("You have unsaved changes. Discard and switch signature?")
+        !(await confirmDiscard({
+          title: "Discard unsaved changes?",
+          message: "This signature has pins that haven't been saved.",
+          confirmLabel: "Discard and switch",
+          tone: "warning",
+        }))
       ) {
         return;
       }
+      const sig = row.workflow_sig;
+      currentSig.current = sig;
+      // Reset synchronously: the previous signature's pins must never show
+      // (or be savable) under this one, even while — or if — the load fails.
       setSelected(row);
+      setLoadFailed(false);
+      commit({});
+      setFields({});
       setGraph(null);
-      try {
-        const [rs, wf] = await Promise.all([
-          fetchRuleset(row.workflow_sig),
-          fetchWorkflow(row.sample_image_id),
-        ]);
-        const loaded = rs.fields || {};
+
+      // Independent: a missing sample graph shouldn't block editing the rules.
+      const [rs, wf] = await Promise.allSettled([
+        fetchRuleset(sig),
+        fetchWorkflow(row.sample_image_id),
+      ]);
+      if (currentSig.current !== sig) return;
+
+      if (rs.status === "fulfilled") {
+        const loaded = rs.value.fields || {};
         commit(loaded);
         setFields(loaded);
+      } else {
+        setLoadFailed(true);
+        notify(`Failed to load ruleset: ${String(rs.reason)}`, "error");
+      }
+
+      if (wf.status === "fulfilled") {
         // Root the tree at the raw doc so pinned paths read `prompt.<node>...`,
         // matching the backend's resolve_path.
+        const w = wf.value as { prompt?: unknown; workflow?: unknown } | null;
         const g: Record<string, unknown> = {};
-        if (wf && (wf as { prompt?: unknown }).prompt != null)
-          g.prompt = (wf as { prompt?: unknown }).prompt;
-        if (wf && (wf as { workflow?: unknown }).workflow != null)
-          g.workflow = (wf as { workflow?: unknown }).workflow;
+        if (w && w.prompt != null) g.prompt = w.prompt;
+        if (w && w.workflow != null) g.workflow = w.workflow;
         setGraph(g);
-      } catch (e) {
-        notify(`Failed to load ruleset: ${String(e)}`, "error");
+      } else {
+        notify(`Failed to load sample graph: ${String(wf.reason)}`, "error");
+        setGraph({});
       }
     },
-    [isDirty, confirmDiscard, commit, notify],
+    [isDirty, loadFailed, confirmDiscard, commit, notify],
   );
 
   const pinPath = useCallback((field: RuleField, path: string) => {
@@ -122,10 +183,17 @@ export function useRulesetSession({
 
   const save = useCallback(async () => {
     if (!selected) return;
+    if (loadFailed) {
+      notify("Ruleset didn't load — click the signature to retry before saving", "error");
+      return;
+    }
+    const sig = selected.workflow_sig;
+    const snapshot = fields;
     setBusy(true);
     try {
-      await saveRuleset(selected.workflow_sig, fields);
-      commit(fields);
+      await saveRuleset(sig, snapshot);
+      // Only re-baseline if the editor still shows what was saved.
+      if (currentSig.current === sig) commit(snapshot);
       notify("Ruleset saved · reprojecting this signature", "success");
       onSaved?.();
     } catch (e) {
@@ -133,17 +201,27 @@ export function useRulesetSession({
     } finally {
       setBusy(false);
     }
-  }, [selected, fields, commit, notify, onSaved]);
+  }, [selected, loadFailed, fields, commit, notify, onSaved]);
 
   const remove = useCallback(async () => {
     if (!selected) return;
-    if (!confirmDiscard("Delete this ruleset and reproject with built-in rules?"))
+    const sig = selected.workflow_sig;
+    if (
+      !(await confirmDiscard({
+        title: "Delete this ruleset?",
+        message: "Images with this signature are reprojected with the built-in rules.",
+        confirmLabel: "Delete ruleset",
+        tone: "danger",
+      }))
+    )
       return;
     setBusy(true);
     try {
-      await deleteRuleset(selected.workflow_sig);
-      commit({});
-      setFields({});
+      await deleteRuleset(sig);
+      if (currentSig.current === sig) {
+        commit({});
+        setFields({});
+      }
       notify("Ruleset deleted", "info");
       onSaved?.();
     } catch (e) {
@@ -159,6 +237,7 @@ export function useRulesetSession({
     graph,
     isDirty,
     busy,
+    loadFailed,
     selectSig,
     pinPath,
     removePath,
