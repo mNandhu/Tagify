@@ -11,47 +11,49 @@ uv run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
 
 - Env: copy `.env.example` to `.env` and fill values.
 
+## Build
+
+The backend is an installable package (uv build backend, flat layout — the
+importable package is `src`):
+
+```
+uv build            # sdist + wheel into dist/
+```
+
 ## Configuration
 
-Environment variables (see `.env.example`):
+Environment variables (see `.env.example`). Relative paths resolve against the
+repo root, not the process working directory.
 
-- Mongo / AI
+- Storage
+  - `SQLITE_PATH` SQLite database file (default: `./data/tagify.db`)
+  - `SQLITE_BUSY_TIMEOUT_MS` wait for the SQLite write lock (default: 5000)
+  - `THUMB_ROOT` thumbnail directory (default: `./data/thumbs`)
+  - `MODEL_CACHE_DIR` downloaded tagger models (default: `./.cache/tagify/models`)
 
-  - `MONGO_URI` (default: mongodb://localhost:27017)
-  - Mongo pool tuning (optional):
-    - `MONGO_MAX_POOL_SIZE` (default: 100)
-    - `MONGO_MIN_POOL_SIZE` (default: 0)
-    - `MONGO_SERVER_SELECTION_TIMEOUT_MS` (default: 5000)
-    - `MONGO_CONNECT_TIMEOUT_MS` (default: 5000)
-  - `AI_TAGGING_URL` optional external tagging endpoint
+- Scanner / watcher
+  - `SCANNER_MAX_WORKERS` worker threads per scan (0 = auto)
+  - `SCANNER_MAX_CONCURRENT_SCANS` libraries scanning at once; others queue (default: 2)
+  - `WATCH_ENABLED_DEFAULT`, `WATCH_RECONCILE_INTERVAL_S` filesystem watching of new libraries
 
-- MinIO / S3
+- Thumbnails
+  - `THUMB_MAX_SIZE` longest edge in px (default: 1080), `THUMB_FORMAT` (default: `webp`)
 
-  - `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`
-  - `MINIO_BUCKET_THUMBS`, `MINIO_BUCKET_ORIGINALS`
-
-- Scanner
-
-  - `SCANNER_MAX_WORKERS` cap worker threads (0 = auto)
-    - Auto mode is conservative (max 16) to avoid saturating Mongo/MinIO and spiking memory.
-
-- Media delivery
-  - `MEDIA_PRESIGNED_MODE`: `off` | `redirect` | `url` (default: `redirect`)
-    - `redirect`: API responds to file/thumb with 307 redirect to a time-limited URL
-    - `url`: API responds with JSON `{ "url": "..." }`
-    - `off`: API proxies bytes directly
-  - `MEDIA_PRESIGNED_EXPIRES`: expiry seconds for pre-signed URLs (default: 3600)
-
-Notes:
-
-- Range requests are honored when clients send `Range` for originals; API proxies with `206 Partial Content`.
+- Logging
+  - `LOG_LEVEL` (default: `INFO`)
+  - `LOG_TO_FILE` / `LOG_DIR` rotating `tagify.log` (default: on, `./data/logs`)
+  - `LOG_SLOW_REQUESTS_MS` warn on requests slower than this (default: 1000)
 
 - Ops / safety
-  - `LOG_SLOW_REQUESTS_MS`: log requests slower than this threshold (default: 1000)
   - `RATE_LIMIT_ENABLED`: `true` to enable a simple per-process rate limiter (default: false)
-  - `RATE_LIMIT_RESCAN_PER_MINUTE`: max `POST /libraries/{id}/rescan` per IP per minute (default: 1)
+  - `RATE_LIMIT_RESCAN_PER_MINUTE`: max `POST /api/v1/libraries/{id}/rescan` per IP per minute (default: 1)
+
+Media (thumbnails and originals) is streamed from the local filesystem; originals
+honor `Range` requests.
 
 ## API highlights
+
+All routes are served under `/api/v1` (e.g. `GET /api/v1/images`); `GET /health` is also available at the root.
 
 - `GET /images` list images
 
