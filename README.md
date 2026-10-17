@@ -60,38 +60,33 @@ docker compose up --build
 
 > [!WARNING]
 >
-> You must mount host image directories into the backend service via `docker-compose.override.yml` so the backend can access libraries on the host. Edit the `backend` service `volumes` section, for example:
+> The backend can only index folders mounted into it. Add your image directories in `docker-compose.override.yml`, then add libraries in the UI by their in-container path:
 >
 > ```yaml
 > services:
 >   backend:
 >     volumes:
->       - /absolute/path/to/your/images:/data/libraries
->       - ./packages/backend:/app
+>       - /absolute/path/to/your/images:/mnt/images:ro
 > ```
 >
-> Use absolute host paths and verify file permissions.
+> See [docs/docker-guide.md](docs/docker-guide.md) for data volumes, logs and configuration.
 
 **Access Points:**
 
 - **Frontend**: http://localhost:5173
-- **Backend API**: http://localhost:8000
+- **Backend API**: http://localhost:8000/api/v1
 - **Health Check**: http://localhost:8000/health
 
-### Hybrid Development (Recommended for Development)
+### Native Development (Recommended for Development)
 
-For faster iteration during development:
+Tagify has no external services (embedded SQLite, filesystem thumbnails), so for
+fast iteration just run both apps locally with hot reload:
 
 ```bash
-# Start only MongoDB with Docker
-docker compose -f docker-compose.dev.yml up -d
-
-# Install dependencies and run locally
 pnpm install
+uv --directory packages/backend sync
 pnpm dev
 ```
-
-This approach gives you containerized dependencies with fast local code reloading.
 
 ## 📦 Installation & Setup
 
@@ -99,7 +94,6 @@ This approach gives you containerized dependencies with fast local code reloadin
 
 - **Node.js** 18+ and **pnpm** ([installation guide](https://pnpm.io/installation))
 - **Python** 3.12+ and **uv** ([installation guide](https://docs.astral.sh/uv/getting-started/installation/))
-- **MongoDB** (local or Docker)
 
 ### Local Development Setup
 
@@ -111,49 +105,35 @@ This approach gives you containerized dependencies with fast local code reloadin
    pnpm install
    ```
 
-2. **Set up environment configuration:**
+2. **Install backend dependencies:**
 
    ```bash
-   cp .env.example .env
-   # Edit .env if needed for custom MongoDB / thumbnail-path settings
+   uv --directory packages/backend sync
    ```
 
-3. **Start dependencies with Docker:**
+3. **Configure (optional):** defaults work out of the box — the database lands in `data/tagify.db`, thumbnails in `data/thumbs/`, logs in `data/logs/`. To override, copy `packages/backend/.env.example` to `packages/backend/.env` and edit.
 
-   ```bash
-   docker compose -f docker-compose.dev.yml up -d
-   ```
-
-4. **Configure backend environment**
-
-   Create and edit the file packages/backend/.env and set the following environment variables (adjust values as needed):
-
-   ```env
-   MONGO_URI=mongodb://admin:password@localhost:27017/tagify?authSource=admin
-   THUMB_ROOT=./data/thumbs
-   ```
-
-5. **Start the application:**
+4. **Start the application:**
    ```bash
    pnpm dev
    ```
 
 ### Adding Your First Library
 
-1. Navigate to http://localhost:5173/libraries
-2. Enter your image folder path (e.g., `/path/to/your/images`)
-3. Give it a name and click "Add Library"
-4. Wait for the scanning to complete
+1. Navigate to http://localhost:5173/libraries and click **Add libraries**
+2. Enter one or more folder paths (e.g., `/path/to/your/images`), one per line — optionally tick "each subfolder becomes its own library"
+3. Click **Preview** to see exactly which libraries will be created, with image counts; untick any you don't want
+4. Click **Add**; scanning runs in the background
 5. Browse your images at http://localhost:5173
 
 ## 🏗 Architecture
 
-- **Backend**: FastAPI app with MongoDB for metadata; thumbnails and originals both live on the host filesystem
+- **Backend**: FastAPI app with embedded SQLite for metadata; thumbnails and originals both live on the local filesystem
 - **Frontend**: Vite + React + TypeScript with TailwindCSS
 - **Storage**:
-  - MongoDB: Image metadata, tags, library information
+  - SQLite (`SQLITE_PATH`, default `data/tagify.db`): image metadata, tags, library information
   - Original images: served directly from the host filesystem (the library paths you mount)
-  - Thumbnails: generated WebP files under `THUMB_ROOT`, served through the API (`/api/images/{id}/thumb`)
+  - Thumbnails: generated WebP files under `THUMB_ROOT`, served through the API (`/api/v1/images/{id}/thumb`)
 
 ## 🤖 AI Autotagger
 
@@ -192,7 +172,7 @@ Key environment variables (see `.env.example`):
 
 ### Storage
 
-- `MONGO_ROOT_USERNAME/PASSWORD`: MongoDB credentials
+- `SQLITE_PATH`: SQLite database file (default: `./data/tagify.db`; `/data/tagify.db` volume in Docker)
 - `THUMB_ROOT`: Filesystem directory for generated WebP thumbnails (default: `./data/thumbs`; `/data/thumbs` volume in Docker). Originals are read from the host library paths, so there is no separate originals store.
 
 Both thumbnails and originals are served straight through the API, so a single exposed port (8000) is enough for remote access — front it with a reverse proxy (e.g. nginx) for TLS and static offload.
@@ -202,6 +182,11 @@ Both thumbnails and originals are served straight through the API, so a single e
 - `THUMB_MAX_SIZE`: Maximum thumbnail size in pixels (default: 1080)
 - `THUMB_FORMAT`: Thumbnail format (default: `webp`)
 - `SCANNER_MAX_WORKERS`: Scanner thread count (0 = auto-detect CPU cores)
+- `SCANNER_MAX_CONCURRENT_SCANS`: Libraries scanning at once; the rest queue (default: 2)
+
+### Logging
+
+- `LOG_LEVEL` (default `INFO`), `LOG_TO_FILE` (default `true`), `LOG_DIR` (default `./data/logs`): console logging plus a rotating `tagify.log`
 
 ## 📁 Project Structure
 
@@ -212,7 +197,7 @@ Tagify/
 │   │   ├── src/
 │   │   │   ├── api/      # REST API endpoints
 │   │   │   ├── services/ # Business logic (scanner, storage)
-│   │   │   └── database/ # MongoDB connection and utilities
+│   │   │   └── database/ # SQLite schema and engines
 │   │   └── .env          # Backend environment variables
 │   └── frontend/         # React application
 │       ├── src/
@@ -223,8 +208,8 @@ Tagify/
 ├── test_images/          # Sample images for testing
 ├── docs/                 # Documentation
 ├── scripts/              # Utility scripts
-├── docker-compose.yml    # Production Docker setup
-├── docker-compose.dev.yml # Development dependencies only
+├── docker-compose.yml    # Docker setup (backend + frontend)
+├── docker-compose.ci.yml # CI stack (backend + test_images)
 └── README.md            # This file
 ```
 
@@ -232,9 +217,10 @@ Tagify/
 
 See [.github/prompts/tech_guide.md](.github/prompts/tech_guide.md) for detailed architecture documentation.
 
-**Key Endpoints:**
+**Key Endpoints** (all under `/api/v1`, e.g. `GET /api/v1/images`; `GET /health` is also served at the root for container probes):
 
 - `GET /health` - Health check
+- `POST /libraries/discover` - Dry run for adding libraries (optionally one per subfolder): candidates, image counts, conflicts
 - `GET /images` - List images with filtering and pagination
 - `GET /images/{id}/file` - Original image from host filesystem (supports Range requests)
 - `GET /images/{id}/thumb` - WebP thumbnail
@@ -271,22 +257,18 @@ See [.github/prompts/tech_guide.md](.github/prompts/tech_guide.md) for detailed 
 
 ## 🐳 Data Persistence
 
-Docker volumes ensure data persists across container restarts:
+In Docker, everything the backend writes lives in the `tagify_data` volume at `/data`: the SQLite database (`tagify.db`), thumbnails (`thumbs/`) and downloaded tagger models (`models/`). Natively, the same files live under `<repo>/data/` (models under `<repo>/.cache/tagify/models`).
 
-- `mongodb_data`: MongoDB database files
-- `thumb_data`: Generated WebP thumbnails (`THUMB_ROOT`)
-
-To backup your data:
+To back up your data:
 
 ```bash
-# Backup MongoDB (metadata, tags, libraries)
-docker compose exec mongodb mongodump --out /data/backup
-
-# Backup the thumbnail directory (or just rescan to regenerate it)
-docker compose cp backend:/data/thumbs ./backup/thumbs
+# Stop the backend so the SQLite file is consistent, then copy /data out
+docker compose stop backend
+docker compose cp backend:/data ./backup
+docker compose start backend
 ```
 
-> Original images live in the host directories you mounted as libraries — back those up with your normal file-backup tooling. Thumbnails can always be regenerated by rescanning, so only MongoDB and your source images are essential.
+> Original images live in the host directories you mounted as libraries — back those up with your normal file-backup tooling. Thumbnails can always be regenerated by rescanning, so only the database and your source images are essential.
 
 ## 🔧 Development
 
@@ -320,10 +302,10 @@ pnpm perf
 
 **Docker build fails with SSL errors:**
 
+Run natively instead (no external services needed):
+
 ```bash
-# Use development setup instead
-docker compose -f docker-compose.dev.yml up -d
-pnpm dev
+pnpm install && uv --directory packages/backend sync && pnpm dev
 ```
 
 **Services not starting:**
@@ -338,7 +320,6 @@ docker compose restart
 
 **Port conflicts:**
 
-- MongoDB: 27017 (Unlikely as it is not exposed by default)
 - Backend: 8000
 - Frontend: 5173
 
@@ -346,7 +327,7 @@ Change ports in `docker-compose.yml` if needed.
 
 **Health check failures:**
 
-- Wait longer for services to start (especially MongoDB)
+- Wait longer for the backend to start (first start creates the database)
 - Check container logs: `docker compose logs [service-name]`
 
 ### Testing Setup
@@ -376,12 +357,7 @@ We welcome contributions! Here's how to get started:
    # Install dependencies
    pnpm install
 
-   # Start dependencies
-   docker compose -f docker-compose.dev.yml up -d
-
-   # Configure backend
-   cp packages/backend/.env.example packages/backend/.env
-   # Edit packages/backend/.env with MongoDB credentials and THUMB_ROOT
+   uv --directory packages/backend sync
 
    # Start development servers
    pnpm dev
@@ -424,7 +400,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 - **FastAPI** - Modern, fast web framework for Python
 - **React** + **Vite** - Frontend framework and build tool
-- **MongoDB** - Document database for metadata
+- **SQLite** + **SQLAlchemy** - Embedded metadata store
 - **TailwindCSS** - Utility-first CSS framework
 
 ---
