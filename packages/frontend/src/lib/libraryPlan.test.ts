@@ -44,5 +44,6 @@ describe("formatCount", () => {
   it("pluralizes and marks a capped count as a lower bound", () => {
     expect(formatCount({ image_count: 1, count_capped: false })).toBe("1 image");
     expect(formatCount({ image_count: 5000, count_capped: true })).toBe("5,000+ images");
+    expect(formatCount({ image_count: 0, count_capped: true })).toBe("not counted");
   });
 });

@@ -92,3 +92,29 @@ describe("AddLibraryDialog", () => {
     expect(posts.map((p) => p.path)).toEqual(["/lib/a", "/lib/b"]);
   });
 });
+
+describe("AddLibraryDialog › closing mid-preview", () => {
+  it("drops a preview that lands after the dialog closed", async () => {
+    let release!: () => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((res) => {
+            release = () =>
+              res(new Response(JSON.stringify({ sources: SOURCES }), { status: 200 }));
+          }),
+      ),
+    );
+    const { rerender } = render(<AddLibraryDialog open onClose={() => {}} onAdded={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Folders"), { target: { value: "/lib" } });
+    fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+
+    rerender(<AddLibraryDialog open onClose={() => {}} onAdded={vi.fn()} />);
+    expect(screen.queryByDisplayValue("a")).toBeNull();
+    expect((screen.getByLabelText("Folders") as HTMLTextAreaElement).value).toBe("");
+  });
+});

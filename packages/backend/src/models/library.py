@@ -19,7 +19,14 @@ def _sanitize_path(value: str) -> str:
     return value
 
 
-def _validate_path(value: str) -> str:
+def normalize_path(path: str) -> str:
+    """Canonical spelling of a library path: collapses `..`/`//` and drops a
+    trailing separator (keeping a bare root like `/` or `C:\\`), so
+    `D:/images/` and `D:/images` are the same library."""
+    return os.path.normpath(path)
+
+
+def validate_library_path(value: str) -> str:
     value = _sanitize_path(value)
     # A quoted-empty or whitespace-only path sanitizes to "", and Path("") is
     # the process's own cwd to pathlib — not "no path". Rejecting non-absolute
@@ -29,8 +36,7 @@ def _validate_path(value: str) -> str:
     # rather than naming a fixed location.
     if not value or not Path(value).is_absolute():
         raise ValueError(f"Path must be a non-empty absolute path: {value!r}")
-    # One spelling per folder: `D:/images/` and `D:/images` are the same library.
-    return os.path.normpath(value)
+    return normalize_path(value)
 
 
 class LibraryIn(BaseModel):
@@ -40,18 +46,23 @@ class LibraryIn(BaseModel):
     @field_validator("path")
     @classmethod
     def _strip_quotes(cls, v: str) -> str:
-        return _validate_path(v)
+        return validate_library_path(v)
 
 
 class LibraryDiscoverIn(BaseModel):
+    # Validated per entry by the discover service, so one bad line is reported
+    # on its own row rather than failing the whole preview.
     paths: list[str] = Field(..., min_length=1, max_length=50)
     #: Offer each immediate subfolder as its own library.
     split_subdirs: bool = False
 
     @field_validator("paths")
     @classmethod
-    def _clean(cls, v: list[str]) -> list[str]:
-        return [_validate_path(p) for p in v if p.strip()]
+    def _drop_blank(cls, v: list[str]) -> list[str]:
+        cleaned = [p for p in v if p.strip()]
+        if not cleaned:
+            raise ValueError("At least one folder path is required")
+        return cleaned
 
 
 class Library(BaseModel):
@@ -71,4 +82,4 @@ class LibraryUpdate(BaseModel):
     @field_validator("path")
     @classmethod
     def _strip_quotes(cls, v: Optional[str]) -> Optional[str]:
-        return _validate_path(v) if v is not None else v
+        return validate_library_path(v) if v is not None else v

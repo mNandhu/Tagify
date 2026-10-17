@@ -68,6 +68,8 @@ export function defaultSelected(c: LibraryCandidate): boolean {
 }
 
 export function formatCount(c: Pick<LibraryCandidate, "image_count" | "count_capped">): string {
+  // Capped at zero means the overall time budget ran out before this folder.
+  if (c.count_capped && c.image_count === 0) return "not counted";
   const n = c.image_count.toLocaleString();
   return c.count_capped ? `${n}+ images` : `${n} image${c.image_count === 1 ? "" : "s"}`;
 }

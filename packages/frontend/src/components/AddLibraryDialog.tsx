@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, FolderOpen, FolderTree, Plus, ScanSearch } from "lucide-react";
 import { Dialog } from "./ui/Dialog";
 import { Button } from "./ui/Button";
@@ -80,7 +80,13 @@ export function AddLibraryDialog({
   const chosenImages = chosen.reduce((n, c) => n + c.image_count, 0);
   const anyCapped = chosen.some((c) => c.count_capped);
 
+  // Bumped on close: a preview still in flight when the dialog closes must not
+  // repopulate the next session.
+  const session = useRef(0);
+
   const reset = () => {
+    session.current++;
+    setLoading(false);
     setText("");
     setSplit(false);
     setSources(null);
@@ -98,19 +104,21 @@ export function AddLibraryDialog({
 
   const preview = async () => {
     if (!paths.length) return;
+    const mine = session.current;
     setLoading(true);
     setError(null);
     try {
       const res = await discoverLibraries(paths, split);
+      if (session.current !== mine) return;
       setSources(res.sources);
       setPreviewKey(inputKey);
       const cs = res.sources.flatMap((s) => s.candidates);
       setSelected(new Set(cs.filter(defaultSelected).map((c) => c.path)));
       setNames(Object.fromEntries(cs.map((c) => [c.path, c.name])));
     } catch (e) {
-      setError(errorText(e));
+      if (session.current === mine) setError(errorText(e));
     } finally {
-      setLoading(false);
+      if (session.current === mine) setLoading(false);
     }
   };
 
