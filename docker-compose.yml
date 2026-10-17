@@ -29,7 +29,7 @@ services:
       WATCH_ENABLED_DEFAULT: ${WATCH_ENABLED_DEFAULT:-true}
       WATCH_RECONCILE_INTERVAL_S: ${WATCH_RECONCILE_INTERVAL_S:-900}
     ports:
-      - "8000:8000"
+      - "${TAGIFY_BACKEND_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
@@ -47,7 +47,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "5173:80"
+      - "${TAGIFY_FRONTEND_PORT:-5173}:80"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 10s

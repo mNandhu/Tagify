@@ -20,7 +20,7 @@ services:
       # CI adds a library and waits for one scan; no watcher needed.
       WATCH_ENABLED_DEFAULT: "false"
     ports:
-      - "8000:8000"
+      - "${TAGIFY_BACKEND_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 5s

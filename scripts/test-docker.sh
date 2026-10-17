@@ -5,8 +5,11 @@
 
 set -euo pipefail
 
+# Override the host port to run alongside a dev backend on :8000.
+export TAGIFY_BACKEND_PORT="${TAGIFY_BACKEND_PORT:-8000}"
+BASE="http://localhost:${TAGIFY_BACKEND_PORT}"
 COMPOSE="docker compose -f docker-compose.ci.yml"
-API="http://localhost:8000/api/v1"
+API="$BASE/api/v1"
 
 cleanup() {
     echo "🧹 Tearing down CI stack..."
@@ -19,7 +22,7 @@ $COMPOSE up --build -d
 
 echo "⏳ Waiting for backend health..."
 for i in {1..60}; do
-    if curl -sf http://localhost:8000/health > /dev/null; then break; fi
+    if curl -sf "$BASE/health" > /dev/null; then break; fi
     if [ "$i" = 60 ]; then echo "❌ Backend never became healthy"; $COMPOSE logs backend; exit 1; fi
     sleep 2
 done
