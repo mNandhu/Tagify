@@ -8,6 +8,7 @@ from .api import libraries, images, tags, ai, rules
 from .database.db import async_conn, ensure_schema
 from .database import schema as t
 from .core.config import settings
+from .core.logging_setup import setup_logging
 from .services.storage_fs import ensure_thumb_root
 from .services.ai_jobs import get_ai_job_manager, get_ai_settings
 from .services.ai_tagger import get_tagger_manager
@@ -20,12 +21,12 @@ import sqlalchemy as sa
 
 logger = logging.getLogger("tagify")
 
-
 API_PREFIX = "/api/v1"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     # Startup: create the SQLite schema (tables + indexes) if absent. Declarative
     # DDL means no flag backfill is needed — columns carry their defaults.
     await ensure_schema()

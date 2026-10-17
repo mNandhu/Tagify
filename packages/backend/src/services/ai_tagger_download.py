@@ -10,12 +10,15 @@ the download state machine can be reasoned about on its own.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger("tagify.ai_download")
 
 # The default model cache location. Lives here (the dependency-free module) so
 # both ai_settings and the API can share one source of truth without importing
@@ -147,6 +150,7 @@ class ModelDownloadManager:
                     st.cancel_requested = True
                     raise
                 except Exception as e:
+                    logger.exception("Model download failed for %s", model_repo)
                     st.status = "error"
                     st.error = str(e)
                 finally:

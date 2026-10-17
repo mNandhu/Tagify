@@ -55,6 +55,15 @@ class Settings(BaseSettings):
 
     log_slow_requests_ms: int = 1000
 
+    # Logging (see core/logging_setup.py). Records go to the console and, when
+    # `log_to_file` is on, to a rotating `tagify.log` under `log_dir`. A relative
+    # `log_dir` resolves against the repo root, like `thumb_root`.
+    log_level: str = "INFO"
+    log_to_file: bool = True
+    log_dir: str = "./data/logs"
+    log_file_max_bytes: int = 10 * 1024 * 1024
+    log_file_backups: int = 5
+
     rate_limit_enabled: bool = False
     rate_limit_rescan_per_minute: int = 1
 
@@ -76,6 +85,12 @@ class Settings(BaseSettings):
         """Absolute thumbnail root. Relative `thumb_root` anchors to the repo
         root so the location doesn't depend on the process working directory."""
         p = Path(self.thumb_root)
+        return p if p.is_absolute() else (_REPO_ROOT / p)
+
+    @property
+    def log_dir_path(self) -> Path:
+        """Absolute log directory, anchored to the repo root when relative."""
+        p = Path(self.log_dir)
         return p if p.is_absolute() else (_REPO_ROOT / p)
 
     @property

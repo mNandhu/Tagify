@@ -16,6 +16,7 @@ from .scan_writer import ScanWriter
 from .storage_fs import put_thumb
 from .blurhash import blurhash_for_image
 import hashlib
+import logging
 import mimetypes
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,6 +26,8 @@ from threading import Lock
 import time
 
 from ..core.config import settings
+
+logger = logging.getLogger("tagify.scanner")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
@@ -388,6 +391,7 @@ def _process_image(library_id: str, root_path: Path, p: Path) -> _ScanResult:
         return _ScanResult(image_id=image_id, ok=True, doc=doc, gen_raw_doc=gen_raw_doc)
     except Exception as e:
         # Includes stat/path errors
+        logger.warning("Failed to process %s: %s", p, e)
         return _ScanResult(
             image_id=f"{library_id}:<unknown>",
             ok=False,
@@ -600,8 +604,16 @@ def scan_library_async(library_id: str, root: str) -> dict:
             except Exception:
                 # Reprojection is re-runnable via the manual endpoint; never let
                 # it fail the scan.
-                pass
+                logger.warning(
+                    "Post-scan reprojection failed to start for library %s",
+                    library_id,
+                    exc_info=True,
+                )
         except Exception as e:
+            if str(e) == "cancelled":
+                logger.info("Scan cancelled for library %s", library_id)
+            else:
+                logger.exception("Scan failed for library %s", library_id)
             _lib_set(library_id, {"scanning": False, "scan_error": str(e)})
         finally:
             with _scan_lock:
