@@ -10,7 +10,8 @@ import sqlalchemy as sa
 from ..core.config import settings
 from ..database.db import async_conn, async_tx
 from ..database import schema as t
-from ..models.library import LibraryIn, LibraryUpdate
+from ..models.library import LibraryDiscoverIn, LibraryIn, LibraryUpdate
+from ..services import library_discover
 from ..services.scanner import cancel_scan, scan_library_async
 
 from ..services.storage_fs import delete_by_prefix
@@ -18,8 +19,8 @@ from ..services import tag_index
 from ..services import library_watch
 
 router = APIRouter()
-
 logger = logging.getLogger("tagify.libraries")
+
 # Columns the list/summary views expose (kept minimal).
 _LIB_LIST_COLS = (
     t.libraries.c._id,
@@ -44,18 +45,34 @@ async def list_libraries():
     return [dict(r._mapping) for r in rows]
 
 
+@router.post("/discover")
+async def discover_libraries(body: LibraryDiscoverIn):
+    """Dry run for the Add Library dialog: the libraries that adding `paths`
+    would create (optionally one per immediate subfolder), with image counts and
+    conflicts against registered libraries. Writes nothing."""
+    async with async_conn() as conn:
+        existing = (await conn.execute(sa.select(t.libraries.c.path))).scalars().all()
+    reports = await anyio.to_thread.run_sync(  # type: ignore[attr-defined]
+        lambda: library_discover.discover(
+            body.paths, split_subdirs=body.split_subdirs, existing_paths=existing
+        )
+    )
+    return {"sources": library_discover.as_dicts(reports)}
+
+
 @router.post("")
 async def add_library(body: LibraryIn):
     # Dedupe before touching the filesystem: an already-registered library
     # whose drive is temporarily offline (unplugged external disk, unmounted
     # share) should still return the existing record on a repeat POST, not a
     # 400 that makes it look unregistered.
+    # Compare normalized spellings, so a library stored before paths were
+    # normalized (`D:/images/`) still dedupes against `D:/images`.
     async with async_conn() as conn:
-        existing = (
-            await conn.execute(
-                sa.select(t.libraries).where(t.libraries.c.path == body.path)
-            )
-        ).first()
+        rows = (await conn.execute(sa.select(t.libraries))).fetchall()
+    existing = next(
+        (r for r in rows if library_discover.normalize_path(r.path) == body.path), None
+    )
     if existing:
         return dict(existing._mapping)
 
@@ -200,9 +217,11 @@ async def update_library(library_id: str, body: LibraryUpdate):
         ).first()
     result = dict(doc._mapping) if doc else None
     new_path = update_doc.get("path", old._mapping.get("path"))
-    path_changed = "path" in update_doc and update_doc["path"] != old._mapping.get(
+    # The new path arrives normalized; normalize the stored one too, so a
+    # name-only edit of a library stored as `/x/` doesn't count as a move.
+    path_changed = "path" in update_doc and update_doc[
         "path"
-    )
+    ] != library_discover.normalize_path(old._mapping.get("path") or "")
     if path_changed:
         scan_library_async(library_id, new_path)
     watch_enabled = update_doc.get("watch_enabled", old._mapping.get("watch_enabled"))

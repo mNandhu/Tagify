@@ -3,7 +3,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, Plus, RotateCw, Pencil, Trash2, Eye, EyeOff } from "lucide-react";
 import { useToast } from "../components/Toasts";
 import { PageHeader } from "../components/ui/PageHeader";
-import { Card, Section } from "../components/ui/Card";
+import { Card } from "../components/ui/Card";
+import { Dialog } from "../components/ui/Dialog";
+import { AddLibraryDialog } from "../components/AddLibraryDialog";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Button } from "../components/ui/Button";
 import { Input, Field } from "../components/ui/Input";
 import { Badge } from "../components/ui/Badge";
@@ -23,6 +26,7 @@ type Library = {
 
 export default function LibrariesPage() {
   const { push } = useToast();
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
 
   // Library changes alter which images the gallery should show. Both the flat
@@ -38,9 +42,7 @@ export default function LibrariesPage() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [path, setPath] = useState("");
-  const [name, setName] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [rescanning, setRescanning] = useState<Set<string>>(new Set());
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -139,12 +141,15 @@ export default function LibrariesPage() {
   };
 
   const deleteLibrary = async (id: string) => {
-    if (
-      !confirm(
-        "Delete this library? This will remove its indexed images and thumbnails."
-      )
-    )
-      return;
+    const lib = libs.find((l) => l._id === id);
+    const ok = await confirm({
+      title: `Delete ${lib?.name || lib?.path || "this library"}?`,
+      message:
+        "Its indexed images, tags and thumbnails are removed from Tagify. Files on disk are not touched.",
+      confirmLabel: "Delete library",
+      tone: "danger",
+    });
+    if (!ok) return;
     await api(`/api/v1/libraries/${id}`, { method: "DELETE" });
     refresh();
     invalidateImageFeed();
@@ -158,60 +163,32 @@ export default function LibrariesPage() {
         count={initialLoading ? undefined : libs.length}
         description="Folders Tagify watches and indexes."
         actions={
-          refreshing && !initialLoading ? (
-            <span className="flex items-center gap-2 text-xs text-neutral-400">
-              <Spinner className="h-3 w-3" /> Refreshing…
-            </span>
-          ) : undefined
+          <div className="flex items-center gap-3">
+            {refreshing && !initialLoading && (
+              <span className="flex items-center gap-2 text-xs text-neutral-400">
+                <Spinner className="h-3 w-3" /> Refreshing…
+              </span>
+            )}
+            <Button variant="success" onClick={() => setAddOpen(true)}>
+              <Plus size={16} />
+              Add libraries
+            </Button>
+          </div>
         }
       />
 
-      {/* Add library */}
-      <Section title="Add a library" description="Point Tagify at a local folder of images.">
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label="Folder path" className="flex-1 min-w-[220px]">
-            <Input
-              placeholder="D:/images"
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-            />
-          </Field>
-          <Field label="Name (optional)" className="flex-1 min-w-[180px]">
-            <Input
-              placeholder="My Library"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Field>
-          <Button
-            variant="success"
-            disabled={!path.trim() || adding}
-            onClick={async () => {
-              if (!path.trim()) return;
-              setAdding(true);
-              try {
-                await api(`/api/v1/libraries`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ path, name: name || undefined }),
-                });
-                setPath("");
-                setName("");
-                await refresh();
-                invalidateImageFeed();
-                push("Library added", "success");
-              } catch (e: any) {
-                push(e?.message || "Failed to add library", "error");
-              } finally {
-                setAdding(false);
-              }
-            }}
-          >
-            <Plus size={16} />
-            {adding ? "Adding…" : "Add library"}
-          </Button>
-        </div>
-      </Section>
+      <AddLibraryDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onAdded={async ({ added, failed }) => {
+          await refresh();
+          invalidateImageFeed();
+          push(
+            `Added ${added} librar${added === 1 ? "y" : "ies"}${failed.length ? ` · ${failed.length} failed` : ""} — scanning in the background`,
+            failed.length ? "error" : "success",
+          );
+        }}
+      />
 
       {/* Error banner */}
       {error && !initialLoading && (
@@ -250,7 +227,13 @@ export default function LibrariesPage() {
           <EmptyState
             icon={FolderOpen}
             title="No libraries yet"
-            description="Add your first library above by entering a folder path — for example D:/images."
+            description="Add a folder of images — or a parent folder whose subfolders each become a library."
+            actions={
+              <Button variant="success" onClick={() => setAddOpen(true)}>
+                <Plus size={16} />
+                Add libraries
+              </Button>
+            }
           />
         )}
 
@@ -367,54 +350,58 @@ export default function LibrariesPage() {
           ))}
       </div>
 
-      {editId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <Card className="w-full max-w-md p-5 shadow-xl">
-            <div className="text-lg font-semibold mb-4">Edit library</div>
-            <div className="space-y-3">
-              <Field label="Name" htmlFor="edit_name">
-                <Input
-                  id="edit_name"
-                  placeholder="Friendly name"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                />
-              </Field>
-              <Field label="Path" htmlFor="edit_path">
-                <Input
-                  id="edit_path"
-                  placeholder="D:/images"
-                  value={editPath}
-                  onChange={(e) => setEditPath(e.target.value)}
-                />
-              </Field>
-              {editPath !== libs.find((l) => l._id === editId)?.path && (
-                <p className="text-xs text-amber-400">
-                  Path changed — rescan will start automatically.
-                </p>
-              )}
-              <div className="flex justify-end gap-2 pt-2">
-                <Button onClick={() => setEditId(null)}>Cancel</Button>
-                <Button
-                  variant="success"
-                  onClick={async () => {
-                    const payload: Partial<Library> = {};
-                    if (editName !== undefined)
-                      payload.name = editName || undefined;
-                    if (editPath) payload.path = editPath;
-                    await updateLibrary(editId, payload);
-                    setEditId(null);
-                    refresh();
-                    push("Library saved", "success");
-                  }}
-                >
-                  Save
-                </Button>
-              </div>
-            </div>
-          </Card>
+      <Dialog
+        open={!!editId}
+        onClose={() => setEditId(null)}
+        title="Edit library"
+        footer={
+          <>
+            <Button onClick={() => setEditId(null)}>Cancel</Button>
+            <Button
+              variant="success"
+              onClick={async () => {
+                if (!editId) return;
+                const payload: Partial<Library> = {};
+                if (editName !== undefined) payload.name = editName || undefined;
+                if (editPath) payload.path = editPath;
+                try {
+                  await updateLibrary(editId, payload);
+                  setEditId(null);
+                  push("Library saved", "success");
+                } catch (e: any) {
+                  push(e?.message || "Failed to save library", "error");
+                }
+              }}
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="Name" htmlFor="edit_name">
+            <Input
+              id="edit_name"
+              placeholder="Friendly name"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+            />
+          </Field>
+          <Field label="Path" htmlFor="edit_path">
+            <Input
+              id="edit_path"
+              placeholder="D:/images"
+              value={editPath}
+              onChange={(e) => setEditPath(e.target.value)}
+            />
+          </Field>
+          {editPath !== libs.find((l) => l._id === editId)?.path && (
+            <p className="text-xs text-amber-400">
+              Path changed — rescan will start automatically.
+            </p>
+          )}
         </div>
-      )}
+      </Dialog>
     </div>
   );
 }
