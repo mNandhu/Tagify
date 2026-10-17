@@ -122,7 +122,13 @@ export function AddLibraryDialog({
     }
   };
 
+  const canAdd = !!sources && !stale && chosen.length > 0 && !adding;
+
   const add = async () => {
+    // The Ctrl+Enter shortcut reaches here too: never run two adds at once
+    // (concurrent POSTs for one path can both miss the backend's dedupe), and
+    // never "add" an empty selection, which would just close the dialog.
+    if (!canAdd) return;
     setAdding(true);
     const failed: string[] = [];
     const failedPaths = new Set<string>();
@@ -183,7 +189,7 @@ export function AddLibraryDialog({
             Cancel
           </Button>
           {sources && !stale ? (
-            <Button variant="success" onClick={() => void add()} disabled={!chosen.length || adding}>
+            <Button variant="success" onClick={() => void add()} disabled={!canAdd}>
               {adding ? <Spinner className="h-3.5 w-3.5" /> : <Plus size={16} />}
               {adding
                 ? "Adding…"
@@ -210,9 +216,11 @@ export function AddLibraryDialog({
             placeholder={"D:/images/portraits\nD:/images/landscapes"}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            disabled={adding}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
+                if (adding || loading) return;
                 if (sources && !stale) void add();
                 else void preview();
               }
