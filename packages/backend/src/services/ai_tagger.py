@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import csv
 import time
 from dataclasses import dataclass
@@ -21,6 +22,8 @@ from .ai_tagger_download import (
     get_download_manager,
     model_target,
 )
+
+logger = logging.getLogger("tagify.ai_tagger")
 
 KAOMOJIS = {
     "0_0",
@@ -339,6 +342,7 @@ class TaggerManager:
                     self._load_status = "cancelled"
                 raise
             except Exception as e:
+                logger.exception("Failed to load AI tagger model %s", model_repo)
                 if self._load_task is asyncio.current_task():
                     self._load_status = "error"
                     self._load_error = str(e)

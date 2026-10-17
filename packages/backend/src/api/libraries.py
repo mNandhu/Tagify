@@ -1,3 +1,4 @@
+import logging
 import uuid
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from ..services import library_watch
 
 router = APIRouter()
 
+logger = logging.getLogger("tagify.libraries")
 # Columns the list/summary views expose (kept minimal).
 _LIB_LIST_COLS = (
     t.libraries.c._id,
@@ -105,8 +107,10 @@ async def remove_library(library_id: str):
     try:
         await anyio.to_thread.run_sync(lambda: delete_by_prefix(f"{library_id}/"))  # type: ignore[attr-defined]
     except Exception:
-        # ignore failures to remove files
-        pass
+        # The library is already gone from the DB; leftover thumbs only waste space.
+        logger.warning(
+            "Failed to delete thumbnails for library %s", library_id, exc_info=True
+        )
     return {"removed": library_id}
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
 import time
 import uuid
@@ -14,6 +15,8 @@ from ..database import schema as t
 from . import image_tags
 from .ai_settings import DEFAULT_AI_SETTINGS, get_ai_settings, update_ai_settings
 from .ai_tagger import get_tagger_manager
+
+logger = logging.getLogger("tagify.ai_jobs")
 
 __all__ = [
     "DEFAULT_AI_SETTINGS",
@@ -199,6 +202,7 @@ class AIJobManager:
                         await self._tag_one(image_id=image_id, settings=settings)
                         job.done += 1
                     except Exception as e:
+                        logger.warning("AI tagging failed for %s: %s", image_id, e)
                         job.failed += 1
                         job.errors.append({"image_id": image_id, "error": str(e)})
 
