@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useToast } from "../../components/Toasts";
+import { useConfirm } from "../../components/ConfirmDialog";
 import { useAiStatus } from "../../hooks/useAiStatus";
 import type { AISettings, AIStatus, AiJob } from "../../lib/ai";
 import {
@@ -65,6 +66,7 @@ export type SettingsController = {
 
 function useSettingsController(): SettingsController {
   const { push } = useToast();
+  const confirm = useConfirm();
   const [settings, setSettings] = useState<AISettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
@@ -190,9 +192,13 @@ function useSettingsController(): SettingsController {
     );
 
   const clearAllAiTags = async () => {
-    const ok = confirm(
-      "This will REMOVE all AI-generated tags and AI metadata from ALL images across ALL libraries.\n\nManual tags (manual:) will be kept.\n\nContinue?"
-    );
+    const ok = await confirm({
+      title: "Clear all AI tags?",
+      message:
+        "This removes all AI-generated tags and AI metadata from every image in every library. Manual tags (manual:) are kept.",
+      confirmLabel: "Clear AI tags",
+      tone: "danger",
+    });
     if (!ok) return;
     await runCommand(
       postClearAiTags,

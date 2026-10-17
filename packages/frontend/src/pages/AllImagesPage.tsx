@@ -5,6 +5,7 @@ import { GallerySkeleton } from "../components/GallerySkeleton";
 import { DensityControl } from "../components/DensityControl";
 import { ShortcutOverlay } from "../components/ShortcutOverlay";
 import { useToast } from "../components/Toasts";
+import { useConfirm } from "../components/ConfirmDialog";
 import {
   Filter,
   Keyboard,
@@ -73,6 +74,7 @@ type Library = {
 
 export default function AllImagesPage() {
   const { push } = useToast();
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const location = useLocation();
   // ImageView opens as an overlay on top of this page rather than routing in
@@ -509,9 +511,14 @@ export default function AllImagesPage() {
   const runBulkQuarantine = useCallback(
     async (ids: string[], next: boolean) => {
       const verb = next ? "Quarantine" : "Restore";
-      const ok = confirm(
-        `${verb} ${ids.length} selected image${ids.length === 1 ? "" : "s"}?`,
-      );
+      const ok = await confirm({
+        title: `${verb} ${ids.length} selected image${ids.length === 1 ? "" : "s"}?`,
+        message: next
+          ? "Quarantined images are hidden from the gallery until restored."
+          : undefined,
+        confirmLabel: verb,
+        tone: next ? "warning" : "default",
+      });
       if (!ok) return;
       // Either way the tiles leave the current list, so drop them from the
       // cached feeds and the grid updates without a refresh, the way
@@ -533,12 +540,15 @@ export default function AllImagesPage() {
         "success",
       );
     },
-    [queryClient, setSelectionMode, push],
+    [queryClient, setSelectionMode, push, confirm],
   );
 
   const runBulkTag = useCallback(
     async (ids: string[]) => {
-      const ok = confirm(`Run AI tagging for ${ids.length} selected images?`);
+      const ok = await confirm({
+        title: `Run AI tagging for ${ids.length} selected image${ids.length === 1 ? "" : "s"}?`,
+        confirmLabel: "Run tagging",
+      });
       if (!ok) return;
       try {
         await postAiTag(ids);
@@ -548,7 +558,7 @@ export default function AllImagesPage() {
         push(`Failed to start AI job: ${String(e)}`, "error");
       }
     },
-    [push, setSelectionMode],
+    [push, setSelectionMode, confirm],
   );
 
   useEffect(() => {
